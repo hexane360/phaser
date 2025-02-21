@@ -60,7 +60,7 @@ function ObjectPlotSub({object}: {object: ObjectData}) {
           xmax = object.sampling.corner[1] + nx * object.sampling.sampling[1];
 
     const ymin = object.sampling.corner[0],
-          ymax = object.sampling.corner[0] + nx * object.sampling.sampling[0];
+          ymax = object.sampling.corner[0] + ny * object.sampling.sampling[0];
 
     const axes: Map<string, AxisSpec> = useMemo(() => new Map([
         ["x", {
