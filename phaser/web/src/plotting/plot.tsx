@@ -83,7 +83,13 @@ function mapValues<K, V, T>(map: Map<K, V>, func: (V) => T): Map<K, T> {
     return new Map([...map].map(([k, v]) => [k, func(v)]));
 }
 
-export function Figure({axes: inputAxes, scales = new Map(), zoomExtent, children}: FigureProps) {
+export function Figure({
+    axes: inputAxes,
+    scales = new Map(),
+    zoomExtent,
+    children
+}: FigureProps) {
+
     const axes = useMemo(() => mapValues(inputAxes, normalize_axis), [inputAxes]);
     const transforms = useMemo(() => mapValues(axes, () => atom(new Transform1D())), [axes]);
 

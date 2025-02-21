@@ -156,10 +156,14 @@ interface ProgressPlotProps {
 
 export function ProgressPlot(props: ProgressPlotProps) {
     const progress = useAtomValue(props.state);
+    if (!progress || !np) return <div></div>;
+
+    return <ProgressPlotSub progress={progress} />;
+}
+
+function ProgressPlotSub({progress}: {progress: ProgressData}) {
     const markerId = React.useMemo(() => makeId("marker"), []);
     const markerRef = `url(#${markerId})`;
-
-    if (!progress || !np) return <div></div>;
 
     const xs = progress.iters.toNestedArray() as Array<number>;
     const ys = progress.detector_errors.toNestedArray() as Array<number>;
@@ -174,7 +178,7 @@ export function ProgressPlot(props: ProgressPlotProps) {
         [y_min, y_max] = [1.0, 1.0e5]
     }
 
-    const axes: Map<string, AxisSpec> = new Map([
+    const axes: Map<string, AxisSpec> = useMemo(() => new Map([
         ["iter", {
             scale: new PlotScale([0, x_max], [0.0, 500.0]),
             label: "Iteration",
@@ -185,7 +189,7 @@ export function ProgressPlot(props: ProgressPlotProps) {
             label: "Error",
             show: true,
         }],
-    ]);
+    ]), [x_max, y_max, y_min]);
 
     return <Figure axes={axes}>
         <Plot xaxis="iter" yaxis="error">
