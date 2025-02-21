@@ -79,7 +79,7 @@ interface FigureProps {
     children?: React.ReactNode
 }
 
-function mapValues<K, V, T>(map: Map<K, V>, func: (V) => T): Map<K, T> {
+function mapValues<K, V, T>(map: Map<K, V>, func: (value: V) => T): Map<K, T> {
     return new Map([...map].map(([k, v]) => [k, func(v)]));
 }
 
