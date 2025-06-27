@@ -8,7 +8,7 @@ from typing_extensions import Self
 
 from phaser.utils.num import (
     get_array_module, to_real_dtype, to_complex_dtype,
-    fft2, ifft2, is_jax, to_numpy, block_until_ready,
+    fft2, ifft2, is_jax, to_numpy, block_until_ready, ufunc_outer
 )
 from phaser.utils.misc import FloatKey, jax_dataclass, create_compact_groupings, create_sparse_groupings, shuffled
 from phaser.utils.optics import fresnel_propagator, fourier_shift_filter
@@ -194,6 +194,9 @@ def tilt_propagators(
     state: ReconsState, 
     base_props: t.Optional[NDArray[numpy.complexfloating]],  # shape: (Nz-1, Ny, Nx)
     group_tilts: NDArray[numpy.floating],                    # shape: (batch, 2), in mrad
+    kx: NDArray[numpy.floating],                             # shape: (Ny, Nx)
+    ky: NDArray[numpy.floating],                             # shape: (Ny, Nx)
+    delta_zs: NDArray[numpy.floating],                       # shape: (Nz-1)
 ) -> t.Optional[NDArray[numpy.complexfloating]]:
     """
     Applies tilt and slice-dependent propagation phase shifts to base_props.
@@ -208,23 +211,26 @@ def tilt_propagators(
     dtype = to_real_dtype(state.probe.data.dtype)
     complex_dtype = to_complex_dtype(dtype)
 
-    # (Ny, Nx)
-    ky, kx = state.probe.sampling.recip_grid(xp=xp, dtype=dtype)
-    delta_zs = state.object.thicknesses[:-1]
-
-    # Expand dims to enable broadcasting
-    kx = kx[None, None, :, :]                         # (1, 1, Ny, Nx)
-    ky = ky[None, None, :, :]                         # (1, 1, Ny, Nx)
-    delta_zs = delta_zs[None, :, None, None]          # (1, Nz-1, 1, 1)
-
-    # Convert mrad to rad via tan(mrad / 1000)
-    tiltx = xp.tan(group_tilts[:, 0] * 1e-3)[:, None, None, None]  # (batch, 1, 1, 1)
-    tilty = xp.tan(group_tilts[:, 1] * 1e-3)[:, None, None, None]  # (batch, 1, 1, 1)
+    ## Convert mrad to rad via tan(mrad / 1000)
+    # tiltx = xp.tan(group_tilts[:, 0] * 1e-3)  # shape (batch,)
+    # tilty = xp.tan(group_tilts[:, 1] * 1e-3)  # shape (batch,)
+    # tiltx_kx = ufunc_outer(xp.multiply, tiltx, kx)  # (batch, Ny, Nx)
+    # tilty_ky = ufunc_outer(xp.multiply, tilty, ky)  # (batch, Ny, Nx)
+    # tilt_sum = 2j * xp.pi * tiltx_kx + tilty_ky # (batch, Ny, Nx)
+    # phase = ufunc_outer(xp.multiply, delta_zs, tilt_sum).transpose(1, 0, 2, 3) #(batch, Nz-1, Ny, Nx)
+    # tilt_ramps = xp.exp(phase)
 
     tilt_ramps = xp.exp(
-        2j * xp.pi * (tiltx * kx + tilty * ky) * delta_zs
-    )
-    return (base_props[None, :, :, :] * tilt_ramps).astype(complex_dtype)  # (batch, Nz-1, Ny, Nx)
+        ufunc_outer(
+            xp.multiply,
+            delta_zs,
+            2j * xp.pi * (
+                ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 0] * 1e-3), kx) +
+                ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 1] * 1e-3), ky)
+                )
+            ).transpose(1, 0, 2, 3))  # (batch, Nz-1, Ny, Nx)
+    
+    return (base_props[None, :, :, :] * tilt_ramps).astype(complex_dtype) 
 
 
 @t.overload

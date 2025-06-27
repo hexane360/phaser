@@ -25,10 +25,10 @@ def crop_data(raw_data: RawData, props: CropDataProps) -> RawData:
                  f" {0 if x_i is None else x_i}:{raw_data['patterns'].shape[1] if x_f is None else x_f}")
     raw_data['patterns'] = raw_data['patterns'][slice(y_i, y_f), slice(x_i, x_f)]
 
-    if raw_data['scan_hook'] is not None:
-        if raw_data['scan_hook']['type'] == 'raster':
+    if (scan_hook := raw_data.get('scan_hook', None)) is not None:
+        if scan_hook['type'] == 'raster':
             raw_data['scan_hook'] = {
-                **raw_data['scan_hook'],
+                **scan_hook,
                 'shape': raw_data['patterns'].shape[:2],
             }
 
@@ -50,7 +50,7 @@ def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
     else:
         logger.info("Adding poisson noise to raw patterns")
 
-    rng = create_rng(raw_data['seed'], 'poisson_noise')
+    rng = create_rng(raw_data.get('seed', None), 'poisson_noise')
 
     # TODO do this in batches?
     patterns = rng.poisson(to_numpy(raw_data['patterns'])).astype(dtype)

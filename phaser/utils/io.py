@@ -108,6 +108,9 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     iter = hdf5_read_iter_state(_assert_group(file['iter'])) if 'iter' in file else IterState.empty()
     scan = numpy.asarray(_hdf5_read_dataset(file, 'scan', numpy.float64)) if 'scan' in file else None
     tilt = numpy.asarray(_hdf5_read_dataset(file, 'tilt', numpy.float64)) if 'tilt' in file else None
+
+    if tilt is not None and scan is not None:
+        assert tilt.shape == scan.shape
     progress = hdf5_read_progress_state(_assert_group(file['progress'])) if 'progress' in file else None
 
     return PartialReconsState(

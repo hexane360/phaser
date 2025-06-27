@@ -12,7 +12,7 @@ from phaser.hooks.solver import NoiseModel
 from phaser.utils.misc import create_sparse_groupings, create_compact_groupings, shuffled, jax_dataclass
 from phaser.utils.num import (
     get_array_module, cast_array_module, jit,
-    fft2, ifft2, abs2, check_finite, at, Float
+    fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_real_dtype
 )
 from phaser.utils.optics import fourier_shift_filter
 from phaser.utils.io import OutputDir
@@ -123,7 +123,8 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
         state.scan += update['positions']
     if 'tilt' in update:
         xp = get_array_module(update['tilt'])
-        logger.info(f"Position update: mean {update['tilt'].shape}")
+        mean_tilt_update = xp.mean(xp.abs(update['tilt']), tuple(range(update['tilt'].ndim - 1)))
+        logger.info(f"Tilt update: mean {mean_tilt_update} mrad")
         state.tilt += update['tilt']
 
     return state
@@ -396,13 +397,19 @@ def run_model(
     sim = insert_vars(vars, sim, group)
     group_scan = sim.scan
     group_tilts = sim.tilt
-    print('grou_tilts', group_tilts.shape)
+
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
+    delta_zs = sim.object.thicknesses[:-1]
+    xp = get_array_module(sim.probe.data)
+    dtype = to_real_dtype(sim.probe.data.dtype)
+    complex_dtype = to_complex_dtype(dtype)
+
     probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    t_props = tilt_propagators(sim, props, group_tilts)
+    
+    t_props = tilt_propagators(sim, props, group_tilts, kx, ky, delta_zs,)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         # psi: (batch, n_probe, Ny, Nx)
@@ -440,11 +447,13 @@ def dry_run(
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
+    delta_zs = sim.object.thicknesses[:-1]
+
     probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    t_props = tilt_propagators(sim, props, sim.tilt[tuple(group)])
+    t_props = tilt_propagators(sim, props, sim.tilt[tuple(group)], kx, ky, delta_zs)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
