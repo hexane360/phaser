@@ -14,7 +14,7 @@ See our [arXiv paper](https://arxiv.org/abs/2505.14372) for more details.
 - Multiple incoherent probe modes
 - Probe position correction
 - Upsampled (sPIE) and segmented ptychography (work in progress)
-- Adaptive propagator correction (work in progress)
+- Adaptive propagator correction (contributed by M Zhu)
 
 ## Documentation
 
