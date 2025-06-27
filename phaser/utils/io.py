@@ -107,11 +107,12 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     obj = hdf5_read_object_state(_assert_group(file['object'])) if 'object' in file else None
     iter = hdf5_read_iter_state(_assert_group(file['iter'])) if 'iter' in file else IterState.empty()
     scan = numpy.asarray(_hdf5_read_dataset(file, 'scan', numpy.float64)) if 'scan' in file else None
+    tilt = numpy.asarray(_hdf5_read_dataset(file, 'tilt', numpy.float64)) if 'tilt' in file else None
     progress = hdf5_read_progress_state(_assert_group(file['progress'])) if 'progress' in file else None
 
     return PartialReconsState(
         wavelength=wavelength, iter=iter, probe=probe,
-        object=obj, scan=scan, progress=progress
+        object=obj, scan=scan, tilt=tilt, progress=progress
     )
 
 
@@ -181,6 +182,8 @@ def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfL
         hdf5_write_object_state(state.object, file.create_group("object"))
     if state.scan is not None:
         file.create_dataset('scan', data=to_numpy(state.scan.astype(numpy.float64)))
+    if state.tilt is not None:
+        file.create_dataset('tilt', data=to_numpy(state.tilt.astype(numpy.float64)))
     if state.iter is not None:
         hdf5_write_iter_state(state.iter, file.create_group("iter"))
     if state.progress is not None:

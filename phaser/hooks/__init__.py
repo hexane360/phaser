@@ -21,6 +21,7 @@ class RawData(t.TypedDict):
     sampling: 'Sampling'
     wavelength: t.Optional[float]
     scan_hook: t.Union[t.Dict[str, t.Any], None]
+    tilt_hook: t.Union[t.Dict[str, t.Any], None]
     probe_hook: t.Union[t.Dict[str, t.Any], None]
     seed: t.Optional[object]
 
@@ -93,6 +94,33 @@ class RasterScanProps(Dataclass):
 class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
     known = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
+    }
+
+
+class TiltHookArgs(t.TypedDict):
+    dtype: DTypeLike
+    xp: t.Any
+
+
+class SimuTiltProps(Dataclass):
+    shape: t.Union[float, t.Tuple[int, int]]  # To match raster scan shape
+    tilt: t.Annotated[
+        NDArray[numpy.floating],
+        annotations.shape((2,))
+    ]
+    """global [ty, tx] in mrad"""
+
+
+class CustomTiltProps(Dataclass):
+    shape: t.Union[float, t.Tuple[int, int]] # To match raster scan shape
+    path: str
+    """Path to .npy file containing tilt array matching the size of the scan"""
+
+
+class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):
+    known = {
+        'simu': ('phaser.hooks.tilt:generate_simu_tilt', SimuTiltProps),
+        'custom': ('phaser.hooks.tilt:load_custom_tilt', CustomTiltProps),
     }
 
 

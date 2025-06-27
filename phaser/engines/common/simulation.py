@@ -190,6 +190,43 @@ def make_propagators(state: ReconsState, bwlim_frac: t.Optional[float] = 2/3) ->
     )
 
 
+def tilt_propagators(
+    state: ReconsState, 
+    base_props: t.Optional[NDArray[numpy.complexfloating]],  # shape: (Nz-1, Ny, Nx)
+    group_tilts: NDArray[numpy.floating],                    # shape: (batch, 2), in mrad
+) -> t.Optional[NDArray[numpy.complexfloating]]:
+    """
+    Applies tilt and slice-dependent propagation phase shifts to base_props.
+    -------
+    NDArray[complex] or None
+        Tilted propagators of shape (batch, Nz-1, Ny, Nx), or None if no slices.
+    """
+    if base_props is None:
+        return None
+
+    xp = get_array_module(state.probe.data)
+    dtype = to_real_dtype(state.probe.data.dtype)
+    complex_dtype = to_complex_dtype(dtype)
+
+    # (Ny, Nx)
+    ky, kx = state.probe.sampling.recip_grid(xp=xp, dtype=dtype)
+    delta_zs = state.object.thicknesses[:-1]
+
+    # Expand dims to enable broadcasting
+    kx = kx[None, None, :, :]                         # (1, 1, Ny, Nx)
+    ky = ky[None, None, :, :]                         # (1, 1, Ny, Nx)
+    delta_zs = delta_zs[None, :, None, None]          # (1, Nz-1, 1, 1)
+
+    # Convert mrad to rad via tan(mrad / 1000)
+    tiltx = xp.tan(group_tilts[:, 0] * 1e-3)[:, None, None, None]  # (batch, 1, 1, 1)
+    tilty = xp.tan(group_tilts[:, 1] * 1e-3)[:, None, None, None]  # (batch, 1, 1, 1)
+
+    tilt_ramps = xp.exp(
+        2j * xp.pi * (tiltx * kx + tilty * ky) * delta_zs
+    )
+    return (base_props[None, :, :, :] * tilt_ramps).astype(complex_dtype)  # (batch, Nz-1, Ny, Nx)
+
+
 @t.overload
 def cutout_group(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
@@ -236,16 +273,21 @@ def slice_forwards(
     if props is None:
         return f(0, None, state)
 
-    n_slices = len(props) + 1
+    n_slices = props.shape[1] + 1  # props shape: (batch, Nz-1, Ny, Nx)
 
     if is_jax(props):
         import jax
-        state = jax.lax.fori_loop(0, n_slices - 1, lambda slice_i, state: f(slice_i, props[slice_i], state), state, unroll=False)
+        def step_fn(carry, slice_i):
+            # props[:, slice_i] has shape (batch, Ny, Nx)
+            new_state = f(slice_i, props[:, slice_i], carry)
+            return new_state, None
+
+        state, _ = jax.lax.scan(step_fn, state, jax.numpy.arange(n_slices - 1))
         return f(n_slices - 1, None, state)
 
+    # fallback numpy mode
     for slice_i in range(n_slices - 1):
-        state = f(slice_i, props[slice_i], state)
-
+        state = f(slice_i, props[:, slice_i], state)
     return f(n_slices - 1, None, state)
 
 

@@ -44,11 +44,13 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
             'affine': meta.scan_correction[::-1, ::-1] if meta.scan_correction is not None else None,
         }
 
+        #TODO: add tilt to metafile
+        tilt_hook= None
     else:
         voltage = props.kv * 1e3 if props.kv is not None else None
         diff_step = props.diff_step
         scan_shape = None
-        probe_hook = scan_hook = None
+        probe_hook = scan_hook = tilt_hook = None
         adu = None
         needs_scale = False
 
@@ -84,5 +86,6 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         'wavelength': wavelength,
         'probe_hook': probe_hook,
         'scan_hook': scan_hook,
+        'tilt_hook': tilt_hook,
         'seed': None,
     }

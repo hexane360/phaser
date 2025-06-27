@@ -163,6 +163,8 @@ class ReconsState:
     object: ObjectState
     scan: NDArray[numpy.floating]
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
+    tilt: NDArray[numpy.floating]
+    """Scan coordinates (y, x), in mrads. Shape (..., 2)"""
     progress: ProgressState
 
     def to_xp(self, xp: t.Any) -> Self:
@@ -171,6 +173,7 @@ class ReconsState:
             probe=self.probe.to_xp(xp),
             object=self.object.to_xp(xp),
             scan=xp.array(self.scan),
+            tilt=xp.array(self.tilt),
             progress=self.progress,
             wavelength=self.wavelength,
         )
@@ -181,6 +184,7 @@ class ReconsState:
             probe=self.probe.to_numpy(),
             object=self.object.to_numpy(),
             scan=to_numpy(self.scan),
+            tilt=to_numpy(self.tilt),
             progress=self.progress.to_numpy(),
             wavelength=float(self.wavelength),
         )
@@ -208,6 +212,7 @@ class PartialReconsState:
     object: t.Optional[ObjectState] = None
     scan: t.Optional[NDArray[numpy.floating]] = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
+    tilt: t.Optional[NDArray[numpy.floating]] = None
     progress: t.Optional[ProgressState] = None
 
     def to_numpy(self) -> Self:
@@ -216,12 +221,13 @@ class PartialReconsState:
             probe=self.probe.to_numpy() if self.probe is not None else None,
             object=self.object.to_numpy() if self.object is not None else None,
             scan=to_numpy(self.scan) if self.scan is not None else None,
+            tilt=to_numpy(self.tilt) if self.tilt is not None else None,
             progress=self.progress.to_numpy() if self.progress is not None else None,
             wavelength=float(self.wavelength) if self.wavelength is not None else None,
         )
 
     def to_complete(self) -> ReconsState:
-        missing = tuple(filter(lambda k: getattr(self, k) is None, ('probe', 'object', 'scan', 'wavelength')))
+        missing = tuple(filter(lambda k: getattr(self, k) is None, ('probe', 'object', 'scan', 'tilt', 'wavelength')))
         if len(missing):
             raise ValueError(f"ReconsState missing {', '.join(map(repr, missing))}")
 
@@ -233,6 +239,7 @@ class PartialReconsState:
             probe=t.cast(ProbeState, self.probe),
             object=t.cast(ObjectState, self.object),
             scan=t.cast(NDArray[numpy.floating], self.scan),
+            tilt=t.cast(NDArray[numpy.floating], self.tilt),
             progress=progress, iter=iter,
         )
 

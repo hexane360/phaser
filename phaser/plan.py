@@ -2,7 +2,7 @@ from pathlib import Path
 import typing as t
 
 from .types import Dataclass, Slices, BackendName, Flag, ReconsVars, IsVersion, EmptyDict
-from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook
+from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
 from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
 from .hooks.schedule import FlagLike, ScheduleLike
 from .hooks.regularization import IterConstraintHook, GroupConstraintHook, CostRegularizerHook
@@ -19,6 +19,7 @@ class InitPlan(Dataclass, kw_only=True):
     state: t.Optional[Path] = None
 
     scan: t.Union[EmptyDict, ScanHook, None] = None
+    tilt: t.Union[EmptyDict, TiltHook, None] = None
     probe: t.Union[EmptyDict, ProbeHook, None] = None
     object: t.Optional[ObjectHook] = None  # ObjectHook('random')
 
@@ -56,6 +57,7 @@ class EnginePlan(Dataclass, kw_only=True):
     update_probe: FlagLike = True
     update_object: FlagLike = True
     update_positions: FlagLike = False
+    update_tilt: FlagLike = False
 
     calc_error: FlagLike = Flag(every=1)
     calc_error_fraction: float = 0.1
