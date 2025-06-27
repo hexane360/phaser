@@ -164,7 +164,7 @@ class ReconsState:
     scan: NDArray[numpy.floating]
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: NDArray[numpy.floating]
-    """Scan coordinates (y, x), in mrads. Shape (..., 2)"""
+    """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
     progress: ProgressState
 
     def to_xp(self, xp: t.Any) -> Self:

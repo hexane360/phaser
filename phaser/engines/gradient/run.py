@@ -384,7 +384,7 @@ def run_model(
     vars: t.Dict[ReconsVar, t.Any],
     sim: ReconsState,
     group: NDArray[numpy.integer],
-    props: t.Optional[NDArray[numpy.complexfloating]], #base propagtor with shape (ny, nx)
+    props: t.Optional[NDArray[numpy.complexfloating]], # base propagator, shape (n_slices-1, ny, nx)
     group_patterns: NDArray[numpy.floating],
     pattern_mask: NDArray[numpy.floating],
     noise_model: NoiseModel[t.Any],

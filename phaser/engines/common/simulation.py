@@ -211,26 +211,14 @@ def tilt_propagators(
     dtype = to_real_dtype(state.probe.data.dtype)
     complex_dtype = to_complex_dtype(dtype)
 
-    ## Convert mrad to rad via tan(mrad / 1000)
-    # tiltx = xp.tan(group_tilts[:, 0] * 1e-3)  # shape (batch,)
-    # tilty = xp.tan(group_tilts[:, 1] * 1e-3)  # shape (batch,)
-    # tiltx_kx = ufunc_outer(xp.multiply, tiltx, kx)  # (batch, Ny, Nx)
-    # tilty_ky = ufunc_outer(xp.multiply, tilty, ky)  # (batch, Ny, Nx)
-    # tilt_sum = 2j * xp.pi * tiltx_kx + tilty_ky # (batch, Ny, Nx)
-    # phase = ufunc_outer(xp.multiply, delta_zs, tilt_sum).transpose(1, 0, 2, 3) #(batch, Nz-1, Ny, Nx)
-    # tilt_ramps = xp.exp(phase)
-
-    tilt_ramps = xp.exp(
-        ufunc_outer(
-            xp.multiply,
-            delta_zs,
-            2j * xp.pi * (
-                ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 0] * 1e-3), kx) +
-                ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 1] * 1e-3), ky)
-                )
-            ).transpose(1, 0, 2, 3))  # (batch, Nz-1, Ny, Nx)
+    tilt_ramps = xp.exp(  # (batch, Nz-1, Ny, Nx)
+        2j. * xp.pi * delta_zs[:, None, None] * (
+            ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 0] * 1e-3), ky)[:, None, ...] +
+            ufunc_outer(xp.multiply, xp.tan(group_tilts[:, 1] * 1e-3), kx)[:, None, ...]
+        )
+    )
     
-    return (base_props[None, :, :, :] * tilt_ramps).astype(complex_dtype) 
+    return base_props[None, ...] * tilt_ramps.astype(complex_dtype) 
 
 
 @t.overload
