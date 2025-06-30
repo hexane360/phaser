@@ -421,18 +421,15 @@ def run_model(
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice))
     model_intensity = xp.sum(abs2(model_wave), axis=1)
 
-    cat_loss = []
     (loss, solver_states.noise_model_state) = noise_model.calc_loss(
         model_wave, model_intensity, group_patterns, pattern_mask, solver_states.noise_model_state
     )
 
-    cat_loss.append(loss)
     for (reg_i, reg) in enumerate(regularizers):
         (reg_loss, solver_states.regularizer_states[reg_i]) = reg.calc_loss_group(
             group, sim, solver_states.regularizer_states[reg_i]
         )
         loss += reg_loss
-        cat_loss.append(reg_loss)
     return (loss, solver_states)
 
 
