@@ -93,9 +93,9 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
             raise ValueError(f"# of tilt positions {tilt.shape[0]} doesn't match # of patterns"
                              f" before ({mask.size}) or after ({patterns.shape[0]}) filtering")
 
-    args['state'].scan = scan
-    args['state'].tilt = tilt
-    args['data'].patterns = patterns
+        args['state'].scan = scan
+        args['state'].tilt = tilt
+        args['data'].patterns = patterns
 
     return (args['data'], args['state'])
 
