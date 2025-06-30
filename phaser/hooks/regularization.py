@@ -44,6 +44,11 @@ class RegularizeLayersProps(Dataclass):
     sigma: float = 50.0  # standard deviation of gaussian filter (angstrom)
 
 
+class RegularizeTiltProps(Dataclass):
+    weight: float = 0.9  # weight of regularization to apply
+    sigma: float = 50.0  # standard deviation of gaussian filter (angstrom)
+
+
 class ObjLowPassProps(Dataclass):
     max_freq: float = 0.4  # 1/px (nyquist = 0.5)
 
@@ -58,6 +63,7 @@ class IterConstraintHook(Hook[None, IterConstraint]):
         'clamp_object_amplitude': ('phaser.engines.common.regularizers:ClampObjectAmplitude', ClampObjectAmplitudeProps),
         'limit_probe_support': ('phaser.engines.common.regularizers:LimitProbeSupport', LimitProbeSupportProps),
         'layers': ('phaser.engines.common.regularizers:RegularizeLayers', RegularizeLayersProps),
+        'tilt': ('phaser.engines.common.regularizers:RegularizeTilt', RegularizeTiltProps),
         'obj_low_pass': ('phaser.engines.common.regularizers:ObjLowPass', ObjLowPassProps),
         'obj_gaussian': ('phaser.engines.common.regularizers:ObjGaussian', GaussianProps),
         'remove_phase_ramp': ('phaser.engines.common.regularizers:RemovePhaseRamp', t.Dict[str, t.Any]),

@@ -13,7 +13,7 @@ from phaser.state import ReconsState
 from phaser.hooks.regularization import (
     ClampObjectAmplitudeProps, LimitProbeSupportProps,
     RegularizeLayersProps, ObjLowPassProps, GaussianProps,
-    CostRegularizerProps, TVRegularizerProps
+    CostRegularizerProps, TVRegularizerProps, RegularizeTiltProps
 )
 
 
@@ -424,6 +424,47 @@ class ProbeRecipTotalVariation:
         cost_scale = 1.0
 
         return (cost * cost_scale * self.cost, state)
+
+
+class RegularizeTilt:
+    # https://pypi.org/project/jaxkd/0.1.1/ ??
+    # Currently take about 5s per iteration for 256*256 scan positions, faster if keep 2D scan
+    def __init__(self, args: None, props:RegularizeTiltProps):
+        self.weight = props.weight
+        self.sigma = props.sigma
+
+    def init_state(self, sim):
+        return None
+
+    def apply_iter(self, sim, state):
+        xp = get_array_module(sim.tilt)
+        scan = numpy.array(sim.scan)
+        tilt = numpy.array(sim.tilt)
+
+        shape = tilt.shape[:-1]
+        N = int(numpy.prod(numpy.array(shape)))
+
+        xy = scan.reshape(-1, 2)
+        tilt_flat = tilt.reshape(-1, 2)
+
+        from scipy.spatial import cKDTree
+        tree = cKDTree(xy)
+        radius = 3 * self.sigma
+        tilt_blurred = numpy.zeros_like(tilt_flat)
+        for i in range(N):
+            indices = tree.query_ball_point(xy[i], r=radius)
+            if not indices:
+                tilt_blurred[i] = tilt_flat[i]
+                continue
+            neighbor_vecs = tilt_flat[indices]
+            dists = numpy.linalg.norm(xy[indices] - xy[i], axis=1)
+            weights = numpy.exp(-dists**2 / (2 * self.sigma**2))
+            weights /= numpy.sum(weights)
+            tilt_blurred[i] = numpy.sum(weights[:, None] * neighbor_vecs, axis=0)
+
+        tilt_blurred = xp.asarray(tilt_blurred).reshape(*shape, 2)
+        sim.tilt = self.weight * tilt_blurred + (1 - self.weight) * sim.tilt
+        return sim, state
 
 
 def img_grad(img: numpy.ndarray) -> t.Tuple[numpy.ndarray, numpy.ndarray]:

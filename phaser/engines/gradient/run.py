@@ -430,7 +430,6 @@ def run_model(
             group, sim, solver_states.regularizer_states[reg_i]
         )
         loss += reg_loss
-
     return (loss, solver_states)
 
 
