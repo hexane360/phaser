@@ -38,14 +38,14 @@ def parameterized_probe(args: ProbeHookArgs, props: ParameterizedProbeProps) -> 
         val = props.aberration_dict.get(name, 0.0) if props.aberration_dict else 0.0
         if is_complex:
             if isinstance(val, (list, tuple)) and len(val) == 2:
-                val_str = f"{val[0]:.4g} + {val[1]:.4g}j"
+                val_str = f"{val[0]:.2g}nm @ {val[1]:.2g}rad"
             elif isinstance(val, (int, float)):
-                val_str = f"{val:.4g} + {val:.4g}j"
+                val_str = f"{val:.2g}nm @ {0:.2g}rad"
             else:
                 val_str = f"Invalid ({val})"
         else:
             if isinstance(val, (int, float)):
-                val_str = f"{val:.4g}"
+                val_str = f"{val:.2g}"
             else:
                 val_str = f"Invalid ({val})"
         logger.info(f"Aberration {name}: {val_str}")
@@ -53,4 +53,9 @@ def parameterized_probe(args: ProbeHookArgs, props: ParameterizedProbeProps) -> 
     params = props.to_aberration_array()
     sampling = args['sampling']
 
-    return ParameterizedProbeState(sampling, conv_angle=props.conv_angle,wavelength=args['wavelength'], params=params)
+    return ParameterizedProbeState(
+        sampling,
+        conv_angle=props.conv_angle,
+        wavelength=args['wavelength'],
+        params=params
+    )

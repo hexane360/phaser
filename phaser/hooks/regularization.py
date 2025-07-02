@@ -57,6 +57,8 @@ class GaussianProps(Dataclass):
     sigma: float  # standard deviation of filter (angstrom)
     weight: float = 0.9
 
+class ParamRangeProps(Dataclass):
+    lim_range: t.Dict[str, t.Any] = {}  # e.g. {'C3': [[-10, 10], 0.5]}
 
 class IterConstraintHook(Hook[None, IterConstraint]):
     known = {
@@ -67,6 +69,7 @@ class IterConstraintHook(Hook[None, IterConstraint]):
         'obj_low_pass': ('phaser.engines.common.regularizers:ObjLowPass', ObjLowPassProps),
         'obj_gaussian': ('phaser.engines.common.regularizers:ObjGaussian', GaussianProps),
         'remove_phase_ramp': ('phaser.engines.common.regularizers:RemovePhaseRamp', t.Dict[str, t.Any]),
+        'parameter_range': ('phaser.engines.common.regularizers:ParameterRangeConstraint', ParamRangeProps),
     }
 
 
@@ -77,6 +80,7 @@ class GroupConstraintHook(Hook[None, GroupConstraint]):
         'obj_low_pass': ('phaser.engines.common.regularizers:ObjLowPass', ObjLowPassProps),
         'obj_gaussian': ('phaser.engines.common.regularizers:ObjGaussian', GaussianProps),
         'remove_phase_ramp': ('phaser.engines.common.regularizers:RemovePhaseRamp', t.Dict[str, t.Any]),
+        'parameter_range': ('phaser.engines.common.regularizers:ParameterRangeConstraint', ParamRangeProps),
     }
 
 

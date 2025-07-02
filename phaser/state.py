@@ -95,7 +95,7 @@ class ParameterizedProbeState:
     wavelength: float
     """Electron wavelength in nm"""
     params: NDArray[numpy.floating]
-    """Paramterized gemoetric abbertaions, see utils.optics.ABERRATION_SPECS"""
+    """Paramterized gemoetric abbertaions, see utils.optics.ABERRATION_SPECS, given in magntidue, (angle if complex)"""
     scale: float = 1.0
     """Intesnity rescaling"""
     mask: t.Optional[NDArray[numpy.bool_]] = None

@@ -84,9 +84,9 @@ class ParameterizedProbeProps(Dataclass):
                 if isinstance(val, (list, tuple)) and len(val) == 2:
                     coeffs.extend([float(val[0]), float(val[1])])
                 elif isinstance(val, (int, float)):
-                    coeffs.extend([float(val), float(val)])  # Imag = 0
+                    coeffs.extend([float(val), float(val)])  # angle = 0
                 else:
-                    raise ValueError(f"Aberration {name} must be (real, imag) tuple or real scalar.")
+                    raise ValueError(f"Aberration {name} must be (mag, ang) tuple or real scalar.")
             else:
                 if isinstance(val, (int, float)):
                     coeffs.append(float(val))

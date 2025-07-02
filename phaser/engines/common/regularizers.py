@@ -14,7 +14,8 @@ from phaser.state import ReconsState, ParameterizedProbeState
 from phaser.hooks.regularization import (
     ClampObjectAmplitudeProps, LimitProbeSupportProps,
     RegularizeLayersProps, ObjLowPassProps, GaussianProps,
-    CostRegularizerProps, TVRegularizerProps, RegularizeTiltProps
+    CostRegularizerProps, TVRegularizerProps, RegularizeTiltProps,
+    ParamRangeProps
 )
 
 
@@ -434,7 +435,7 @@ class ProbeRecipTotalVariation:
 class RegularizeTilt:
     # https://pypi.org/project/jaxkd/0.1.1/ ??
     # Currently take about 5s per iteration for 256*256 scan positions, faster if keep 2D scan
-    def __init__(self, args: None, props:RegularizeTiltProps):
+    def __init__(self, args: None, props: RegularizeTiltProps):
         self.weight = props.weight
         self.sigma = props.sigma
 
@@ -471,6 +472,76 @@ class RegularizeTilt:
         sim.tilt = self.weight * tilt_blurred + (1 - self.weight) * sim.tilt
         return sim, state
 
+
+
+from phaser.utils.optics import ABERRATION_SPECS
+
+class ParameterRangeConstraint:
+    """
+    Constrain or freeze probe aberration parameters by name, with interpolation.
+    lim_range: dict of {name: [[min, max], strength]}
+    freeze_indices: list of names to freeze
+    For complex aberrations, input params are [magnitude, angle] pairs.
+    """
+    def __init__(self, args: None, props: ParamRangeProps):
+        self.lim_range = props.lim_range
+
+        # Build name->index mapping, handle complex aberrations
+        self.name_to_indices = {}
+        i = 0
+        for name, _, is_complex in ABERRATION_SPECS:
+            if is_complex:
+                self.name_to_indices[name] = (i, i+1)
+                i += 2
+            else:
+                self.name_to_indices[name] = (i,)
+                i += 1
+
+    def init_state(self, sim: 'ReconsState') -> None:
+        return None
+    
+    def apply_group(self, group: NDArray[numpy.integer], sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
+        return self.apply_iter(sim, state)
+    
+    def apply_iter(self, sim: 'ReconsState', state: None) -> t.Tuple['ReconsState', None]:
+        xp = get_array_module(sim.probe.data)
+
+        if not isinstance(sim.probe, ParameterizedProbeState):
+            return sim, state
+
+        params = sim.probe.params.copy()
+
+        for name, idxs in self.name_to_indices.items():
+            # Only clamp if in lim_range
+            if name in self.lim_range:
+                rng, strength = self.lim_range[name]
+                if len(idxs) == 2:  # complex: [magnitude, angle]
+                    mag_idx, ang_idx = idxs
+                    v_mag = params[mag_idx]
+                    v_ang = params[ang_idx]
+
+                    # Clamp magnitude with interpolation
+                    minv, maxv = rng
+                    v_mag_clip = xp.clip(v_mag, minv, maxv)
+                    params = params.at[mag_idx].set((1-strength) * v_mag + strength * v_mag_clip)
+
+                    # Always wrap angle to [0, 2π)
+                    params = params.at[ang_idx].set(xp.mod(v_ang, 2 * xp.pi))
+                else:  # real
+                    idx = idxs[0]
+                    v = params[idx]
+                    minv, maxv = rng
+                    v_clip = xp.clip(v, minv, maxv)
+                    params = params.at[idx].set((1-strength) * v + strength * v_clip)
+            else:
+                # For complex aberrations, always wrap angle to [0, 2π)
+                if len(idxs) == 2:
+                    ang_idx = idxs[1]
+                    params = params.at[ang_idx].set(xp.mod(params[ang_idx], 2 * xp.pi))
+
+        sim.probe.params = params
+        return sim, state
+    
 
 def img_grad(img: numpy.ndarray) -> t.Tuple[numpy.ndarray, numpy.ndarray]:
     xp = get_array_module(img)

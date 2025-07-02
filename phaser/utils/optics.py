@@ -87,7 +87,7 @@ def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floa
     """
     Create an aberrated probe from a circular aperture and a list of aberration coefficients.
 
-    `aberrations` is a 1D array matching the order in ABERRATION_SPECS.
+    `aberrations` is a 1D array matching the order in ABERRATION_SPECS and give in magnitude (, angle if complex)
     Each term is either:
         - 1 value if imag=False (real only)
         - 2 values (cnma, cnmb) if imag=True
@@ -103,17 +103,22 @@ def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floa
     chi = xp.zeros_like(theta2, dtype=complex_dtype)
     i = 0
     for _, (n, m), imag in ABERRATION_SPECS:
-        cnma = aberrations[i]
-        i += 1
-        cnmb = aberrations[i] if imag else 0.0
         if imag:
+            mag = aberrations[i]
+            ang = aberrations[i+1]
+            cnma = mag * xp.cos(ang)
+            cnmb = mag * xp.sin(ang)
+            i += 2
+        else:
+            cnma = aberrations[i]
+            cnmb = 0.0
             i += 1
         z = xp.exp(1j * m * phi)
         power = (n + 1) / 2
         chi += theta2**power / (n + 1) * (xp.real(z) * cnma + xp.imag(z) * cnmb)
 
     mask = theta2 <= (aperture * 1e-3)**2
-    probe_freq = xp.exp(-2.j * numpy.pi * chi) * mask
+    probe_freq = xp.exp(-2.j * xp.pi * chi) * mask
 
     probe_freq /= xp.sqrt(xp.sum(abs2(probe_freq)))
     return ifft2(probe_freq)
