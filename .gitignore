@@ -1,5 +1,9 @@
 .DS_Store
 
+*.npy
+*.png
+*.ipynb
+
 __pycache__/
 *.py[cod]
 

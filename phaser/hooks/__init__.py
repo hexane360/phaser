@@ -9,10 +9,12 @@ from typing_extensions import NotRequired
 from ..types import Dataclass, Slices
 from .hook import Hook
 
+from ..utils.optics import ABERRATION_SPECS, ABERRATION_KEYS
+
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling
     from phaser.utils.object import ObjectSampling
-    from ..state import ObjectState, ProbeState, ReconsState, Patterns
+    from ..state import ObjectState, ProbeState, ParameterizedProbeState, ReconsState, Patterns
     from ..execute import Observer
 
 
@@ -54,9 +56,49 @@ class FocusedProbeProps(Dataclass):
     conv_angle: t.Optional[float] = None  # semiconvergence angle [mrad]
 
 
-class ProbeHook(Hook[ProbeHookArgs, 'ProbeState']):
+class ParameterizedProbeProps(Dataclass):
+    defocus: t.Optional[float] = None  # defocus, + is overfocus [A]
+    conv_angle: t.Optional[float] = None
+    aberration_dict: t.Optional[t.Dict[str, t.Union[float, t.List[float]]]] = None  # {'C1': 1.2, 'A1': 0.3}
+
+    def __post_init__(self):
+        if self.aberration_dict is None:
+            if self.defocus is not None:
+                object.__setattr__(self, 'aberration_dict', {'C1': float(self.defocus)})
+        else:
+            c1_val = self.aberration_dict.get("C1")
+            if c1_val is None or not isinstance(c1_val, (int, float)):
+                if self.defocus is not None:
+                    new_dict = dict(self.aberration_dict)
+                    new_dict['C1'] = float(self.defocus)
+                    object.__setattr__(self, 'aberration_dict', new_dict)
+            else:
+                if self.defocus is None:
+                    object.__setattr__(self, 'defocus', float(c1_val))
+
+    def to_aberration_array(self) -> NDArray[numpy.floating]:
+        coeffs = []
+        for name, _, is_complex in ABERRATION_SPECS:
+            val = self.aberration_dict.get(name, 0.0) if self.aberration_dict else 0.0
+            if is_complex:
+                if isinstance(val, (list, tuple)) and len(val) == 2:
+                    coeffs.extend([float(val[0]), float(val[1])])
+                elif isinstance(val, (int, float)):
+                    coeffs.extend([float(val), float(val)])  # Imag = 0
+                else:
+                    raise ValueError(f"Aberration {name} must be (real, imag) tuple or real scalar.")
+            else:
+                if isinstance(val, (int, float)):
+                    coeffs.append(float(val))
+                else:
+                    raise ValueError(f"Aberration {name} must be a real scalar for non-complex term.")
+        return numpy.array(coeffs, dtype=numpy.floating)
+    
+
+class ProbeHook(Hook[ProbeHookArgs, t.Union['ProbeState', 'ParameterizedProbeState']]):
     known = {
         'focused': ('phaser.hooks.probe:focused_probe', FocusedProbeProps),
+        'parameterized': ('phaser.hooks.probe:parameterized_probe', ParameterizedProbeProps),
     }
 
 

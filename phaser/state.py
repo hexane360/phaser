@@ -4,9 +4,10 @@ import numpy
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from phaser.utils.num import Sampling, to_numpy, get_array_module, Float
+from phaser.utils.num import Sampling, to_numpy, get_array_module, Float, to_real_dtype, ifft2, fft2
 from phaser.utils.misc import jax_dataclass
 from phaser.utils.object import ObjectSampling
+from phaser.utils.optics import make_parameterized_probe
 
 if t.TYPE_CHECKING:
     from phaser.utils.io import HdfLike
@@ -84,6 +85,66 @@ class ProbeState():
         import copy
         return copy.deepcopy(self)
 
+    
+@jax_dataclass(static_fields=('sampling', 'conv_angle', 'wavelength'))
+class ParameterizedProbeState:
+    sampling: Sampling
+    """Probe coordinate system. See `Sampling` for more details."""
+    conv_angle: float
+    """Probe semiconvergence angle in mrads"""
+    wavelength: float
+    """Electron wavelength in nm"""
+    params: NDArray[numpy.floating]
+    """Paramterized gemoetric abbertaions, see utils.optics.ABERRATION_SPECS"""
+    scale: float = 1.0
+    """Intesnity rescaling"""
+    mask: t.Optional[NDArray[numpy.bool_]] = None
+    """Mask in reciprocal space for regularizer.limit_probe_support"""
+
+    @property
+    def data(self):
+        """Probe wavefunction, in realspace. Shape (modes=1, y, x)"""
+        """Set as property, if as Field, wouldn't update? Didn't figure out why, mutation?"""
+        xp = get_array_module(self.params)
+        dtype = to_real_dtype(self.params)
+        ky, kx = self.sampling.recip_grid(dtype=dtype, xp=xp)
+        probe = make_parameterized_probe(
+            ky, kx, self.wavelength, self.conv_angle, aberrations=self.params
+        )
+        if self.mask is not None:
+            probe = ifft2(fft2(probe) * self.mask)
+        return self.scale * xp.expand_dims(probe, axis=0)
+
+
+    def resample(self, new_samp: Sampling,) -> Self:
+        # Returns a new instance with updated sampling, no need to update pixelated data
+        return self.__class__(
+            sampling=new_samp,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=self.params,
+        )
+
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=xp.array(self.params),
+        )
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=to_numpy(self.params),
+        )
+
+    def copy(self) -> Self:
+        import copy
+        return copy.deepcopy(self)
+    
 
 @jax_dataclass(static_fields=('sampling',))
 class ObjectState():
@@ -159,7 +220,7 @@ class ReconsState:
     iter: IterState
     wavelength: Float
 
-    probe: ProbeState
+    probe: t.Union[ProbeState, ParameterizedProbeState]
     object: ObjectState
     scan: NDArray[numpy.floating]
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
@@ -208,7 +269,7 @@ class PartialReconsState:
     iter: t.Optional[IterState] = None
     wavelength: t.Optional[Float] = None
 
-    probe: t.Optional[ProbeState] = None
+    probe: t.Optional[t.Union[ProbeState, ParameterizedProbeState]] = None
     object: t.Optional[ObjectState] = None
     scan: t.Optional[NDArray[numpy.floating]] = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
@@ -236,7 +297,7 @@ class PartialReconsState:
 
         return ReconsState(
             wavelength=t.cast(Float, self.wavelength),
-            probe=t.cast(ProbeState, self.probe),
+            probe=t.cast(t.Union[ProbeState, ParameterizedProbeState], self.probe),
             object=t.cast(ObjectState, self.object),
             scan=t.cast(NDArray[numpy.floating], self.scan),
             tilt=t.cast(NDArray[numpy.floating], self.tilt),

@@ -11,6 +11,22 @@ from numpy.typing import NDArray, ArrayLike
 from .num import get_array_module, ifft2, abs2, NumT, ufunc_outer, is_jax, cast_array_module
 from .num import Float, Sampling, to_complex_dtype, to_real_dtype, split_array, to_numpy
 
+ABERRATION_SPECS: t.List[t.Tuple[str, t.Tuple[int, int], bool]] = [
+    ('C1', (1, 0), False),
+    ('C3', (3, 0), False),
+    ('C5', (5, 0), False),
+    ('B2', (2, 1), True),
+    ('B4', (4, 1), True),
+    ('S3', (3, 2), True),
+    ('D4', (4, 3), True),
+    ('A1', (1, 2), True),
+    ('A2', (2, 3), True),
+    ('A3', (3, 4), True),
+    ('A4', (4, 5), True),
+    ('A5', (5, 6), True),
+]
+
+ABERRATION_KEYS = [name for name, *_ in ABERRATION_SPECS]
 
 @t.overload
 def make_focused_probe(ky: NDArray[numpy.float64], kx: NDArray[numpy.float64], wavelength: Float,
@@ -49,6 +65,58 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     probe /= xp.sqrt(xp.sum(abs2(probe)))
 
     return ifft2(probe)
+
+
+@t.overload
+def make_parameterized_probe(ky: NDArray[numpy.float64], kx: NDArray[numpy.float64], wavelength: Float,
+                       aperture: Float, *, aberrations: NDArray[numpy.float64]) -> NDArray[numpy.complex128]:
+    ...
+
+@t.overload
+def make_parameterized_probe(ky: NDArray[numpy.float32], kx: NDArray[numpy.float32], wavelength: Float,
+                       aperture: Float, *, aberrations: NDArray[numpy.float32]) -> NDArray[numpy.complex64]:
+    ...
+
+@t.overload
+def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
+                       aperture: Float, *, aberrations: NDArray[numpy.floating]) -> NDArray[numpy.complexfloating]:
+    ...
+
+def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],wavelength: Float, 
+                         aperture: Float, *, aberrations: NDArray[numpy.floating]) -> NDArray[numpy.complexfloating]:
+    """
+    Create an aberrated probe from a circular aperture and a list of aberration coefficients.
+
+    `aberrations` is a 1D array matching the order in ABERRATION_SPECS.
+    Each term is either:
+        - 1 value if imag=False (real only)
+        - 2 values (cnma, cnmb) if imag=True
+    """
+    xp = get_array_module(ky, kx)
+    dtype = to_real_dtype(ky.dtype)
+    complex_dtype = to_complex_dtype(dtype)
+
+    thetay, thetax = ky * wavelength, kx * wavelength
+    theta2 = thetay**2 + thetax**2
+    phi = xp.arctan2(ky, kx)
+
+    chi = xp.zeros_like(theta2, dtype=complex_dtype)
+    i = 0
+    for _, (n, m), imag in ABERRATION_SPECS:
+        cnma = aberrations[i]
+        i += 1
+        cnmb = aberrations[i] if imag else 0.0
+        if imag:
+            i += 1
+        z = xp.exp(1j * m * phi)
+        power = (n + 1) / 2
+        chi += theta2**power / (n + 1) * (xp.real(z) * cnma + xp.imag(z) * cnmb)
+
+    mask = theta2 <= (aperture * 1e-3)**2
+    probe_freq = xp.exp(-2.j * numpy.pi * chi) * mask
+
+    probe_freq /= xp.sqrt(xp.sum(abs2(probe_freq)))
+    return ifft2(probe_freq)
 
 
 def make_hermetian_modes(
@@ -370,7 +438,7 @@ def predict_recons_success(ronchi_mag: ArrayLike, areal_oversamp: ArrayLike) -> 
 
 
 __all__ = [
-    'make_focused_probe',
+    'make_focused_probe', 'make_parameterized_probe',
     'make_hermetian_modes', 'hermetian_modes',
     'fourier_shift_filter', 'fresnel_propagator',
     'estimate_probe_radius', 'calc_metrics', 'predict_recons_success',

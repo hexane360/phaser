@@ -201,10 +201,33 @@ def initialize_reconstruction(
 
     del raw_data
 
+    # if init_state.probe is not None and plan.init.probe is None:
+    #     logging.info("Re-using probe from initial state...")
+    #     probe = init_state.probe
+    #     probe.data = probe.data.astype(cdtype)
+
+    #     if probe.sampling != sampling:
+    #         logging.info("Resampling patterns to probe from initial state...")
+    #         data.patterns = sampling.resample_recip(data.patterns, probe.sampling)
+    #         data.pattern_mask = sampling.resample_recip(data.pattern_mask, probe.sampling)
+    #         sampling = probe.sampling
+
+    # else:
+    #     logging.info("Initializing probe...")
+    #     probe = pane.from_data(probe_hook, ProbeHook)(  # type: ignore
+    #         {'sampling': sampling, 'wavelength': wavelength, 'dtype': dtype, 'seed': seed, 'xp': xp}
+    #     )
+    # if probe.data.ndim == 2:
+    #     probe.data = probe.data.reshape((1, *probe.data.shape))
+
+    from phaser.state import ParameterizedProbeState
+
     if init_state.probe is not None and plan.init.probe is None:
         logging.info("Re-using probe from initial state...")
         probe = init_state.probe
-        probe.data = probe.data.astype(cdtype)
+
+        if not isinstance(probe, ParameterizedProbeState):
+            probe.data = probe.data.astype(cdtype)
 
         if probe.sampling != sampling:
             logging.info("Resampling patterns to probe from initial state...")
@@ -217,9 +240,11 @@ def initialize_reconstruction(
         probe = pane.from_data(probe_hook, ProbeHook)(  # type: ignore
             {'sampling': sampling, 'wavelength': wavelength, 'dtype': dtype, 'seed': seed, 'xp': xp}
         )
-    if probe.data.ndim == 2:
+
+    if not isinstance(probe, ParameterizedProbeState) and probe.data.ndim == 2:
         probe.data = probe.data.reshape((1, *probe.data.shape))
 
+        
     if init_state.scan is not None and plan.init.scan is None:
         logging.info("Re-using scan from initial state...")
         scan = init_state.scan
@@ -311,7 +336,21 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
             new_sampling = Sampling(engine.sim_shape, sampling=tuple(state.probe.sampling.sampling))
 
         logging.info(f"Resampling probe and patterns to shape {new_sampling.shape}...")
-        state.probe.data = state.probe.sampling.resample(state.probe.data, new_sampling)
+        # state.probe.data = state.probe.sampling.resample(state.probe.data, new_sampling)
+        from phaser.state import ParameterizedProbeState
+
+        if isinstance(state.probe, ParameterizedProbeState):
+            # Create a new ParameterizedProbeState with updated sampling
+            state.probe = ParameterizedProbeState(
+                sampling=new_sampling,
+                conv_angle=state.probe.conv_angle,
+                wavelength=state.probe.wavelength,
+                params=state.probe.params,
+            )
+        else:
+            state.probe.data = state.probe.sampling.resample(state.probe.data, new_sampling)
+            state.probe.sampling = new_sampling
+            
         # also resample patterns
         patterns.patterns = state.probe.sampling.resample_recip(patterns.patterns, new_sampling)
         # and pattern mask

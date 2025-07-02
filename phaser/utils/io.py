@@ -1,6 +1,7 @@
 import contextlib
 from pathlib import Path
 import typing as t
+import jax
 
 import numpy
 from numpy.typing import NDArray
@@ -8,7 +9,7 @@ import h5py
 
 from phaser.utils.num import Sampling, to_numpy, get_array_module
 from phaser.utils.object import ObjectSampling
-from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState
+from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState, ParameterizedProbeState
 
 
 HdfLike: t.TypeAlias = t.Union[h5py.File, str, Path]
@@ -119,17 +120,24 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     )
 
 
-def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
+def hdf5_read_probe_state(group: h5py.Group) -> t.Union[ProbeState, ParameterizedProbeState]:
+    extent = _hdf5_read_dataset_shape(group, 'extent', numpy.float64, (2,))
+    n_y, n_x = _hdf5_read_dataset_shape(group, 'extent', numpy.int16, (2,))
     probes = _hdf5_read_dataset(group, 'data', numpy.complexfloating)
     assert probes.ndim == 3
 
-    extent = _hdf5_read_dataset_shape(group, 'extent', numpy.float64, (2,))
-    (n_y, n_x) = probes.shape[-2:]
-
+    if 'parameters' in group:
+        parameters = numpy.atleast_1d(_hdf5_read_dataset(group, 'parameters', numpy.floating))
+        conv_angle = float(_hdf5_read_dataset(group, 'conv_angle', numpy.floating))
+        wavelength = float(_hdf5_read_dataset(group, 'wavelength', numpy.floating))
+        return ParameterizedProbeState(
+            Sampling((n_y, n_x), extent=(extent[0], extent[1])),
+            params=parameters, conv_angle=conv_angle, wavelength=wavelength
+        )
     return ProbeState(
         Sampling((n_y, n_x), extent=(extent[0], extent[1])),
         data=probes
-    )
+        )
 
 
 def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
@@ -193,7 +201,9 @@ def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfL
         hdf5_write_progress_state(state.progress, file.create_group("progress"))
 
 
-def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
+def hdf5_write_probe_state(state: t.Union[ProbeState, ParameterizedProbeState], group: h5py.Group):
+    # Pixel-wise probe data
+    #TODO: not working when turn on probe limit
     assert state.data.ndim == 3
     dataset = group.create_dataset('data', data=to_numpy(state.data))
     dataset.dims[0].label = 'mode'
@@ -202,6 +212,12 @@ def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
 
     group.create_dataset('sampling', data=state.sampling.sampling.astype(numpy.float64))
     group.create_dataset('extent', data=state.sampling.extent.astype(numpy.float64))
+    group.create_dataset('shape', data=state.sampling.shape.astype(numpy.int16))
+    if isinstance(state, ParameterizedProbeState):
+        ##TODO more readbale?
+        group.create_dataset('parameters', data=to_numpy(state.params))
+        group.create_dataset('wavelength', data=float(state.wavelength))
+        group.create_dataset('conv_angle', data=float(state.conv_angle))
 
 
 def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
