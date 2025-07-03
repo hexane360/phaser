@@ -111,8 +111,12 @@ class ParameterizedProbeState:
         probe = make_parameterized_probe(
             ky, kx, self.wavelength, self.conv_angle, aberrations=self.params
         )
-        if self.mask is not None:
-            probe = ifft2(fft2(probe) * self.mask)
+
+        # (ky, kx) = self.sampling.recip_grid(xp=xp)
+        # mask = kx**2 + ky**2 <= (27*1e-3 / self.wavelength)**2
+
+        # # if self.mask is not None:
+        # probe = ifft2(fft2(probe) * mask)
         return self.scale * xp.expand_dims(probe, axis=0)
 
 

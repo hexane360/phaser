@@ -111,14 +111,16 @@ def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floa
             i += 2
         else:
             cnma = aberrations[i]
+            if cnma != 0.0:
+                print(n, m)
             cnmb = 0.0
             i += 1
-        z = xp.exp(1j * m * phi)
+        z = xp.exp(phi * m * 1.j)
         power = (n + 1) / 2
         chi += theta2**power / (n + 1) * (xp.real(z) * cnma + xp.imag(z) * cnmb)
 
     mask = theta2 <= (aperture * 1e-3)**2
-    probe_freq = xp.exp(-2.j * xp.pi * chi) * mask
+    probe_freq = xp.exp(-2.j * xp.pi * chi /wavelength) * mask
 
     probe_freq /= xp.sqrt(xp.sum(abs2(probe_freq)))
     return ifft2(probe_freq)
