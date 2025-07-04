@@ -14,7 +14,7 @@ from ..utils.optics import ABERRATION_SPECS, ABERRATION_KEYS
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling
     from phaser.utils.object import ObjectSampling
-    from ..state import ObjectState, ProbeState, ParameterizedProbeState, ReconsState, Patterns
+    from ..state import ObjectState, ParameterizedObjectState, ProbeState, ParameterizedProbeState, ReconsState, Patterns
     from ..execute import Observer
 
 
@@ -115,9 +115,19 @@ class RandomObjectProps(Dataclass):
     sigma: float = 1e-6
 
 
-class ObjectHook(Hook[ObjectHookArgs, 'ObjectState']):
+class ParameterizedObjectProps(Dataclass):
+    spacing: t.Union[float, NDArray[numpy.floating]] = 1.0 #spacing of gaussians in A
+    offset: t.Union[float, NDArray[numpy.floating]] = 0.0
+    H1: float = 1.0e-10
+    B1: float = 1.0
+    H2: float = 0.6
+    B2: float = 1.5
+
+
+class ObjectHook(Hook[ObjectHookArgs, t.Union['ObjectState', 'ParameterizedObjectState']]):
     known = {
         'random': ('phaser.hooks.object:random_object', RandomObjectProps),
+        'parameterized': ('phaser.hooks.object:random_parameterized_object', ParameterizedObjectProps),
     }
 
 

@@ -220,7 +220,7 @@ def initialize_reconstruction(
     # if probe.data.ndim == 2:
     #     probe.data = probe.data.reshape((1, *probe.data.shape))
 
-    from phaser.state import ParameterizedProbeState
+    from phaser.state import ParameterizedProbeState, ParameterizedObjectState
 
     if init_state.probe is not None and plan.init.probe is None:
         logging.info("Re-using probe from initial state...")

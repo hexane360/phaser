@@ -111,8 +111,6 @@ def make_parameterized_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floa
             i += 2
         else:
             cnma = aberrations[i]
-            if cnma != 0.0:
-                print(n, m)
             cnmb = 0.0
             i += 1
         z = xp.exp(phi * m * 1.j)

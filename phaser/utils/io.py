@@ -9,7 +9,8 @@ import h5py
 
 from phaser.utils.num import Sampling, to_numpy, get_array_module
 from phaser.utils.object import ObjectSampling
-from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState, ParameterizedProbeState
+from phaser.state import (ReconsState, IterState, ProbeState, ObjectState, ParameterizedObjectState, 
+                          ProgressState, PartialReconsState, ParameterizedProbeState)
 
 
 HdfLike: t.TypeAlias = t.Union[h5py.File, str, Path]
@@ -244,6 +245,9 @@ def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
 
     _hdf5_write_nullable_dataset(group, 'region_min', state.sampling.region_min, numpy.float64)
     _hdf5_write_nullable_dataset(group, 'region_max', state.sampling.region_max, numpy.float64)
+    if isinstance(state, ParameterizedObjectState):
+        ##TODO more readbale?
+        group.create_dataset('parameters', data=to_numpy(state.atom_params))
 
 
 def hdf5_write_iter_state(state: IterState, group: h5py.Group):
