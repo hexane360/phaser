@@ -17,7 +17,7 @@ from phaser.utils.num import (
 from phaser.utils.optics import fourier_shift_filter
 from phaser.utils.io import OutputDir
 from phaser.execute import Observer
-from phaser.state import ReconsState
+from phaser.state import ReconsState, ParameterizedProbeState, ParameterizedObjectState
 from phaser.hooks import EngineArgs
 from phaser.hooks.solver import GradientSolver
 from phaser.hooks.regularization import CostRegularizer, GroupConstraint
@@ -69,16 +69,34 @@ def process_solvers(
         frozenset(seen), tuple(group_solvers), tuple(iter_solvers)
     )
 
-
-_PATH_MAP: t.Dict[t.Tuple[str, ...], ReconsVar] = {
-    ('object', 'data'): 'object',
-    ('probe', 'data'): 'probe',
-    ('scan',): 'positions',
-    ('tilt',): 'tilt'
-}
+def get_path_map(probe, obj) -> t.Dict[t.Tuple[str, ...], ReconsVar]:
+    from phaser.state import ParameterizedProbeState, ParameterizedObjectState
+    if isinstance(obj, ParameterizedObjectState):
+        return {
+            ('object', 'params'): 'object',
+            ('probe', 'params'): 'probe' if isinstance(probe, ParameterizedProbeState) else 'probe',
+            ('scan',): 'positions',
+            ('tilt',): 'tilt'
+        }
+    elif isinstance(probe, ParameterizedProbeState):
+        return {
+            ('object', 'data'): 'object',
+            ('probe', 'params'): 'probe',
+            ('scan',): 'positions',
+            ('tilt',): 'tilt'
+        }
+    else:
+        return {
+            ('object', 'data'): 'object',
+            ('probe', 'data'): 'probe',
+            ('scan',): 'positions',
+            ('tilt',): 'tilt'
+        }
 
 def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
     import jax.tree_util
+
+    _PATH_MAP = get_path_map(state.probe, state.object)
 
     d = {}
 
@@ -94,8 +112,11 @@ def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Op
     state = jax.tree_util.tree_map_with_path(f, state, is_leaf=lambda x: x is None)
     return (d, state)
 
+
 def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Optional[NDArray[numpy.integer]] = None) -> ReconsState:
     import jax.tree_util
+
+    _PATH_MAP = get_path_map(state.probe, state.object)
 
     def f(path: t.Tuple[str, ...], val: t.Any):
         if (var := _PATH_MAP.get(path)):
@@ -112,9 +133,17 @@ def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Opt
 
 def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -> ReconsState:
     if 'probe' in update:
-        state.probe.data += update['probe']
+        if isinstance(state.probe, ParameterizedProbeState):
+            state.probe.params += update['probe']
+        else:
+            state.probe.data += update['probe']
+
     if 'object' in update:
-        state.object.data += update['object']
+        if isinstance(state.object, ParameterizedObjectState):
+            state.object.params += update['object']
+        else:
+            state.object.data += update['probe']
+            
     if 'positions' in update:
         xp = get_array_module(update['positions'])
         # subtract mean position update
@@ -202,8 +231,6 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     any_output = flag_any_true(save, props.niter) or flag_any_true(save_images, props.niter)
 
     # TODO: this really needs cleanup
-
-
     with OutputDir(
         props.save_options.out_dir, any_output,
         engine_i=engine_i, name=recons_name,
@@ -227,7 +254,17 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
 
         logger.info("Pre-calculated intensities")
         logger.info(f"Rescaling initial probe intensity by {rescale_factor:.2e}")
-        state.probe.data *= xp.sqrt(rescale_factor)
+
+        if isinstance(state.probe, ParameterizedProbeState):
+            state.probe = ParameterizedProbeState(
+                sampling=state.probe.sampling,
+                conv_angle=state.probe.conv_angle,
+                wavelength=state.probe.wavelength,
+                params=state.probe.params,
+                scale=float(xp.sqrt(rescale_factor)),  # ensure it's a float, not an array
+            )
+        else:
+            state.probe.data *= xp.sqrt(rescale_factor)
         probe_int = xp.sum(abs2(state.probe.data))
 
         observer.start_solver()
@@ -244,6 +281,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             iter_vars = all_vars & t.cast(t.Set[ReconsVar],
                 set(k for (k, flag) in flags.items() if flag({'state': state, 'niter': props.niter}))
             )
+            print("iter_vars:", iter_vars)
+            print("all_vars:", all_vars)
             # gradients for per-iteration solvers
             iter_grads = tree_zeros_like(extract_vars(state, iter_vars & _PER_ITER_VARS)[0])
             # whether to shuffle groups this iteration
@@ -287,6 +326,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             for (sol_i, solver) in enumerate(iter_solvers):
                 solver_grads = filter_vars(iter_grads, solver.params)
                 if len(solver_grads) == 0:
+                    print(f"Skipping solver {solver.name} for group {group_i} as it has no gradients")
                     continue
                 (update, iter_solver_states[sol_i]) = solver.update(
                     state, iter_solver_states[sol_i], filter_vars(iter_grads, solver.params), loss
@@ -401,11 +441,11 @@ def run_model(
 
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     delta_zs = sim.object.thicknesses[:-1]
-    xp = get_array_module(sim.probe.data)
-    dtype = to_real_dtype(sim.probe.data.dtype)
+    probes = sim.probe.data
+    xp = get_array_module(probes)
+    dtype = to_real_dtype(probes.dtype)
     complex_dtype = to_complex_dtype(dtype)
 
-    probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
@@ -430,7 +470,6 @@ def run_model(
             group, sim, solver_states.regularizer_states[reg_i]
         )
         loss += reg_loss
-
     return (loss, solver_states)
 
 

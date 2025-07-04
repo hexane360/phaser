@@ -19,7 +19,7 @@ from .misc import create_sparse_groupings
 
 
 if t.TYPE_CHECKING:
-    from ..state import ObjectState, ProbeState
+    from ..state import ObjectState, ProbeState, ParameterizedProbeState ##TODO add ploting function of ParameterizedProbeState
     from matplotlib.axes import Axes
     from matplotlib.text import Text
     from matplotlib.figure import Figure

@@ -4,9 +4,10 @@ import numpy
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from phaser.utils.num import Sampling, to_numpy, get_array_module, Float
+from phaser.utils.num import Sampling, to_numpy, get_array_module, Float, to_real_dtype, ifft2, fft2, to_complex_dtype
 from phaser.utils.misc import jax_dataclass
-from phaser.utils.object import ObjectSampling
+from phaser.utils.object import ObjectSampling, parameterized_object
+from phaser.utils.optics import make_parameterized_probe
 
 if t.TYPE_CHECKING:
     from phaser.utils.io import HdfLike
@@ -84,6 +85,70 @@ class ProbeState():
         import copy
         return copy.deepcopy(self)
 
+    
+@jax_dataclass(static_fields=('sampling', 'conv_angle', 'wavelength'))
+class ParameterizedProbeState:
+    sampling: Sampling
+    """Probe coordinate system. See `Sampling` for more details."""
+    conv_angle: float
+    """Probe semiconvergence angle in mrads"""
+    wavelength: float
+    """Electron wavelength in nm"""
+    params: NDArray[numpy.floating]
+    """Paramterized gemoetric abbertaions, see utils.optics.ABERRATION_SPECS, given in magntidue, (angle if complex)"""
+    scale: float = 1.0
+    """Intesnity rescaling"""
+    mask: t.Optional[NDArray[numpy.bool_]] = None
+    """Mask in reciprocal space for regularizer.limit_probe_support"""
+
+    @property
+    def data(self):
+        """Probe wavefunction, in realspace. Shape (modes=1, y, x)"""
+        """Set as property, if as Field, wouldn't update? Didn't figure out why, mutation?"""
+        xp = get_array_module(self.params)
+        dtype = to_real_dtype(self.params)
+        ky, kx = self.sampling.recip_grid(dtype=dtype, xp=xp)
+        probe = make_parameterized_probe(
+            ky, kx, self.wavelength, self.conv_angle, aberrations=self.params
+        )
+
+        # (ky, kx) = self.sampling.recip_grid(xp=xp)
+        # mask = kx**2 + ky**2 <= (27*1e-3 / self.wavelength)**2
+
+        # # if self.mask is not None:
+        # probe = ifft2(fft2(probe) * mask)
+        return self.scale * xp.expand_dims(probe, axis=0)
+
+
+    def resample(self, new_samp: Sampling,) -> Self:
+        # Returns a new instance with updated sampling, no need to update pixelated data
+        return self.__class__(
+            sampling=new_samp,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=self.params,
+        )
+
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=xp.array(self.params),
+        )
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            conv_angle=self.conv_angle,
+            wavelength=self.wavelength,
+            params=to_numpy(self.params),
+        )
+
+    def copy(self) -> Self:
+        import copy
+        return copy.deepcopy(self)
+    
 
 @jax_dataclass(static_fields=('sampling',))
 class ObjectState():
@@ -117,6 +182,89 @@ class ObjectState():
         import copy
         return copy.deepcopy(self)
 
+
+@jax_dataclass(static_fields=('sampling', 'wavelength', 'n_atoms'))
+class ParameterizedObjectState():
+    sampling: ObjectSampling
+    """Object coordinate system. See `ObjectSampling` for more details."""
+    thicknesses: NDArray[numpy.floating]
+    """
+    Slice thicknesses (in length units).
+    Length < 2 for single slice, equal to the number of slices otherwise.
+    """
+    wavelength: float
+    """Electron wavelength in nm"""
+    params: NDArray[numpy.floating]
+    """Paramterized object parameters, concatenated from atom_params and layer_offset.
+    `atom_params` is (nz, n_atoms, 6) array, where
+    6 is the number of parameters per atom (e.g., position, potential, etc.).
+    `layer_offset` is (nz,) array, where nz is the number of slices."""
+    n_atoms: int
+    """Number of atoms per slice, used to reshape `atom_params`."""
+
+    @property
+    def atom_params(self):
+        nz = len(self.thicknesses)
+        atom_size = 6
+        total_atoms = nz * self.n_atoms * atom_size
+        return self.params[:total_atoms].reshape((nz, self.n_atoms, atom_size))
+
+    @property
+    def layer_offset(self):
+        nz = len(self.thicknesses)
+        return self.params[-nz:]
+
+    @property
+    def data(self):
+        """Object wavefunction, in realspace. Shape (z, y, x)"""
+        xp = get_array_module(self.params)
+        dtype = to_real_dtype(self.params.dtype)
+        cdtype = to_complex_dtype(dtype)
+        shape = (len(self.thicknesses), *self.sampling.shape)
+        nz = len(self.thicknesses)
+        atom_size = 6
+        total_atoms = nz * self.n_atoms * atom_size
+        atom_params = self.params[:total_atoms].reshape((nz, self.n_atoms, atom_size))
+        layer_offset = self.params[-nz:]
+        sigma_e = 2 * numpy.pi * 9.11e-31 * 1.6e-19 * self.wavelength * 1e-9 / (6.626e-34)**2
+
+        obj = parameterized_object(
+            shape, atom_params, layer_offset,
+            dtype=cdtype,
+            xp=xp,
+            sigma_e=sigma_e
+        )
+        return obj
+
+
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            thicknesses=xp.array(self.thicknesses),
+            wavelength=self.wavelength,
+            params=xp.array(self.params),
+            n_atoms=self.n_atoms,
+        )
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            sampling=self.sampling,
+            thicknesses=to_numpy(self.thicknesses),
+            wavelength=float(self.wavelength),
+            params=to_numpy(self.params),
+            n_atoms=int(self.n_atoms),
+        )
+
+    def zs(self) -> NDArray[numpy.floating]:
+        xp = get_array_module(self.thicknesses)
+        if len(self.thicknesses) < 2:
+            return xp.array([0.], dtype=self.thicknesses.dtype)
+        return xp.cumsum(self.thicknesses) - self.thicknesses
+
+    def copy(self) -> Self:
+        import copy
+        return copy.deepcopy(self)
+    
 
 @jax_dataclass
 class ProgressState:
@@ -159,8 +307,8 @@ class ReconsState:
     iter: IterState
     wavelength: Float
 
-    probe: ProbeState
-    object: ObjectState
+    probe: t.Union[ProbeState, ParameterizedProbeState]
+    object: t.Union[ObjectState, ParameterizedObjectState]
     scan: NDArray[numpy.floating]
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: NDArray[numpy.floating]
@@ -208,8 +356,8 @@ class PartialReconsState:
     iter: t.Optional[IterState] = None
     wavelength: t.Optional[Float] = None
 
-    probe: t.Optional[ProbeState] = None
-    object: t.Optional[ObjectState] = None
+    probe: t.Optional[t.Union[ProbeState, ParameterizedProbeState]] = None
+    object: t.Optional[t.Union[ObjectState, ParameterizedObjectState]] = None
     scan: t.Optional[NDArray[numpy.floating]] = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: t.Optional[NDArray[numpy.floating]] = None
@@ -236,8 +384,8 @@ class PartialReconsState:
 
         return ReconsState(
             wavelength=t.cast(Float, self.wavelength),
-            probe=t.cast(ProbeState, self.probe),
-            object=t.cast(ObjectState, self.object),
+            probe=t.cast(t.Union[ProbeState, ParameterizedProbeState], self.probe),
+            object=t.cast(t.Union[ObjectState, ParameterizedObjectState], self.object),
             scan=t.cast(NDArray[numpy.floating], self.scan),
             tilt=t.cast(NDArray[numpy.floating], self.tilt),
             progress=progress, iter=iter,

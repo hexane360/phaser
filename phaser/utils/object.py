@@ -12,7 +12,7 @@ import numpy
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 from typing_extensions import Self
 
-from .num import get_array_module, cast_array_module, to_real_dtype, as_numpy, at
+from .num import get_array_module, cast_array_module, to_real_dtype, as_numpy, at, to_complex_dtype
 from .num import as_array, is_cupy, is_jax, NumT, ComplexT, DTypeT
 from .misc import create_rng, jax_dataclass
 
@@ -52,6 +52,79 @@ def random_phase_object(shape: t.Iterable[int], sigma: float = 1e-6, *, seed: t.
     obj_angle = xp2.array(rng.normal(0., sigma, tuple(shape)), dtype=real_dtype)
     return xp2.cos(obj_angle) + xp2.sin(obj_angle) * 1.j
 
+@t.overload
+def parameterized_object(
+    shape: t.Iterable[int],
+    atom_params: NDArray[numpy.floating],
+    layer_offset: NDArray[numpy.floating],
+    dtype: t.Optional[ComplexT] = None,
+    xp: t.Any = None,
+    sigma_e: float = 1.0,
+) ->  NDArray[ComplexT]:
+    ...
+
+@t.overload
+def parameterized_object(
+    shape: t.Iterable[int],
+    atom_params: NDArray[numpy.floating],
+    layer_offset: NDArray[numpy.floating],
+    dtype: t.Optional[DTypeLike] = None,
+    xp: t.Any = None,
+    sigma_e: float = 1.0,
+) -> NDArray[numpy.complexfloating]:
+    ...
+
+def parameterized_object(
+    shape: t.Iterable[int],
+    atom_params: NDArray[numpy.floating],
+    layer_offset: NDArray[numpy.floating],
+    dtype: t.Optional[DTypeLike] = None,
+    xp: t.Any = None,
+    sigma_e: float = 1.0,
+) -> NDArray[numpy.complexfloating]:
+    """
+    Create a parameterized 3D object transmission function from a (nz, n_atoms, 6) array of atom parameters.
+
+    - shape: (nz, ny, nx)
+    - atom_params: (nz, n_atoms, 6)
+    - layer_offset: (nz,) or scalar
+
+    extent: (height, width) in same units as x/y. If None, defaults to (ny, nx).
+    sigma_e: electron interaction constant.
+    """
+    xp2 = numpy if xp is None else cast_array_module(xp)
+    dtype = to_real_dtype(dtype) if dtype is not None else numpy.float64
+    cdtype = to_complex_dtype(dtype) if dtype is not None else numpy.complex64
+    shape = tuple(shape)
+    assert len(shape) == 3, "Only 3D objects for multislice simulation is supported: shape should be (nz, ny, nx)"
+    nz, ny, nx = shape
+
+    y = xp2.arange(ny, dtype=dtype)
+    x = xp2.arange(nx, dtype=dtype)
+    grid_x, grid_y = xp2.meshgrid(x, y)
+
+    obj = xp2.empty((nz, ny, nx), dtype=cdtype)
+    for iz in range(nz):
+        atoms = atom_params[iz]
+        x0 = atoms[:, 0][:, None, None]
+        y0 = atoms[:, 1][:, None, None]
+        H1 = atoms[:, 2][:, None, None]/1e10
+        B1 = atoms[:, 3][:, None, None]
+        H2 = atoms[:, 4][:, None, None]
+        B2 = atoms[:, 5][:, None, None]
+
+        dx = grid_x[None, :, :] - x0
+        dy = grid_y[None, :, :] - y0
+        r2 = dx**2 + dy**2
+
+        V_l = xp2.sum(H1 * xp2.exp(-r2 / B1), axis=0)
+        A_l = -xp2.sum(H2 * xp2.exp(-r2 / B2), axis=0)
+        A_l += layer_offset[iz]
+        if is_jax(obj):
+            obj = obj.at[iz].set(A_l * xp2.exp(1j * sigma_e * V_l))
+        else:
+            obj[iz] = A_l * xp2.exp(1j * sigma_e * V_l)
+    return obj
 
 def resample_slices(
     obj: NDArray[NumT], old_thicknesses: ArrayLike, new_thicknesses: ArrayLike, *,

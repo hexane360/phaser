@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike, NDArray
 from phaser.utils.num import fft2, ifft2, abs2, Sampling, get_array_module, at, to_numpy, NumT
 from phaser.utils.object import ObjectSampling
 from phaser.utils.image import remove_linear_ramp, translation_matrix, rotation_matrix
-from phaser.state import ObjectState
+from phaser.state import ObjectState, ParameterizedObjectState
 from phaser.types import cast_length
 
 
@@ -157,7 +157,7 @@ def _cross_correlate(x: NDArray[numpy.floating], y: NDArray[numpy.floating], max
 
 
 def align_object_to_ground_truth(
-    object: ObjectState,
+    object: t.Union[ObjectState, ParameterizedObjectState],
     ground_truth: NDArray[numpy.floating],
     ground_truth_sampling: ArrayLike,
     rotation_angle: float = 0.0,
