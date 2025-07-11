@@ -421,7 +421,7 @@ def run_model(
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=complex_dtype) # (batch, n_probe)
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=dtype) # (batch, n_probe)
     if sim.opr.data is not None:
         if xp_is_jax(xp):
             group_opr = group_opr.at[:, 1:sim.opr.data.shape[-1]+1].set(sim.opr.data)
@@ -476,7 +476,7 @@ def dry_run(
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=complex_dtype) # (batch, n_probe)
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=dtype) # (batch, n_probe)
     update_path_map(sim)
 
     #TODO not the right place to raise error

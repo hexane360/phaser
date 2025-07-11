@@ -53,6 +53,10 @@ class GaussianProps(Dataclass):
     weight: float = 0.9
 
 
+class ProbeOrthogonalityProps(Dataclass):
+    pass
+
+
 class IterConstraintHook(Hook[None, IterConstraint]):
     known = {
         'clamp_object_amplitude': ('phaser.engines.common.regularizers:ClampObjectAmplitude', ClampObjectAmplitudeProps),
@@ -61,6 +65,7 @@ class IterConstraintHook(Hook[None, IterConstraint]):
         'obj_low_pass': ('phaser.engines.common.regularizers:ObjLowPass', ObjLowPassProps),
         'obj_gaussian': ('phaser.engines.common.regularizers:ObjGaussian', GaussianProps),
         'remove_phase_ramp': ('phaser.engines.common.regularizers:RemovePhaseRamp', t.Dict[str, t.Any]),
+        'probe_orthogonality': ('phaser.engines.common.regularizers:ProbeOrthogonality', ProbeOrthogonalityProps),
     }
 
 
@@ -71,6 +76,7 @@ class GroupConstraintHook(Hook[None, GroupConstraint]):
         'obj_low_pass': ('phaser.engines.common.regularizers:ObjLowPass', ObjLowPassProps),
         'obj_gaussian': ('phaser.engines.common.regularizers:ObjGaussian', GaussianProps),
         'remove_phase_ramp': ('phaser.engines.common.regularizers:RemovePhaseRamp', t.Dict[str, t.Any]),
+        'probe_orthogonality': ('phaser.engines.common.regularizers:ProbeOrthogonality', ProbeOrthogonalityProps),
     }
 
 
