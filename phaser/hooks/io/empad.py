@@ -45,12 +45,13 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         }
 
         #TODO: add tilt to metafile
-        tilt_hook= None
+        tilt_hook = None
+        opr_hook = None
     else:
         voltage = props.kv * 1e3 if props.kv is not None else None
         diff_step = props.diff_step
         scan_shape = None
-        probe_hook = scan_hook = tilt_hook = None
+        probe_hook = scan_hook = tilt_hook = opr_hook = None
         adu = None
         needs_scale = False
 
@@ -87,5 +88,6 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         'probe_hook': probe_hook,
         'scan_hook': scan_hook,
         'tilt_hook': tilt_hook,
+        'opr_hook': opr_hook,
         'seed': None,
     }

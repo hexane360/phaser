@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 from phaser.utils.num import (
     get_array_module, get_scipy_module, Float,
-    jit, fft2, ifft2, abs2, xp_is_jax, to_real_dtype
+    jit, fft2, ifft2, abs2, xp_is_jax, to_real_dtype, to_complex_dtype
 )
 from phaser.state import ReconsState
 from phaser.hooks.regularization import (
@@ -360,6 +360,43 @@ class LayersTikhonov:
         return (cost * cost_scale * self.cost, state)
 
 
+class ProbeOrthogonality:
+    def __init__(self, args: None, props: None) -> None:
+        return None
+
+    def init_state(self, sim: ReconsState) -> None:
+        return None
+
+    def apply_group(self, group: NDArray[numpy.integer], sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
+        return self.apply_iter(sim, state)
+        
+    def apply_iter(self, sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
+        """
+        Theorically this make sense because without orthogonality the probe modes are not mutally 
+        incoherent and will result in interference which is against the goal of probe modes. 
+        But practically gives really strange probe
+        #TODO project the OPR weights back to the new basis
+        """
+        xp = get_array_module(sim.probe.data)
+        dtype = to_real_dtype(sim.probe.data.dtype)
+        probes = sim.probe.data  # Shape: (n_modes, Ny, Nx)
+
+        n_modes, Ny, Nx = probes.shape
+        modes_flat = probes.reshape(n_modes, -1)  # Shape: (n_modes, Ny*Nx)
+
+        A = modes_flat @ modes_flat.conj().T  # Shape: (n_modes, n_modes)
+        eigvals, eigvecs = xp.linalg.eigh(A)  # eigvecs: columns are eigenvectors
+        ortho_modes_flat = eigvecs.T @ modes_flat  # (n_modes, Ny*Nx)
+        ortho_modes = ortho_modes_flat.reshape(n_modes, Ny, Nx)
+
+        total_intensity = xp.sum(xp.abs(ortho_modes) ** 2, axis=(1, 2))
+        order = xp.argsort(-total_intensity)
+        ortho_modes = ortho_modes[order]
+
+        sim.probe.data = ortho_modes
+        return sim, None
+
+
 class ProbePhaseTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
@@ -381,7 +418,7 @@ class ProbePhaseTikhonov:
         cost_scale = 1.0
 
         return (cost * cost_scale * self.cost, state)
-
+    
 
 class ProbeRecipTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):

@@ -2,7 +2,7 @@ from pathlib import Path
 import typing as t
 
 from .types import Dataclass, Slices, BackendName, Flag, ReconsVars, IsVersion, EmptyDict
-from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
+from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook, OPRHook
 from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
 from .hooks.schedule import FlagLike, ScheduleLike
 from .hooks.regularization import IterConstraintHook, GroupConstraintHook, CostRegularizerHook
@@ -12,7 +12,7 @@ SaveType: t.TypeAlias = t.Literal[
     'probe', 'probe_mag', 'probe_recip', 'probe_recip_mag',
     'object_phase_stack', 'object_phase_sum',
     'object_mag_stack', 'object_mag_sum',
-    'scan', 'tilt',
+    'scan', 'tilt', 'opr'
 ]
 
 
@@ -21,6 +21,7 @@ class InitPlan(Dataclass, kw_only=True):
 
     scan: t.Union[EmptyDict, ScanHook, None] = None
     tilt: t.Union[EmptyDict, TiltHook, None] = None
+    opr: t.Union[EmptyDict, OPRHook, None] = None
     probe: t.Union[EmptyDict, ProbeHook, None] = None
     object: t.Optional[ObjectHook] = None  # ObjectHook('random')
 
@@ -63,6 +64,7 @@ class EnginePlan(Dataclass, kw_only=True):
     update_object: FlagLike = True
     update_positions: FlagLike = False
     update_tilt: FlagLike = False
+    update_opr: FlagLike = False
 
     calc_error: FlagLike = Flag(every=1)
     calc_error_fraction: float = 0.1

@@ -17,7 +17,7 @@ def generate_global_tilt(args: TiltHookArgs, props: GlobalTiltProps) -> NDArray[
     ty, tx = props.tilt
     ny, nx = args['shape']
 
-    base = xp.array([ty, tx], dtype=xp.float32) 
+    base = xp.array([ty, tx], dtype=args['dtype']) 
     tilt_array = xp.broadcast_to(base, (ny, nx, 2))
     return tilt_array
 
@@ -52,4 +52,4 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     else:
         raise ValueError(f"Loaded tilt data must be 2D or 3D array, got shape {tilt_data.shape}")
 
-    return xp.array(result, dtype=xp.float32)
+    return xp.array(result, dtype=args['dtype'])

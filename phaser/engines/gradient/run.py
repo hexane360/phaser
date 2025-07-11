@@ -12,7 +12,7 @@ from phaser.hooks.solver import NoiseModel
 from phaser.utils.misc import create_sparse_groupings, create_compact_groupings, shuffled, jax_dataclass
 from phaser.utils.num import (
     get_array_module, cast_array_module, jit,
-    fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_real_dtype
+    fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_real_dtype, xp_is_jax, ufunc_outer
 )
 from phaser.utils.optics import fourier_shift_filter
 from phaser.utils.io import OutputDir
@@ -28,7 +28,7 @@ from ..common.simulation import GroupManager, make_propagators, tilt_propagators
 
 
 logger = logging.getLogger(__name__)
-_PER_ITER_VARS: t.FrozenSet[ReconsVar] = frozenset({'positions', 'tilt'})
+_PER_ITER_VARS: t.FrozenSet[ReconsVar] = frozenset({'positions', 'tilt', 'opr'})
 
 
 def process_solvers(
@@ -77,6 +77,11 @@ _PATH_MAP: t.Dict[t.Tuple[str, ...], ReconsVar] = {
     ('tilt',): 'tilt'
 }
 
+def update_path_map(state: ReconsState):
+    global _PATH_MAP
+    if state.opr.data is not None:
+        _PATH_MAP[('opr', 'data')] = 'opr'
+
 def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
     import jax.tree_util
 
@@ -115,6 +120,14 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
         state.probe.data += update['probe']
     if 'object' in update:
         state.object.data += update['object']
+    if 'opr' in update and state.opr.data is not None:
+        mean_update = update['opr'].mean(axis=tuple(range(len(update['opr'].shape) - 1)), keepdims=True)
+        state.opr.data += state.opr.weight * (update['opr']-mean_update) 
+        #remove global variation, that should be attribtued to the common basis
+        if not state.opr.varInt:
+            state.opr.data = state.opr.data / state.opr.data.mean(axis=-1, keepdims=True) #type: ignore
+        # normalize to keep the intensity constant
+        ##TODO: apply smoothing
     if 'positions' in update:
         xp = get_array_module(update['positions'])
         # subtract mean position update
@@ -192,6 +205,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         'object': process_flag(props.update_object),
         'positions': process_flag(props.update_positions),
         'tilt': process_flag(props.update_tilt),
+        'opr': process_flag(props.update_opr),
     }
     save = process_flag(props.save)
     save_images = process_flag(props.save_images)
@@ -398,7 +412,6 @@ def run_model(
     sim = insert_vars(vars, sim, group)
     group_scan = sim.scan
     group_tilts = sim.tilt
-
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     delta_zs = sim.object.thicknesses[:-1]
     xp = get_array_module(sim.probe.data)
@@ -409,7 +422,13 @@ def run_model(
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=sim.opr.data.dtype if sim.opr.data is not None else dtype) # (batch, n_probe)
+    if sim.opr.data is not None:
+        if xp_is_jax(xp):
+            group_opr = group_opr.at[:, :sim.opr.data.shape[-1]].set(sim.opr.data)
+        else:
+            group_opr[:, :sim.opr.data.shape[-1]] = sim.opr.data  # first probe remain fixed, vmodes from the second are updated
+    probes = probes * group_opr[:, :, None, None]
     t_props = tilt_propagators(sim, props, group_tilts, kx, ky, delta_zs,)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
@@ -450,10 +469,28 @@ def dry_run(
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     delta_zs = sim.object.thicknesses[:-1]
 
+    xp = get_array_module(sim.probe.data)
+    dtype = to_real_dtype(sim.probe.data.dtype)
+    complex_dtype = to_complex_dtype(dtype)
+
     probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=sim.opr.data.dtype if sim.opr.data is not None else dtype) # (batch, n_probe)
+    update_path_map(sim)
+
+    #TODO not the right place to raise error
+        # raise ValueError(
+        #     f"OPR modes must be in the range [0, {sim.probe.data.shape[0] - 1}], "
+        #     f"but got {sim.opr.data.shape[-1]}")
+    
+    if sim.opr.data is not None:
+        if xp_is_jax(xp):
+            group_opr = group_opr.at[:, :sim.opr.data.shape[-1]].set(sim.opr.data[tuple(group)])
+        else:
+            group_opr[:, :sim.opr.data.shape[-1]] = sim.opr.data[tuple(group)]  # first probe remain fixed, vmodes from the second are updated
+    probes = probes * group_opr[:, :, None, None]
     t_props = tilt_propagators(sim, props, sim.tilt[tuple(group)], kx, ky, delta_zs)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
