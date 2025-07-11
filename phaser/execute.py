@@ -10,8 +10,8 @@ from phaser.utils.num import cast_array_module, get_backend_module, xp_is_jax, S
 from phaser.utils.object import ObjectSampling
 from phaser.utils.misc import unwrap
 from .hooks import Hook, ObjectHook, RawData
-from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
-from .state import Patterns, ReconsState, PartialReconsState, IterState, ProgressState
+from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook, OPRHook
+from .state import Patterns, ReconsState, PartialReconsState, IterState, ProgressState, OPRState
 
 
 class Observer:
@@ -128,6 +128,10 @@ def load_raw_data(
         pane.from_data(t.cast(dict, raw_data.get('probe_hook', None)), ProbeHook) if raw_data.get('probe_hook', None) is not None else None,
         _MISSING if plan.init.probe in (None, {}) else plan.init.probe
     ))
+    raw_data['opr_hook'] = pane.into_data(merge(  # type: ignore
+        pane.from_data(t.cast(dict, raw_data.get('opr_hook', None)), OPRHook) if raw_data.get('opr_hook', None) is not None else None,
+        _MISSING if plan.init.opr in (None, {}) else plan.init.opr
+    ))
     #print(f"scan_hook: {raw_data['scan_hook']}")
     #print(f"probe_hook: {raw_data['probe_hook']}")
 
@@ -137,12 +141,16 @@ def load_raw_data(
         raw_data['tilt_hook'] = {'type': 'global', 'tilt': [0., 0.]}
     if raw_data['probe_hook'] is None and init_state.probe is None:
         raise ValueError("`probe` must be specified by raw data, previous state, or manually in `init.probe`")
+    if raw_data['opr_hook'] is None and init_state.opr is None:
+        raw_data['opr_hook'] = {'type': 'default', 'vmodes': 0,}
     if raw_data['scan_hook'] == {}:
         raise ValueError("Manual `init.scan` specified to override initial state, but scan was not provided by the raw data")
     if raw_data['tilt_hook'] == {}:
         raise ValueError("Manual `init.tilt` specified to override initial state, but tilt was not provided by the raw data")
     if raw_data['probe_hook'] == {}:
         raise ValueError("Manual `init.probe` specified to override initial state, but probe was not provided by the raw data")
+    if raw_data['opr_hook'] == {}:
+        raise ValueError("Manual `init.opr` specified to override initial state, but OPR was not provided by the raw data")
 
     raw_data['wavelength'] = wavelength
     raw_data['seed'] = seed
@@ -198,7 +206,7 @@ def initialize_reconstruction(
     probe_hook = raw_data.get('probe_hook', None)
     scan_hook = raw_data.get('scan_hook', None)
     tilt_hook = raw_data.get('tilt_hook', None)
-
+    opr_hook = raw_data.get('opr_hook', None)
     del raw_data
 
     if init_state.probe is not None and plan.init.probe is None:
@@ -238,6 +246,15 @@ def initialize_reconstruction(
             {'dtype': dtype, 'xp': xp, 'shape': scan.shape[:-1]}
         )
     
+    if init_state.opr is not None and plan.init.opr is None:
+        logging.info("Re-using OPR from initial state...")
+        opr: OPRState = init_state.opr
+    else:
+        logging.info("Initializing OPR...")
+        opr: OPRState = pane.from_data(opr_hook, OPRHook)(  # type: ignore
+            {'dtype': dtype, 'xp': xp, 'shape': scan.shape[:-1]}
+        )
+
     obj_pad_px: float = plan.engines[0].obj_pad_px if len(plan.engines) > 0 else 5.0  # type: ignore
     obj_sampling = ObjectSampling.from_scan(
         scan, sampling.sampling, sampling.extent / 2. + obj_pad_px * sampling.sampling
@@ -263,6 +280,7 @@ def initialize_reconstruction(
         object=obj,
         scan=scan,
         tilt=tilt,
+        opr=opr,
         progress=ProgressState(iters=numpy.array([]), detector_errors=numpy.array([])),
         wavelength=wavelength
     )

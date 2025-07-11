@@ -8,7 +8,7 @@ import h5py
 
 from phaser.utils.num import Sampling, to_numpy, get_array_module
 from phaser.utils.object import ObjectSampling
-from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState
+from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState, OPRState
 
 
 HdfLike: t.TypeAlias = t.Union[h5py.File, str, Path]
@@ -108,14 +108,17 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     iter = hdf5_read_iter_state(_assert_group(file['iter'])) if 'iter' in file else IterState.empty()
     scan = numpy.asarray(_hdf5_read_dataset(file, 'scan', numpy.float64)) if 'scan' in file else None
     tilt = numpy.asarray(_hdf5_read_dataset(file, 'tilt', numpy.float64)) if 'tilt' in file else None
+    opr = hdf5_read_opr_state(_assert_group(file['OPR'])) if 'OPR' in file else None
 
     if tilt is not None and scan is not None:
         assert tilt.shape == scan.shape
+    if opr is not None and scan is not None and opr.data is not None:
+        assert opr.data.shape[:-1] == scan.shape
     progress = hdf5_read_progress_state(_assert_group(file['progress'])) if 'progress' in file else None
 
     return PartialReconsState(
         wavelength=wavelength, iter=iter, probe=probe,
-        object=obj, scan=scan, tilt=tilt, progress=progress
+        object=obj, scan=scan, tilt=tilt, opr=opr, progress=progress
     )
 
 
@@ -130,6 +133,14 @@ def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
         Sampling((n_y, n_x), extent=(extent[0], extent[1])),
         data=probes
     )
+
+
+def hdf5_read_opr_state(group: h5py.Group) -> OPRState:
+    data = numpy.asarray(_hdf5_read_dataset(group, 'data', numpy.floating))
+    weight = _hdf5_read_scalar(group, 'weight', numpy.float64,)
+    varInt = bool(_hdf5_read_scalar(group, 'varInt', numpy.bool,))
+    smooth = int(_hdf5_read_scalar(group, 'smooth', numpy.integer,))
+    return OPRState(data, weight, varInt, smooth)
 
 
 def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
@@ -185,6 +196,8 @@ def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfL
         hdf5_write_object_state(state.object, file.create_group("object"))
     if state.scan is not None:
         file.create_dataset('scan', data=to_numpy(state.scan.astype(numpy.float64)))
+    if state.opr is not None and state.opr.data is not None:
+        hdf5_write_opr_state(state.opr, file.create_group("OPR"))
     if state.tilt is not None:
         file.create_dataset('tilt', data=to_numpy(state.tilt.astype(numpy.float64)))
     if state.iter is not None:
@@ -202,6 +215,22 @@ def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
 
     group.create_dataset('sampling', data=state.sampling.sampling.astype(numpy.float64))
     group.create_dataset('extent', data=state.sampling.extent.astype(numpy.float64))
+
+
+def hdf5_write_opr_state(state: OPRState, group: h5py.Group): 
+    if state.data.ndim == 2: # type: ignore
+        dataset = group.create_dataset('data', data=to_numpy(state.data)) # type: ignore
+        dataset.dims[0].label = 'scan'
+        dataset.dims[1].label = 'mode'
+    elif state.data.ndim == 3: # type: ignore
+        dataset = group.create_dataset('data', data=to_numpy(state.data)) # type: ignore
+        dataset.dims[0].label = 'y'
+        dataset.dims[1].label = 'x'
+        dataset.dims[2].label = 'mode'
+
+    group.create_dataset('weight', data=state.weight)
+    group.create_dataset('varInt', data=state.varInt)
+    group.create_dataset('smooth', data=state.smooth)
 
 
 def hdf5_write_object_state(state: ObjectState, group: h5py.Group):

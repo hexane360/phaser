@@ -24,6 +24,7 @@ class RawData(t.TypedDict):
     scan_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
     tilt_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
     probe_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
+    opr_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
     seed: NotRequired[t.Optional[object]]
 
 
@@ -57,6 +58,25 @@ class FocusedProbeProps(Dataclass):
 class ProbeHook(Hook[ProbeHookArgs, 'ProbeState']):
     known = {
         'focused': ('phaser.hooks.probe:focused_probe', FocusedProbeProps),
+    }
+
+
+class OPRHookArgs(t.TypedDict):
+    dtype: DTypeLike
+    shape: t.Tuple[int, ...]  # To match raster scan shape
+    xp: t.Any
+
+
+#TODO this is not necessary?
+class DefaultOPRHookProps(Dataclass):
+    vmodes: int = 0 # number of modes that change change
+    smooth: t.Optional[int] = 0 #polynomial smoothing order, not implemetned yet
+    varInt: t.Optional[bool] = False #variable intensity, not implemented yet
+    weight: t.Optional[float] = 0.5 #update relaxation
+
+class OPRHook(Hook[OPRHookArgs, NDArray[numpy.floating]]):
+    known = {
+        'default': ('phaser.hooks.opr:init_opr', DefaultOPRHookProps),
     }
 
 

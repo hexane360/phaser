@@ -118,6 +118,32 @@ class ObjectState():
         return copy.deepcopy(self)
 
 
+@jax_dataclass(static_fields=('weight','varInt','smooth'))
+class OPRState():
+    data: t.Union[NDArray[numpy.floating], None]
+    """OPR weights. Shape (*scan.shape, vmode), or None if no OPR"""
+    weight: float = 0.5
+    """OPR updates weights (0-1)"""
+    varInt: bool = False
+    """Whether the probe intensity can change from position to position""" #not used
+    smooth: int = 0
+    """Polynomial order for OPR smoothing""" #not used
+
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            xp.array(self.data) if self.data is not None else None, self.weight, self.varInt, self.smooth
+        )
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            to_numpy(self.data) if self.data is not None else None, self.weight, self.varInt, self.smooth
+        )
+
+    def copy(self) -> Self:
+        import copy
+        return copy.deepcopy(self)
+
+
 @jax_dataclass
 class ProgressState:
     iters: NDArray[numpy.integer]
@@ -165,6 +191,7 @@ class ReconsState:
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: NDArray[numpy.floating]
     """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
+    opr: OPRState
     progress: ProgressState
 
     def to_xp(self, xp: t.Any) -> Self:
@@ -174,6 +201,7 @@ class ReconsState:
             object=self.object.to_xp(xp),
             scan=xp.array(self.scan),
             tilt=xp.array(self.tilt),
+            opr=self.opr.to_xp(xp),
             progress=self.progress,
             wavelength=self.wavelength,
         )
@@ -185,6 +213,7 @@ class ReconsState:
             object=self.object.to_numpy(),
             scan=to_numpy(self.scan),
             tilt=to_numpy(self.tilt),
+            opr=self.opr.to_numpy(),
             progress=self.progress.to_numpy(),
             wavelength=float(self.wavelength),
         )
@@ -213,6 +242,7 @@ class PartialReconsState:
     scan: t.Optional[NDArray[numpy.floating]] = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: t.Optional[NDArray[numpy.floating]] = None
+    opr: t.Optional[OPRState] = None
     progress: t.Optional[ProgressState] = None
 
     def to_numpy(self) -> Self:
@@ -222,6 +252,7 @@ class PartialReconsState:
             object=self.object.to_numpy() if self.object is not None else None,
             scan=to_numpy(self.scan) if self.scan is not None else None,
             tilt=to_numpy(self.tilt) if self.tilt is not None else None,
+            opr=self.opr.to_numpy() if self.opr is not None else None,
             progress=self.progress.to_numpy() if self.progress is not None else None,
             wavelength=float(self.wavelength) if self.wavelength is not None else None,
         )
@@ -240,6 +271,7 @@ class PartialReconsState:
             object=t.cast(ObjectState, self.object),
             scan=t.cast(NDArray[numpy.floating], self.scan),
             tilt=t.cast(NDArray[numpy.floating], self.tilt),
+            opr=t.cast(OPRState, self.opr),
             progress=progress, iter=iter,
         )
 
