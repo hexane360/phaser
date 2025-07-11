@@ -73,6 +73,7 @@ class DefaultOPRHookProps(Dataclass):
     smooth: t.Optional[int] = 0 #polynomial smoothing order, not implemetned yet
     varInt: t.Optional[bool] = False #variable intensity, not implemented yet
     weight: t.Optional[float] = 0.5 #update relaxation
+    dtype: t.Union[t.Literal['real', 'complex'], None] = None
 
 class OPRHook(Hook[OPRHookArgs, NDArray[numpy.floating]]):
     known = {

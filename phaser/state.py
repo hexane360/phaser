@@ -120,7 +120,7 @@ class ObjectState():
 
 @jax_dataclass(static_fields=('weight','varInt','smooth'))
 class OPRState():
-    data: t.Union[NDArray[numpy.floating], None]
+    data: t.Union[NDArray[numpy.complexfloating], None]
     """OPR weights. Shape (*scan.shape, vmode), or None if no OPR"""
     weight: float = 0.5
     """OPR updates weights (0-1)"""

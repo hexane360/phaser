@@ -136,7 +136,7 @@ def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
 
 
 def hdf5_read_opr_state(group: h5py.Group) -> OPRState:
-    data = numpy.asarray(_hdf5_read_dataset(group, 'data', numpy.floating))
+    data = numpy.asarray(_hdf5_read_dataset(group, 'data', numpy.complexfloating))
     weight = _hdf5_read_scalar(group, 'weight', numpy.float64,)
     varInt = bool(_hdf5_read_scalar(group, 'varInt', numpy.bool,))
     smooth = int(_hdf5_read_scalar(group, 'smooth', numpy.integer,))

@@ -124,7 +124,8 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
         mean_update = update['opr'].mean(axis=tuple(range(len(update['opr'].shape) - 1)), keepdims=True)
         state.opr.data += state.opr.weight * (update['opr']-mean_update) 
         #remove global variation, that should be attribtued to the common basis
-        state.opr.data = state.opr.data / state.opr.data.mean(axis=-1, keepdims=True) #type: ignore
+        if not state.opr.varInt:
+            state.opr.data = state.opr.data / state.opr.data.mean(axis=-1, keepdims=True) #type: ignore
         # normalize to keep the intensity constant
         ##TODO: apply smoothing
     if 'positions' in update:
@@ -421,12 +422,12 @@ def run_model(
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=dtype) # (batch, n_probe)
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=sim.opr.data.dtype if sim.opr.data is not None else dtype) # (batch, n_probe)
     if sim.opr.data is not None:
         if xp_is_jax(xp):
-            group_opr = group_opr.at[:, 1:sim.opr.data.shape[-1]+1].set(sim.opr.data)
+            group_opr = group_opr.at[:, :sim.opr.data.shape[-1]].set(sim.opr.data)
         else:
-            group_opr[:, 1:sim.opr.data.shape[-1]+1] = sim.opr.data  # first probe remain fixed, vmodes from the second are updated
+            group_opr[:, :sim.opr.data.shape[-1]] = sim.opr.data  # first probe remain fixed, vmodes from the second are updated
     probes = probes * group_opr[:, :, None, None]
     t_props = tilt_propagators(sim, props, group_tilts, kx, ky, delta_zs,)
 
@@ -476,7 +477,7 @@ def dry_run(
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
     probes = ifft2(fft2(probes) * group_subpx_filters)
-    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=dtype) # (batch, n_probe)
+    group_opr = xp.ones((probes.shape[0], probes.shape[1]), dtype=sim.opr.data.dtype if sim.opr.data is not None else dtype) # (batch, n_probe)
     update_path_map(sim)
 
     #TODO not the right place to raise error
@@ -486,9 +487,9 @@ def dry_run(
     
     if sim.opr.data is not None:
         if xp_is_jax(xp):
-            group_opr = group_opr.at[:, 1:sim.opr.data.shape[-1]+1].set(sim.opr.data[tuple(group)])
+            group_opr = group_opr.at[:, :sim.opr.data.shape[-1]].set(sim.opr.data[tuple(group)])
         else:
-            group_opr[:, 1:sim.opr.data.shape[-1]+1] = sim.opr.data[tuple(group)]  # first probe remain fixed, vmodes from the second are updated
+            group_opr[:, :sim.opr.data.shape[-1]] = sim.opr.data[tuple(group)]  # first probe remain fixed, vmodes from the second are updated
     probes = probes * group_opr[:, :, None, None]
     t_props = tilt_propagators(sim, props, sim.tilt[tuple(group)], kx, ky, delta_zs)
 
