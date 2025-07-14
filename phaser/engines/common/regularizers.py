@@ -7,13 +7,13 @@ from numpy.typing import NDArray
 
 from phaser.utils.num import (
     get_array_module, get_scipy_module, Float,
-    jit, fft2, ifft2, abs2, xp_is_jax, to_real_dtype
+    jit, fft2, ifft2, abs2, xp_is_jax, to_real_dtype, to_numpy
 )
 from phaser.state import ReconsState
 from phaser.hooks.regularization import (
     ClampObjectAmplitudeProps, LimitProbeSupportProps,
     RegularizeLayersProps, ObjLowPassProps, GaussianProps,
-    CostRegularizerProps, TVRegularizerProps, RegularizeTiltProps
+    CostRegularizerProps, TVRegularizerProps, SpatialBlurProps
 )
 
 
@@ -426,45 +426,74 @@ class ProbeRecipTotalVariation:
         return (cost * cost_scale * self.cost, state)
 
 
-class RegularizeTilt:
-    # https://pypi.org/project/jaxkd/0.1.1/ ??
-    # Currently take about 5s per iteration for 256*256 scan positions, faster if keep 2D scan
-    def __init__(self, args: None, props:RegularizeTiltProps):
+class SpatialBlur:
+    def __init__(self, args: None, props: SpatialBlurProps):
         self.weight = props.weight
         self.sigma = props.sigma
+        self.attr_name = props.attr_name
 
     def init_state(self, sim):
         return None
 
+    def getattr_nested(self, obj, attr_path: str):
+        for attr in attr_path.split('.'):
+            obj = getattr(obj, attr)
+        return obj
+
+    def setattr_nested(self, obj, attr_path: str, value):
+        *parents, last = attr_path.split('.')
+        for attr in parents:
+            obj = getattr(obj, attr)
+        setattr(obj, last, value)
+
     def apply_iter(self, sim, state):
-        xp = get_array_module(sim.tilt)
-        scan = numpy.array(sim.scan)
-        tilt = numpy.array(sim.tilt)
+        from scipy.spatial import KDTree
+        xp = get_array_module(sim.scan)
+        scan_flat = to_numpy(sim.scan).reshape(-1, 2)
 
-        shape = tilt.shape[:-1]
-        N = int(numpy.prod(numpy.array(shape)))
+        obj_samp = sim.object.sampling
+        ky = xp.fft.fftfreq(obj_samp.shape[0], obj_samp.sampling[0])
+        kx = xp.fft.fftfreq(obj_samp.shape[1], obj_samp.sampling[1])
+        ky, kx = xp.meshgrid(ky, kx, indexing='ij')
+        k2 = ky**2 + kx**2
+        filt = xp.exp(- (2 * numpy.pi**2 * self.sigma**2) * k2)
 
-        xy = scan.reshape(-1, 2)
-        tilt_flat = tilt.reshape(-1, 2)
+        attr = self.getattr_nested(sim, self.attr_name)
+        vals = to_numpy(getattr(attr, 'data', attr))  # Extract raw array
+        shape = vals.shape
+        leading_shape = sim.scan.shape[:-1]
 
-        from scipy.spatial import cKDTree
-        tree = cKDTree(xy)
-        radius = 3 * self.sigma
-        tilt_blurred = numpy.zeros_like(tilt_flat)
-        for i in range(N):
-            indices = tree.query_ball_point(xy[i], r=radius)
-            if not indices:
-                tilt_blurred[i] = tilt_flat[i]
-                continue
-            neighbor_vecs = tilt_flat[indices]
-            dists = numpy.linalg.norm(xy[indices] - xy[i], axis=1)
-            weights = numpy.exp(-dists**2 / (2 * self.sigma**2))
-            weights /= numpy.sum(weights)
-            tilt_blurred[i] = numpy.sum(weights[:, None] * neighbor_vecs, axis=0)
+        tree = KDTree(scan_flat)
+        obj_pts = numpy.stack(obj_samp.grid(xp=numpy), axis=-1)
+        idx_nearest = tree.query(obj_pts)[1]
 
-        tilt_blurred = xp.asarray(tilt_blurred).reshape(*shape, 2)
-        sim.tilt = self.weight * tilt_blurred + (1 - self.weight) * sim.tilt
+        vals_flat = vals.reshape(-1, *shape[len(leading_shape):])  # flatten spatial dims
+        is_complex = numpy.iscomplexobj(vals_flat)
+        trailing_shape = vals_flat.shape[1:] 
+
+        if is_complex:
+            vals_flat = numpy.stack([vals_flat.real, vals_flat.imag], axis=-1)
+            trailing_shape = trailing_shape + (2,)
+
+        val_img = vals_flat[idx_nearest]
+        val_img_blur = numpy.empty_like(val_img)
+
+        for i in numpy.ndindex(trailing_shape):
+            val_img_blur[(...,) + i] = ifft2(fft2(val_img[(...,) + i]) * filt).real
+
+        if is_complex:
+            real, imag = val_img_blur[..., -2], val_img_blur[..., -1]
+            val_img_blur = real + 1j * imag
+            trailing_shape = trailing_shape[:-1]
+
+        idxs = numpy.round((scan_flat - obj_samp.corner) / obj_samp.sampling).astype(int)
+        blur_vals = val_img_blur[tuple(idxs.T)].reshape(shape)
+
+        new_vals = self.weight * blur_vals + (1 - self.weight) * vals
+        self.setattr_nested(sim, self.attr_name, new_vals)
+
         return sim, state
+
 
 
 def img_grad(img: numpy.ndarray) -> t.Tuple[numpy.ndarray, numpy.ndarray]:
