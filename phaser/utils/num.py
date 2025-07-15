@@ -463,6 +463,9 @@ def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) 
     return tuple(arr) if keepdims else tuple(xp.squeeze(arr, axis) for arr in arrs)
 
 
+unstack = split_array
+
+
 @t.overload
 def abs2(x: t.Union[NDArray[numpy.float64], NDArray[numpy.complex128]]) -> NDArray[numpy.float64]:
     ...
@@ -794,7 +797,7 @@ __all__ = [
     'is_cupy', 'is_jax', 'xp_is_cupy', 'xp_is_jax',
     'jit', 'fuse', 'debug_callback',
     'to_complex_dtype', 'to_real_dtype',
-    'fft2', 'ifft2', 'abs2', 'split_array',
+    'fft2', 'ifft2', 'abs2', 'split_array', 'unstack',
     'at', 'ufunc_outer', 'check_finite',
     'Sampling', 'IndexLike',
 ]
