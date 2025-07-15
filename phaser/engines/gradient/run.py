@@ -3,6 +3,7 @@ import logging
 from functools import partial
 from pathlib import Path
 import typing as t
+import pane
 
 import numpy
 from numpy.typing import NDArray
@@ -20,6 +21,7 @@ from phaser.execute import Observer
 from phaser.state import ReconsState
 from phaser.hooks import EngineArgs
 from phaser.hooks.solver import GradientSolver
+from phaser.hooks.observer import early_stop
 from phaser.hooks.regularization import CostRegularizer, GroupConstraint
 from phaser.plan import GradientEnginePlan
 from phaser.types import process_flag, flag_any_true, ReconsVar
@@ -168,7 +170,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     xp = cast_array_module(jax.numpy)
     dtype = t.cast(t.Type[numpy.floating], args['dtype'])
 
-    observer: Observer = args.get('observer', [])
+    observer: Observer = early_stop(props.observer)
+
     recons_name = args['recons_name']
     engine_i = args['engine_i']
 
@@ -302,7 +305,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 # check positions are at least overlapping object
                 state.object.sampling.check_scan(state.scan, state.probe.sampling.extent / 2.)
 
-            observer.update_iteration(state, i, props.niter, loss)
+            if observer.update_iteration(state, i, props.niter, loss):
+                break
 
             state.progress.iters = numpy.concatenate([state.progress.iters, [i + start_i]])
             state.progress.detector_errors = numpy.concatenate([state.progress.detector_errors, [loss]])
@@ -313,6 +317,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             if save_images({'state': state, 'niter': props.niter}):
                 output_images(state, out_dir, props.save_options)
 
+    output_state(state, out_dir, props.save_options)
+    output_images(state, out_dir, props.save_options)
     observer.finish_solver()
     return state
 

@@ -9,6 +9,7 @@ from phaser.utils.num import cast_array_module, to_numpy, to_complex_dtype
 from phaser.utils.io import OutputDir
 from phaser.execute import Observer
 from phaser.hooks import EngineArgs
+from phaser.hooks.observer import early_stop
 from phaser.plan import ConventionalEnginePlan
 from phaser.state import ReconsState
 from phaser.types import process_flag, flag_any_true
@@ -21,7 +22,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
     xp = cast_array_module(args['xp'])
     dtype = args['dtype']
-    observer: Observer = args.get('observer', [])
+    observer: Observer = early_stop(props.observer)
     recons_name = args['recons_name']
     engine_i = args['engine_i']
     seed = args['seed']
@@ -130,7 +131,8 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
                 sim.state.progress.iters = numpy.concatenate([sim.state.progress.iters, [i + start_i]])
                 sim.state.progress.detector_errors = numpy.concatenate([sim.state.progress.detector_errors, [error]])
 
-            observer.update_iteration(sim.state, i, props.niter, error)
+            if observer.update_iteration(sim.state, i, props.niter, error):
+                break
 
             if save({'state': sim.state, 'niter': props.niter}):
                 output_state(sim.state, out_dir, props.save_options)
@@ -138,5 +140,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
             if save_images({'state': sim.state, 'niter': props.niter}):
                 output_images(sim.state, out_dir, props.save_options)
 
+    output_state(sim.state, out_dir, props.save_options)
+    output_images(sim.state, out_dir, props.save_options)
     observer.finish_solver()
     return sim.state

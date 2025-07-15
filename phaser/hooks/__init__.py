@@ -89,7 +89,7 @@ class RasterScanProps(Dataclass):
     shape: t.Optional[t.Tuple[int, int]] = None  # ny, nx (total shape)
     step_size: t.Union[None, float, t.Tuple[float, float]] = None  # A
     rotation: t.Optional[float] = None     # degrees CCW
-    affine: t.Optional[t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))]] = None
+    affine: t.Optional[numpy.ndarray] = None
 
 
 class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
@@ -152,6 +152,11 @@ class DropNanProps(Dataclass):
     threshold: float = 0.9
 
 
+class EarlyStopProps(Dataclass):
+    patience: t.Optional[int] = None
+    smoothing_factor: float = 0.5
+
+
 class DiffractionAlignProps(Dataclass):
     ...
 
@@ -178,7 +183,6 @@ class EngineArgs(t.TypedDict):
     xp: t.Any
     recons_name: str
     engine_i: int
-    observer: 'Observer'
     seed: t.Any
 
 

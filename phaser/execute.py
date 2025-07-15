@@ -15,11 +15,17 @@ from .state import Patterns, ReconsState, PartialReconsState, IterState, Progres
 
 
 class Observer:
-    def __init__(self):
+    def __init__(self, patience: t.Optional[int] = None, smoothing_factor: float = 0.1):
         self.solver_start_time: t.Optional[float] = None
         self.iter_start_time: t.Optional[float] = None
         self.engine_i: int = 0
         self.start_iter: int = 0
+
+        self.patience: t.Optional[int] = patience
+        self.no_improvement_iter: int = 0
+        self.best_error: t.Optional[float] = None
+        self.smoothed_error: t.Optional[float] = None
+        self.smoothing_factor: float = smoothing_factor
 
     def _format_hhmmss(self, seconds: float) -> str:
         hh, ss = divmod(seconds, (60 * 60))
@@ -62,6 +68,24 @@ class Observer:
 
         state.iter = IterState(self.engine_i, i + 1, self.start_iter + i + 1)
         self.iter_start_time = finish_time
+
+        if error is not None and self.patience is not None:
+            if self.best_error is None or error < self.best_error:
+                self.best_error = error
+                self.no_improvement_iter = 0
+            else:
+                self.no_improvement_iter += 1
+
+            # Exponential moving average
+            if self.smoothed_error is None:
+                self.smoothed_error = error
+            else:
+                self.smoothed_error = (1 - self.smoothing_factor) * self.smoothed_error + self.smoothing_factor * error
+
+            if self.patience is not None and self.no_improvement_iter >= self.patience:
+                logging.info(f"Early termination: no improvement for {self.patience} iterations")
+                return True
+        return False
 
     def finish_solver(self):
         logging.info("Solver finished!")

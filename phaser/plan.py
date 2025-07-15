@@ -2,7 +2,7 @@ from pathlib import Path
 import typing as t
 
 from .types import Dataclass, Slices, BackendName, Flag, ReconsVars, IsVersion, EmptyDict
-from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
+from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook, EarlyStopProps
 from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
 from .hooks.schedule import FlagLike, ScheduleLike
 from .hooks.regularization import IterConstraintHook, GroupConstraintHook, CostRegularizerHook
@@ -73,6 +73,7 @@ class EnginePlan(Dataclass, kw_only=True):
 
     send_every_group: bool = False
 
+    observer: EarlyStopProps = EarlyStopProps(patience=None, smoothing_factor=0.5)
 
 class AmplitudeNoisePlan(Dataclass, kw_only=True):
     gaussian_variance: float = 0.1
