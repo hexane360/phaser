@@ -22,6 +22,7 @@ def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> NDArray[numpy.flo
 
     if props.affine is not None:
         affine = xp.array(props.affine, dtype=scan.dtype)
-        scan = scan @ affine
+        # equivalent to (affine @ scan.T).T (active transformation)
+        scan = scan @ affine.T
 
     return scan

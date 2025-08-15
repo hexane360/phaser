@@ -33,6 +33,7 @@ class LoadEmpadProps(Dataclass):
     diff_step: t.Optional[float] = None
     kv: t.Optional[float] = None
     adu: t.Optional[float] = None
+    det_flips: t.Optional[t.Tuple[bool, bool, bool]] = None
 
 class LoadGatanProps(Dataclass):
     path: Path

@@ -12,6 +12,8 @@ from pane.convert import IntoConverterHandlers
 from typing_extensions import Self
 
 from phaser.types import IsVersion
+from phaser.utils.image import apply_flips
+from phaser.utils.num import to_numpy
 
 
 def _get_dir(f: pane.io.FileOrPath) -> t.Optional[Path]:
@@ -45,8 +47,19 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     version: t.Annotated[str, IsVersion(exactly="2.0")] = "2.0"
     """Metadata version"""
 
+    empad_version: t.Optional[int] = None
+    """Empad version used. Defaults to v1 if not specified."""
+
     raw_filename: str
     """Raw 4DSTEM data filename, relative to metadata location."""
+
+    det_flips: t.Optional[t.Tuple[bool, bool, bool]] = None
+    """
+    Flips to apply to the raw diffraction patterns, (flip_y, flip_x, transpose).
+    Defaults to `(True, False, False)` (appears to be the most common orientation).
+    """
+    det_rotation: float = 0.0
+    """Detector rotation (degrees)."""
 
     orig_path: t.Optional[Path] = None
     """Original path to experimental folder."""
@@ -76,7 +89,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     diff_step: t.Optional[float] = None
     """Diffraction pixel size (mrad/px)."""
 
-    scan_rotation: float
+    scan_rotation: float = 0.0
     """Scan rotation (degrees)."""
     scan_shape: t.Tuple[int, int]
     """Scan shape (x, y)."""
@@ -112,8 +125,8 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         return self.file_type == "pyMultislicer_metadata"
 
 
-def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] = None,
-            memmap: bool = False) -> NDArray[numpy.float32]:
+def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] = None, *,
+            memmap: bool = False, flips: t.Optional[t.Tuple[bool, bool, bool]] = None) -> NDArray[numpy.float32]:
     """
     Load a raw EMPAD dataset into memory.
 
@@ -126,6 +139,8 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
      - `path`: Path to file to load
      - `scan_shape`: Scan shape of dataset. Will be inferred from the filename if not specified.
      - `memmap`: If specified, memmap the file as opposed to loading it eagerly.
+     - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
+       Defaults to `(True, False, False)` (appears to be the most common orientation).
 
     Returns a numpy array (or `numpy.memmap`)
     """
@@ -148,26 +163,28 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
     if not a.size % (130*128) == 0:
         raise ValueError(f"File not divisible by 130x128 (size={a.size}).")
     a.shape = (-1, 130, 128)
-    #a = a[:, :128, :]
 
     if a.shape[0] != n_x * n_y:
         raise ValueError(f"Got {a.shape[0]} probes, expected {n_x}x{n_y} = {n_x * n_y}.")
     a.shape = (n_y, n_x, *a.shape[1:])
-    a = a[..., 127::-1, :]  # flip reciprocal y space, crop junk rows
 
-    return a
+    a = a[..., :128, :]  # crop junk rows
+    return apply_flips(a, flips or (True, False, False))  # defaults to typical EMPAD orientation
 
 
 @t.overload
-def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path], folder: None = None, name: None = None):
+def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path], folder: None = None, name: None = None,
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
     ...
 
 @t.overload
-def save_4d(arr: NDArray[numpy.float32], *, path: None = None, folder: t.Union[str, Path], name: t.Optional[str] = None):
+def save_4d(arr: NDArray[numpy.float32], *, path: None = None, folder: t.Union[str, Path], name: t.Optional[str] = None,
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
     ...
 
 def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = None,
-            folder: t.Union[str, Path, None] = None, name: t.Optional[str] = None): #):
+            folder: t.Union[str, Path, None] = None, name: t.Optional[str] = None,
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
     """
     Save a raw EMPAD dataset.
 
@@ -183,6 +200,8 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
      - `folder`: Folder to save dataset inside.
      - `name`: When `folder` is specified, format to use to determine filename. Defaults to `"scan_x{x}_y{y}.raw"`.
        Will be formatted using the scan shape `{'x': n_x, 'y': n_y}`.
+     - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
+       Defaults to `(True, False, False)` (appears to be the most common orientation).
     """
 
     try:
@@ -206,7 +225,7 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
     out_shape[2] = 130  # dead rows
 
     out = numpy.zeros(out_shape, dtype=numpy.float32)
-    out[..., 127::-1, :] = arr.astype(numpy.float32)
+    out[..., 127::-1, :] = apply_flips(to_numpy(arr.astype(numpy.float32)), flips or (True, False, False))
 
     with open(path, 'wb') as f:
         out.tofile(f)

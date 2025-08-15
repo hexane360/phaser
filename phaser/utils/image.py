@@ -14,6 +14,34 @@ from .num import get_array_module, get_scipy_module, to_numpy, at, is_jax, abs2
 NumT = t.TypeVar('NumT', bound=numpy.number)
 
 
+def apply_flips(
+    data: NDArray[NumT], flips: t.Tuple[bool, bool, bool] = (False, False, False)
+) -> NDArray[NumT]:
+    """
+    Applies flips to `data` along the last two axes.
+    If specified, transpose is applied last (after X and Y flips).
+
+    Parameters:
+        data: Input data array.
+        flips: Tuple of three booleans `(flip_y, flip_x, transpose)`.
+
+    Returns: `data` with the specified flips applied.
+    """
+    if not any(flips):
+        return data
+
+    xp = get_array_module(data)
+
+    if flips[0]:
+        data = xp.flip(data, axis=-2)
+    if flips[1]:
+        data = xp.flip(data, axis=-1)
+    if flips[2]:
+        data = xp.moveaxis(data, -2, -1)
+
+    return data
+
+
 @t.overload
 def remove_linear_ramp(  # pyright: ignore[reportOverlappingOverload]
     data: NDArray[NumT], mask: t.Optional[NDArray[numpy.bool_]] = None
@@ -120,13 +148,14 @@ def to_affine_matrix(arr: ArrayLike, ndim: int = 2) -> NDArray[numpy.floating]:
                          f" ({ndim+1},), or ({ndim},), instead got shape: {arr.shape}")
 
     assert arr.shape == (ndim+1, ndim+1)
-    return arr.astype(numpy.floating)
+    return arr.astype(numpy.promote_types(arr.dtype, numpy.float32)) #arr.astype(numpy.floating)
 
 
 def scale_matrix(scale: ArrayLike) -> NDArray[numpy.floating]:
     scale = numpy.asarray(scale)
     assert scale.ndim == 1
-    return numpy.diag([*scale, 1.0]).astype(numpy.floating)
+    a = numpy.diag([*scale, 1.0])
+    return a.astype(numpy.promote_types(a.dtype, numpy.float32))
 
 
 def translation_matrix(vec: ArrayLike) -> NDArray[numpy.floating]:
@@ -134,7 +163,7 @@ def translation_matrix(vec: ArrayLike) -> NDArray[numpy.floating]:
     assert vec.ndim == 1
     a = numpy.eye(vec.size + 1, dtype=vec.dtype)
     a[:vec.size, vec.size] = vec
-    return a.astype(numpy.floating)
+    return a.astype(numpy.promote_types(a.dtype, numpy.float32)) #a.astype(numpy.floating)
 
 
 def rotation_matrix(theta: float) -> NDArray[numpy.floating]:
@@ -195,6 +224,7 @@ def affine_transform(
 
 
 __all__ = [
+    'apply_flips',
     'remove_linear_ramp', 'colorize_complex', 'scale_to_integral_type',
     'affine_transform', 'to_affine_matrix',
     'scale_matrix', 'rotation_matrix', 'translation_matrix',

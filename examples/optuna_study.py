@@ -13,15 +13,18 @@ from matplotlib import pyplot
 import optuna
 from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalRedisBackend
+from optuna.samplers import TPESampler
+from optuna.pruners import PercentilePruner
 import pane
 
-from phaser.utils.num import get_backend_module, to_numpy, Sampling
+from phaser.utils.num import to_numpy, Sampling, get_backend_module
 from phaser.utils.analysis import align_object_to_ground_truth
 from phaser.utils.image import affine_transform
 from phaser.utils.misc import unwrap
-from phaser.plan import ReconsPlan, EnginePlan, EngineHook
-from phaser.state import ReconsState, PartialReconsState, Patterns
-from phaser.execute import Observer, initialize_reconstruction, prepare_for_engine
+from phaser.plan import ReconsPlan, EngineHook
+from phaser.state import PreparedRecons, ReconsState, PartialReconsState
+from phaser.observer import Observer
+from phaser.execute import execute_engine, initialize_reconstruction
 
 base_dir = Path(__file__).parent.absolute()
 
@@ -122,19 +125,19 @@ class OptunaObserver(Observer):
 
         super().__init__()
 
-    def save_json(self, plan: ReconsPlan, engine: EngineHook):
+    def save_json(self, plan: ReconsPlan, engines: t.Iterable[EngineHook]):
         import json
 
         if self.trial is None:
             return
         plan_json = t.cast(dict, plan.into_data())
-        plan_json['engines'] = [pane.into_data(engine, EngineHook)]  # type: ignore
+        plan_json['engines'] = [pane.into_data(engine, EngineHook) for engine in engines]  # type: ignore
 
         with open(self.trial_path / 'plan.json', 'w') as f:
             json.dump(plan_json, f, indent=4)
 
-    def update_iteration(self, state: t.Union[ReconsState, PartialReconsState], i: int, n: int, error: t.Optional[float]):
-        super().update_iteration(state, i, n, error)
+    def update_iteration(self, state: ReconsState, i: int, n: int, error: t.Optional[float] = None):
+        i = state.iter.total_iter
 
         if i % MEASURE_EVERY == 0:
             error, mean_obj, ground_truth = calc_error_ssim(state)
@@ -151,48 +154,47 @@ class OptunaObserver(Observer):
 
 # cache the initalization steps for efficiency
 @functools.cache
-def initialize() -> t.Tuple[ReconsPlan, Patterns, ReconsState]:
+def initialize() -> t.Tuple[PreparedRecons, ReconsPlan]:
     plan = ReconsPlan.from_data({
         "name": "mos2_grad",
         "backend": "jax",
         'dtype': 'float32',
         'raw_data': {
             'type': 'empad',
-            'path': '~/mos2/1/mos2/mos2_0.00_dstep1.0.json',
+            'path': '../sample_data/simulated_mos2/mos2_0.00_dstep1.0.json',
         },
         'post_load': [
-            {'type': 'poisson', 'scale': 1.0e6},
+            {'type': 'poisson', 'scale': 6.09e+6},
         ],
         'post_init': [],
         'engines': [],
     })
-    xp = get_backend_module(plan.backend)
-
-    (patterns, state) = initialize_reconstruction(plan, xp)
+    recons = initialize_reconstruction(plan)
 
     # pad reconstruction
-    new_sampling = Sampling((192, 192), extent=tuple(state.probe.sampling.extent))
+    new_sampling = Sampling((192, 192), extent=tuple(recons.state.probe.sampling.extent))
     print(f"Resampling probe and patterns to shape {new_sampling.shape}...", flush=True)
-    state.probe.data = state.probe.sampling.resample(state.probe.data, new_sampling)
-    patterns.patterns = state.probe.sampling.resample_recip(patterns.patterns, new_sampling)
-    patterns.pattern_mask = state.probe.sampling.resample_recip(patterns.pattern_mask, new_sampling)
-    state.probe.sampling = new_sampling
+    recons.state.probe.data = recons.state.probe.sampling.resample(recons.state.probe.data, new_sampling)
+    recons.patterns.patterns = recons.state.probe.sampling.resample_recip(recons.patterns.patterns, new_sampling)
+    recons.patterns.pattern_mask = recons.state.probe.sampling.resample_recip(recons.patterns.pattern_mask, new_sampling)
+    recons.state.probe.sampling = new_sampling
 
     # store ReconsState on the cpu, we duplicate to GPU for each trial
-    return (plan, patterns, state.to_numpy())
+    return (recons.to_numpy(), plan)
 
 
 def objective(trial: optuna.Trial):
-    (plan, patterns, init_state) = initialize()
-    xp = get_backend_module(plan.backend)
+    (recons, plan) = initialize()
+    xp = get_backend_module('jax')
 
     nesterov = trial.suggest_categorical('nesterov', ['false', 'true']) == 'true'
+    grouping = trial.suggest_categorical('grouping', [4, 8, 16, 32, 64, 128, 256, 512])
 
     engine = pane.convert({
         'type': 'gradient',
         'probe_modes': 4,
         'niter': 150,
-        'grouping': 256,
+        'grouping': grouping,
         'noise_model': {'type': 'amplitude', 'eps': trial.suggest_float('noise_model_eps', 1.0e-4, 1.0e+1, log=True)},
         'solvers': {
             'object': {
@@ -207,11 +209,11 @@ def objective(trial: optuna.Trial):
             },
         },
         'regularizers': [
-            {'type': 'obj_tv', 'cost': trial.suggest_float('obj_tv', 1.0e-5, 1.0e+5, log=True)},
+            {'type': 'obj_l2', 'cost': trial.suggest_float('obj_l2', 1.0e-5, 1.0e+5, log=True)},
+            {'type': 'obj_l1', 'cost': trial.suggest_float('obj_l1', 1.0e-5, 1.0e+5, log=True)},
+            {'type': 'obj_tikh', 'cost': trial.suggest_float('obj_tikh', 1.0e-5, 1.0e+5, log=True)},
         ],
-        'iter_constraints': [
-            'remove_phase_ramp',
-        ],
+        'iter_constraints': [],
         'group_constraints': [
             {'type': 'clamp_object_amplitude', 'amplitude': 1.1},
         ],
@@ -226,20 +228,11 @@ def objective(trial: optuna.Trial):
     }, EngineHook)
 
     observer = OptunaObserver(trial)
-    observer.save_json(plan, engine)
+    observer.save_json(plan, [engine])
 
-    (patterns, state) = prepare_for_engine(patterns, init_state, xp, t.cast(EnginePlan, engine.props))
-
-    state = engine({
-        'data': patterns,
-        'state': state,
-        'dtype': patterns.patterns.dtype,
-        'xp': xp,
-        'recons_name': plan.name,
-        'engine_i': 0,
-        'observer': observer,
-        'seed': None,
-    })
+    recons = recons.with_observer(observer)
+    recons.state = recons.state.to_xp(xp)
+    recons = execute_engine(recons, engine)
 
     return observer.last_error
 
@@ -257,24 +250,24 @@ if __name__ == '__main__':
             JournalRedisBackend(storage, use_cluster=False)
         )
 
-    if verb in ('recreate', 'create'):
-        from optuna.samplers import TPESampler
-        from optuna.pruners import PercentilePruner
+    # `constant_liar` ensures efficient batch optimization
+    sampler = TPESampler(constant_liar=True)
+    # don't prune before iteration 20, don't prune at a given step unless we have at least 8 datapoints
+    pruner = PercentilePruner(50.0, n_min_trials=8, n_warmup_steps=20)
 
+    if verb in ('recreate', 'create'):
         if verb == 'recreate':
             optuna.delete_study(study_name=STUDY_NAME, storage=storage)
         study = optuna.create_study(
             study_name=STUDY_NAME, storage=storage,
-            # `constant_liar` ensures efficient batch optimization
-            sampler=TPESampler(constant_liar=True),
-            # don't prune before iteration 20, don't prune at a given step unless we have at least 8 datapoints
-            pruner=PercentilePruner(50.0, n_min_trials=8, n_warmup_steps=20)
+            sampler=sampler, pruner=pruner,
         )
     elif verb == 'delete':
         optuna.delete_study(study_name=STUDY_NAME, storage=storage)
     elif verb == 'run':
         study = optuna.load_study(
-            study_name=STUDY_NAME, storage=storage
+            study_name=STUDY_NAME, storage=storage,
+            sampler=sampler, pruner=pruner
         )
         study.optimize(objective, n_trials=200)
     else:

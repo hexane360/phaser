@@ -11,7 +11,7 @@ from phaser.utils.object import ObjectSampling
 if t.TYPE_CHECKING:
     from phaser.utils.io import HdfLike
     from phaser.utils.image import _BoundaryMode
-    from phaser.observer import ObserverSet
+    from phaser.observer import Observer, ObserverSet
 
 
 @jax_dataclass
@@ -266,3 +266,19 @@ class PreparedRecons:
     state: ReconsState
     name: str
     observer: 'ObserverSet'
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            self.patterns.to_numpy(), self.state.to_numpy(), self.name, self.observer
+        )
+
+    def with_observer(self, observer: t.Union['Observer', t.Iterable['Observer']]) -> Self:
+        from phaser.observer import Observer, ObserverSet
+
+        observers = list(self.observer.inner)
+        if isinstance(observer, Observer):
+            observers.append(observer)
+        else:
+            observers.extend(observer)
+
+        return self.__class__(self.patterns, self.state, self.name, ObserverSet(observers))
