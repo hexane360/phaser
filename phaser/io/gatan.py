@@ -154,22 +154,8 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     gatan_filename: str
     # """Gatan 4DSTEM data filename, relative to metadata location."""
 
-    # orig_path: t.Optional[Path] = None
-    # """Original path to experimental folder."""
-
     path: t.Optional[Path] = pane.field(init=False, exclude=True)
     """Current path to experimental folder (based on metadata loading)"""
-
-    # author: t.Optional[str] = None
-    # """Author of dataset"""
-    # time: t.Optional[str] = None
-    # """Image acquisition time (RFC 2822 format)"""
-    # time_unix: t.Optional[float] = None
-    # """Image acquisition time (seconds since Unix epoch)"""
-    # bg_unix: t.Optional[float] = None
-    # """Background image acquisition time (seconds since Unix epoch)"""
-    # has_bg: t.Optional[bool] = None
-    # """Whether background image is valid"""
 
     voltage: float
     """Accelerating voltage (V)."""
@@ -245,7 +231,7 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
     else:
         a = dm.file_reader(path, lazy=False)[0]['data']
     
-    a = flip(a,(2,3)) # Flip y and x axes to line up with scan 
+    #a = flip(a,2) # Flip y axis to line up with scan 
 
     if a.shape[0]*a.shape[1] != n_x * n_y:
         raise ValueError(f"Got {a.shape[0]*a.shape[1]} probes, expected {n_x}x{n_y} = {n_x * n_y}.")
