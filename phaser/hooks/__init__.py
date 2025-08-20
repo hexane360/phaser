@@ -146,6 +146,10 @@ class PostInitArgs(t.TypedDict):
 class ScaleProps(Dataclass):
     scale: float
 
+class OffsetProps(Dataclass):
+    offset: float
+
+
 
 class CropDataProps(Dataclass):
     crop: t.Tuple[
@@ -172,6 +176,7 @@ class PostLoadHook(Hook[RawData, RawData]):
         'crop_data': ('phaser.hooks.preprocessing:crop_data', CropDataProps),
         'poisson': ('phaser.hooks.preprocessing:add_poisson_noise', PoissonProps),
         'scale': ('phaser.hooks.preprocessing:scale_patterns', ScaleProps),
+        'offset': ('phaser.hooks.preprocessing:offset_patterns', OffsetProps),
     }
 
 

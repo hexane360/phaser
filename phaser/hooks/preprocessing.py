@@ -38,6 +38,10 @@ def scale_patterns(raw_data: RawData, props: ScaleProps) -> RawData:
     raw_data['patterns'] *= props.scale
     return raw_data
 
+def offset_patterns(raw_data: RawData, props: OffsetProps) -> RawData:
+    raw_data['patterns'] -= props.offset
+    return raw_data
+
 
 def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
     xp = get_array_module(raw_data['patterns'])
