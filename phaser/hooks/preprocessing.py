@@ -10,7 +10,7 @@ from phaser.utils.num import get_array_module, cast_array_module, to_numpy, Samp
 from phaser.utils.misc import create_rng, create_sparse_groupings
 from phaser.utils.image import affine_transform
 from phaser.state import Patterns, ReconsState
-from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps
+from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps, OffsetProps
 
 logger = logging.getLogger(__name__)
 
