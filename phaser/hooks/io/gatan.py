@@ -80,6 +80,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
             logger.info(f"Scaling patterns by ADU ({adu:.1f})")
             patterns /= adu
 
+    patterns = numpy.transpose(patterns, (1, 0, 2, 3))
 
     a = float(wavelength / (diff_step * 1e-3)) # recip. pixel size -> 1 / real space extent
 
@@ -87,7 +88,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
 
     mask = numpy.zeros_like(patterns, shape=patterns.shape[-2:]).astype(numpy.float32)
 
-    mask[2:-2, 2:-2] = 1.
+    # mask[2:-2, 2:-2] = 1.
 
     return {
         'patterns': patterns,

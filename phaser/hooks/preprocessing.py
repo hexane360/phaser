@@ -10,7 +10,7 @@ from phaser.utils.num import get_array_module, cast_array_module, to_numpy, Samp
 from phaser.utils.misc import create_rng, create_sparse_groupings
 from phaser.utils.image import affine_transform
 from phaser.state import Patterns, ReconsState
-from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps, OffsetProps
+from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps, OffsetProps, BinProps
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,20 @@ def scale_patterns(raw_data: RawData, props: ScaleProps) -> RawData:
 
 def offset_patterns(raw_data: RawData, props: OffsetProps) -> RawData:
     raw_data['patterns'] -= props.offset
+    return raw_data
+
+def bin_patterns(raw_data: RawData, props: BinProps) -> RawData:
+    xp = get_array_module(raw_data['patterns'])
+    bin_factor = props.bin
+    patterns = raw_data['patterns']
+    Ny, Nx = patterns.shape[-2:]
+    patterns = patterns.reshape(*patterns.shape[:-2],
+                       Ny // bin_factor, bin_factor,
+                       Nx // bin_factor, bin_factor).sum(axis=(-1, -3))
+
+    print(patterns.shape)  # (120, 45, 128, 128)
+    
+    raw_data['patterns'] = patterns
     return raw_data
 
 

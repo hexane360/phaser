@@ -149,6 +149,9 @@ class ScaleProps(Dataclass):
 class OffsetProps(Dataclass):
     offset: float
 
+class BinProps(Dataclass):
+    bin: int
+
 
 
 class CropDataProps(Dataclass):
@@ -177,6 +180,7 @@ class PostLoadHook(Hook[RawData, RawData]):
         'poisson': ('phaser.hooks.preprocessing:add_poisson_noise', PoissonProps),
         'scale': ('phaser.hooks.preprocessing:scale_patterns', ScaleProps),
         'offset': ('phaser.hooks.preprocessing:offset_patterns', OffsetProps),
+        'bin': ('phaser.hooks.preprocessing:bin_patterns', BinProps),
     }
 
 
