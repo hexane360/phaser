@@ -56,6 +56,8 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
              'defocus': 1.0e-10,
              'camera_length': 0.0,
              'diff_step': 0.0,
+             'e-scaling': 1.0,
+             'background_offset': 0.0,
              'scan_rotation': 0.0,
              'detector_shape': [0, 0],
              'scan_shape': [0, 0],
@@ -74,6 +76,10 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         
         gatan_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageTags'] # first image metadata
         imagedata_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageData']
+
+        e_calibration = imagedata_metadata['Calibrations']['Brightness']
+        metadata['e_scaling'] = e_calibration['Scale']
+        metadata['background_offset'] = e_calibration['Origin']
 
         calibrations = list(imagedata_metadata['Calibrations']['Dimension'].values())
 
@@ -183,8 +189,10 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     # """Pixel post-exposure time (s)."""
     beam_current: t.Optional[float] = None
     """Approx. beam current (A)."""
-    adu: t.Optional[float] = None
-    """Single-electron intensity (data units)."""
+    e_scaling:t.Optional[float] = 1.0
+    
+    """Single-electron scaling )."""
+    background_offset:t.Optional[float] = 0.0
 
     scan_correction: t.Optional[t.Annotated[NDArray[numpy.floating], shape((2, 2))]] = None
     """Scan correction matrix, [x', y'] = scan_correction @ [x, y]"""

@@ -54,13 +54,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
         'affine': metadata.scan_correction[::-1, ::-1] if metadata.scan_correction is not None else None,
     }
 
-# else:
-#     voltage = props.kv * 1e3 if props.kv is not None else None
-#     diff_step = props.diff_step
-#     scan_shape = None
-#     probe_hook = scan_hook = None
-#     adu = None
-#     needs_scale = False
+
 
     if metadata.voltage is None:
         raise ValueError("'kv'/'voltage' must be specified by metadata or passed to 'raw_data'")
@@ -75,11 +69,12 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
     patterns = numpy.fft.ifftshift(load_4d(path, scan_shape, memmap=False), axes=(-1, -2)).astype(numpy.float32)
 
     if needs_scale:
-        if adu is None:
+        if metadata.e_scaling is None:
             warnings.warn("ADU not supplied for experimental dataset. This is not recommended.")
         else:
-            logger.info(f"Scaling patterns by ADU ({adu:.1f})")
-            patterns /= adu
+            logger.info(f"Offsetting patterns by {metadata.background_offset:.3e} and scaling by {metadata.e_scaling:.5e}")
+            patterns -= metadata.background_offset
+            patterns *= metadata.e_scaling
 
     # patterns = numpy.transpose(patterns, (1, 0, 2, 3))
 
@@ -88,7 +83,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
     sampling = Sampling(cast_length(patterns.shape[-2:], 2), extent=(a, a))
 
     mask = numpy.zeros_like(patterns, shape=patterns.shape[-2:]).astype(numpy.float32)
-    print(patterns.shape)
+
     mask[2:-2, 2:-2] = 1.
 
     return {
