@@ -133,7 +133,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
 
         metadata['detector_shape'] = [data_dim[1], data_dim[0]]
-        metadata['scan_shape'] = [data_dim[3], data_dim[2]]
+        metadata['scan_shape'] = [data_dim[2], data_dim[3]]
         metadata['scan_fov'] = [metadata['scan_shape'][0]*metadata['scan_step'][0], metadata['scan_shape'][1]*metadata['scan_step'][1]]
 
         self = from_data(metadata, cls, custom=custom) 

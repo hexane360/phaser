@@ -34,6 +34,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
     voltage = props.kv * 1e3 if props.kv is not None else metadata.voltage
     diff_step = props.diff_step or metadata.diff_step
     scan_shape = metadata.scan_shape
+    
 
     print(f"Scan shape: {scan_shape}, Step size: {metadata.scan_step}")
     adu = 1 #props.adu or meta.adu
@@ -80,14 +81,14 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
             logger.info(f"Scaling patterns by ADU ({adu:.1f})")
             patterns /= adu
 
-    patterns = numpy.transpose(patterns, (1, 0, 2, 3))
+    # patterns = numpy.transpose(patterns, (1, 0, 2, 3))
 
     a = float(wavelength / (diff_step * 1e-3)) # recip. pixel size -> 1 / real space extent
 
     sampling = Sampling(cast_length(patterns.shape[-2:], 2), extent=(a, a))
 
     mask = numpy.zeros_like(patterns, shape=patterns.shape[-2:]).astype(numpy.float32)
-
+    print(patterns.shape)
     mask[2:-2, 2:-2] = 1.
 
     return {
