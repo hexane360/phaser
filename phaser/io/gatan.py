@@ -66,7 +66,6 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
              'exposure_time': 0.0,
              'post_exposure_time': 0.0,
              'beam_current': 0.0,
-             'adu': 1.0,
              'scan_correction': None,
              'diff_transpose': [False, False, False], #diagonal, horizontal, vertical
              'scan_transpose': [False, False, False], #diagonal, horizontal, vertical
