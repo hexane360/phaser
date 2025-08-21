@@ -231,7 +231,6 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
     """
     path = Path(path)
 
-    
     n_y, n_x = scan_shape
 
     if memmap:
@@ -239,8 +238,6 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
     else:
         a = dm.file_reader(path, lazy=False)[0]['data']
     
-    #a = flip(a,2) # Flip y axis to line up with scan 
-
     if a.shape[0]*a.shape[1] != n_x * n_y:
         raise ValueError(f"Got {a.shape[0]*a.shape[1]} probes, expected {n_x}x{n_y} = {n_x * n_y}.")
     
