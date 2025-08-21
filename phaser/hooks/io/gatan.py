@@ -88,7 +88,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
 
     mask = numpy.zeros_like(patterns, shape=patterns.shape[-2:]).astype(numpy.float32)
 
-    # mask[2:-2, 2:-2] = 1.
+    mask[2:-2, 2:-2] = 1.
 
     return {
         'patterns': patterns,
