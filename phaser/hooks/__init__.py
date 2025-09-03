@@ -120,9 +120,15 @@ class RasterScanProps(Dataclass):
     affine: t.Optional[t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))]] = None
 
 
+class CustomScanProps(Dataclass):
+    path: str
+    """Path to .npy file containing scan array matching the size of the scan"""
+
+
 class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
     known = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
+        'custom': ('phaser.hooks.scan:load_custom_scan', CustomScanProps),
     }
 
 
