@@ -15,7 +15,7 @@ NumT = t.TypeVar('NumT', bound=numpy.number)
 
 
 def apply_flips(
-    data: NDArray[NumT], flips: t.Tuple[bool, bool, bool] = (False, False, False)
+    data: NDArray[NumT], flips: t.Optional[t.Tuple[bool, bool, bool]]
 ) -> NDArray[NumT]:
     """
     Applies flips to `data` along the last two axes.
@@ -27,7 +27,7 @@ def apply_flips(
 
     Returns: `data` with the specified flips applied.
     """
-    if not any(flips):
+    if flips is None or not any(flips):
         return data
 
     xp = get_array_module(data)

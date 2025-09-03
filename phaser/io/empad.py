@@ -225,7 +225,7 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
     out_shape[2] = 130  # dead rows
 
     out = numpy.zeros(out_shape, dtype=numpy.float32)
-    out[..., 127::-1, :] = apply_flips(to_numpy(arr.astype(numpy.float32)), flips or (True, False, False))
+    out[..., :128, :] = apply_flips(to_numpy(arr.astype(numpy.float32)), flips or (True, False, False))
 
     with open(path, 'wb') as f:
         out.tofile(f)

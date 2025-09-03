@@ -34,7 +34,7 @@ dependencies = [
     "h5py~=3.8",
     "pyyaml>=5.3.1",
     "click~=8.1.0",
-    "rich~=12.0.0",
+    "rich>=12.0.0,<15",
     "tifffile>=2023.8.25",
     "py-pane==0.11.3",
     "typing_extensions~=4.7",
@@ -56,8 +56,8 @@ cupy12 = [
 ]
 jax = [
     # 0.4.25 is last version supporting cuda 11.8, we need to support it.
-    # tested on 0.4.25 & 0.5.3
-    "jax>=0.4.25,<0.6",
+    # tested on 0.4.25, 0.5.x, 0.6.x, and 0.7.0
+    "jax>=0.4.25,<0.8",
     "optax>=0.2.2",
 ]
 web = [

@@ -1,6 +1,7 @@
 import dataclasses
 import itertools
 import logging
+import math
 import typing as t
 
 import numpy
@@ -120,6 +121,40 @@ def _normalize_observers(
         raise TypeError(f"'observers' expected an Observer or list of Observers, instead got type {type(observers)}")
 
     return ObserverSet(obs)
+
+
+def _normalize_scan_shape(
+    patterns: Patterns, state: ReconsState
+) -> t.Tuple[Patterns, ReconsState]:
+    """
+    Normalizes 'patterns' and 'state' to share a common scan shape.
+
+    Requires that there are an equal number of patterns and scan positions.
+    Reshapes 'state.scan' and 'patterns' to match shape, choosing the highest
+    dimensional shape of the two. 'state.tilt' is reshaped as well.
+    """
+    patterns_shape = patterns.patterns.shape[:-2]
+    scan_shape = state.scan.shape[:-1]
+
+    n_patterns = math.prod(patterns_shape)
+    n_scan = math.prod(scan_shape)
+    if n_scan != n_patterns:
+        raise ValueError(f"# of scan positions {n_scan} doesn't match # of patterns {n_patterns}")
+
+    # choose the highest dimensional shape
+    new_shape = scan_shape if len(scan_shape) > len(patterns_shape) else patterns_shape
+
+    patterns.patterns = patterns.patterns.reshape((*new_shape, *patterns.patterns.shape[-2:]))
+    state.scan = state.scan.reshape((*new_shape, 2))
+
+    if state.tilt is not None:
+        n_tilt = math.prod(state.tilt.shape[:-1])
+        if n_tilt != n_patterns:
+            raise ValueError(f"# of tilt positions {n_scan} doesn't match # of patterns {n_patterns}")
+
+        state.tilt = state.tilt.reshape((*new_shape, 2))
+
+    return patterns, state
 
 
 def load_raw_data(
@@ -296,6 +331,7 @@ def initialize_reconstruction(
         progress=ProgressState(iters=numpy.array([]), detector_errors=numpy.array([])),
         wavelength=wavelength
     )
+    data, state = _normalize_scan_shape(data, state)
 
     # process post_init hooks
     for p in plan.post_init:
@@ -305,15 +341,6 @@ def initialize_reconstruction(
         })
 
     # perform some checks on preprocessed data
-
-    if state.scan.shape[:-1] != data.patterns.shape[:-2]:
-        n_pos = int(numpy.prod(state.scan.shape[:-1]))
-        n_pat = int(numpy.prod(data.patterns.shape[:-2]))
-        if n_pos != n_pat:
-            raise ValueError(f"# of scan positions {n_pos} doesn't match # of patterns {n_pat}")
-
-        # reshape patterns to match scan
-        data.patterns = data.patterns.reshape((*state.scan.shape[:-1], *data.patterns.shape[-2:]))
 
     avg_pattern_intensity = float(numpy.nanmean(numpy.nansum(data.patterns, axis=(-1, -2))))
 
