@@ -54,31 +54,32 @@ class GroupManager:
 
 
 def stream_patterns(
-    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating], patterns_id: NDArray[numpy.integer],
     xp: t.Any, buf_n: int = 1
-) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
+) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating], NDArray[numpy.integer]]]:
     if buf_n == 0:
         for group in groups:
             group_patterns = xp.asarray(patterns[tuple(group)])
-            yield group, block_until_ready(group_patterns)
+            group_patterns_id = xp.asarray(patterns_id[tuple(group)])
+            yield group, block_until_ready(group_patterns), block_until_ready(group_patterns_id)
         return
 
     buf = collections.deque()
     it = iter(groups)
 
     for group in it:
-        buf.append((group, xp.asarray(patterns[tuple(group)])))
+        buf.append((group, xp.asarray(patterns[tuple(group)]), xp.asarray(patterns_id[tuple(group)])))
         if len(buf) >= buf_n:
             break
 
     while len(buf) > 0:
-        (group, group_patterns) = buf.popleft()
-        yield group, block_until_ready(group_patterns)
+        (group, group_patterns, group_patterns_id) = buf.popleft()
+        yield group, block_until_ready(group_patterns), block_until_ready(group_patterns_id)
 
         # attempt to feed queue
         try:
             group = next(it)
-            buf.append((group, xp.asarray(patterns[tuple(group)])))
+            buf.append((group, xp.asarray(patterns[tuple(group)]), xp.asarray(patterns_id[tuple(group)])))
         except StopIteration:
             continue
 

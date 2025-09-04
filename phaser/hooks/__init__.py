@@ -18,6 +18,7 @@ if t.TYPE_CHECKING:
 
 class RawData(t.TypedDict):
     patterns: NDArray[numpy.floating]
+    patterns_id: NDArray[numpy.integer]
     mask: NDArray[numpy.floating]
     sampling: 'Sampling'
     wavelength: NotRequired[t.Optional[float]]

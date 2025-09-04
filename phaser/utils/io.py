@@ -121,7 +121,7 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
 
 def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
     probes = _hdf5_read_dataset(group, 'data', numpy.complexfloating)
-    assert probes.ndim == 3
+    assert probes.ndim == 4
 
     extent = _hdf5_read_dataset_shape(group, 'extent', numpy.float64, (2,))
     (n_y, n_x) = probes.shape[-2:]
@@ -194,11 +194,12 @@ def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfL
 
 
 def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
-    assert state.data.ndim == 3
+    assert state.data.ndim == 4
     dataset = group.create_dataset('data', data=to_numpy(state.data))
-    dataset.dims[0].label = 'mode'
-    dataset.dims[1].label = 'y'
-    dataset.dims[2].label = 'x'
+    dataset.dims[0].label = 'scan_num'
+    dataset.dims[1].label = 'mode'
+    dataset.dims[2].label = 'y'
+    dataset.dims[3].label = 'x'
 
     group.create_dataset('sampling', data=state.sampling.sampling.astype(numpy.float64))
     group.create_dataset('extent', data=state.sampling.extent.astype(numpy.float64))

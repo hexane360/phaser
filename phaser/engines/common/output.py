@@ -46,7 +46,7 @@ def output_state(state: ReconsState, out_dir: Path, options: SaveOptions):
 
 
 def _save_probe(state: ReconsState, out_path: Path, options: SaveOptions):
-    probe = to_numpy(state.probe.data)
+    probe = to_numpy(state.probe.data[0])
     write_opts = tiff_write_opts(state.probe.sampling, n_slices=probe.shape[0])
 
     if options.img_dtype == 'float':
@@ -65,7 +65,7 @@ def _save_probe(state: ReconsState, out_path: Path, options: SaveOptions):
 
 
 def _save_probe_mag(state: ReconsState, out_path: Path, options: SaveOptions):
-    probe_mag = abs2(state.probe.data)
+    probe_mag = abs2(state.probe.data[0])
     write_opts = tiff_write_opts(state.probe.sampling, n_slices=probe_mag.shape[0])
 
     if options.img_dtype != 'float':
@@ -78,7 +78,7 @@ def _save_probe_mag(state: ReconsState, out_path: Path, options: SaveOptions):
 
 def _save_probe_recip(state: ReconsState, out_path: Path, options: SaveOptions):
     xp = get_array_module(state.probe.data)
-    probe = to_numpy(xp.fft.fftshift(fft2(state.probe.data), axes=(-1, -2)))
+    probe = to_numpy(xp.fft.fftshift(fft2(state.probe.data[0]), axes=(-1, -2)))
     write_opts = tiff_write_opts_recip(state.probe.sampling, n_slices=probe.shape[0])
 
     if options.img_dtype == 'float':
@@ -98,7 +98,7 @@ def _save_probe_recip(state: ReconsState, out_path: Path, options: SaveOptions):
 
 def _save_probe_recip_mag(state: ReconsState, out_path: Path, options: SaveOptions):
     xp = get_array_module(state.probe.data)
-    probe_mag = to_numpy(abs2(xp.fft.fftshift(fft2(state.probe.data), axes=(-1, -2))))
+    probe_mag = to_numpy(abs2(xp.fft.fftshift(fft2(state.probe.data[0]), axes=(-1, -2))))
     write_opts = tiff_write_opts_recip(state.probe.sampling, n_slices=probe_mag.shape[0])
 
     if options.img_dtype != 'float':
