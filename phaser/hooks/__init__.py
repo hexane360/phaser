@@ -72,11 +72,7 @@ class LoadManualProps(Dataclass, kw_only=True):
 class RawDataHook(Hook[None, RawData]):
     known = {
         'empad': ('phaser.hooks.io.empad:load_empad', LoadEmpadProps),
-<<<<<<< HEAD
-        'gatan': ('phaser.hooks.io.gatan:load_gatan', LoadGatanProps),
-=======
         'gatan': ('phaser.hooks.io.gatan:load_gatan', LoadGatanProps, ('rsciio',)),
->>>>>>> origin/develop
         'manual': ('phaser.hooks.io.manual:load_manual', LoadManualProps),
     }
 
@@ -183,14 +179,6 @@ class OffsetProps(Dataclass):
 class BinProps(Dataclass):
     bin: int
 
-
-
-class OffsetProps(Dataclass):
-    offset: float
-
-
-class BinProps(Dataclass):
-    bin: int
 
 
 class CropDataProps(Dataclass):
