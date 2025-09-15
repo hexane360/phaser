@@ -24,6 +24,7 @@ def execute_plan(
     observers: t.Union[Observer, t.Iterable[Observer], None] = None,
     override_observers: t.Union[Observer, t.Iterable[Observer], None] = None,
 ):
+    
     recons = initialize_reconstruction(
         plan, xp=xp, seed=seed, name=name, init_state=init_state,
         observers=observers, override_observers=override_observers
@@ -165,6 +166,8 @@ def load_raw_data(
 
     raw_data = plan.raw_data(None)
 
+    print('raw_data', raw_data)
+
     wavelength = plan.wavelength or raw_data.get('wavelength', None)
     if wavelength is None:
         raise ValueError("`wavelength` must be specified by raw_data or manually")
@@ -172,10 +175,13 @@ def load_raw_data(
     if init_state is None:
         init_state = PartialReconsState()
 
+
     if init_state.wavelength is not None and not numpy.isclose(init_state.wavelength, wavelength):
         logging.warning(f"Wavelength of reconstruction ({wavelength:.2e}) doesn't match wavelength " \
                         f"of previous state ({init_state.wavelength:.2e})")
 
+
+    print('\n initscan:', plan.init.scan)
     raw_data['scan_hook'] = pane.into_data(merge(  # type: ignore
         pane.from_data(t.cast(dict, raw_data.get('scan_hook', None)), ScanHook) if raw_data.get('scan_hook', None) is not None else None,
         _MISSING if plan.init.scan in (None, {}) else plan.init.scan
@@ -190,6 +196,9 @@ def load_raw_data(
     ))
     #print(f"scan_hook: {raw_data['scan_hook']}")
     #print(f"probe_hook: {raw_data['probe_hook']}")
+
+    print('\n scanhook:', raw_data.get('scan_hook', None))
+
 
     if raw_data['scan_hook'] is None and init_state.scan is None:
         raise ValueError("`scan` must be specified by raw data, previous state, or manually in `init.scan`")
@@ -260,6 +269,8 @@ def initialize_reconstruction(
     probe_hook = raw_data.get('probe_hook', None)
     scan_hook = raw_data.get('scan_hook', None)
     tilt_hook = raw_data.get('tilt_hook', None)
+
+    print(scan_hook)
 
     del raw_data
 
