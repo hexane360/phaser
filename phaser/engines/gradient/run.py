@@ -7,11 +7,11 @@ from numpy.typing import NDArray
 from typing_extensions import Self
 
 from phaser.hooks.solver import NoiseModel
-from phaser.utils.misc import jax_dataclass
 from phaser.utils.num import (
-    get_array_module, cast_array_module, jit,
-    fft2, ifft2, abs2, check_finite, at, Float, to_real_dtype
+    assert_dtype, get_array_module, cast_array_module, jit,
+    fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_numpy, to_real_dtype
 )
+import phaser.utils.tree as tree
 from phaser.utils.optics import fourier_shift_filter
 from phaser.observer import Observer
 from phaser.state import ReconsState
@@ -73,13 +73,14 @@ _PATH_MAP: t.Dict[t.Tuple[str, ...], ReconsVar] = {
     ('tilt',): 'tilt'
 }
 
-def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
-    import jax.tree_util
+def _normalize_path(path: t.Tuple[tree.GetAttrKey, ...]) -> t.Tuple[str, ...]:
+    return tuple(p.name for p in path)
 
+def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
     d = {}
 
-    def f(path: t.Tuple[str, ...], val: t.Any):
-        if (var := _PATH_MAP.get(path)) and var in vars:
+    def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
+        if (var := _PATH_MAP.get(_normalize_path(path))) and var in vars:
             if var in _PER_ITER_VARS and group is not None:
                 d[var] = val[tuple(group)]
             else:
@@ -87,21 +88,19 @@ def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Op
             return None
         return val
 
-    state = jax.tree_util.tree_map_with_path(f, state, is_leaf=lambda x: x is None)
+    state = tree.map_with_path(f, state, is_leaf=lambda x: x is None)
     return (d, state)
 
 def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Optional[NDArray[numpy.integer]] = None) -> ReconsState:
-    import jax.tree_util
-
-    def f(path: t.Tuple[str, ...], val: t.Any):
-        if (var := _PATH_MAP.get(path)):
+    def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
+        if (var := _PATH_MAP.get(_normalize_path(path))):
             if var in vars:
                 return vars[var]
             if var in _PER_ITER_VARS and val is not None and group is not None:
                 return val[tuple(group)]
         return val
 
-    return jax.tree_util.tree_map_with_path(f, state, is_leaf=lambda x: x is None)
+    return tree.map_with_path(f, state, is_leaf=lambda x: x is None)
 
 
 def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -> ReconsState:
@@ -128,7 +127,7 @@ def filter_vars(d: t.Dict[ReconsVar, t.Any], vars: t.AbstractSet[ReconsVar]) -> 
     return {k: v for (k, v) in d.items() if k in vars}
 
 
-@jax_dataclass
+@tree.tree_dataclass
 class SolverStates:
     noise_model_state: t.Any
     group_solver_states: t.List[t.Any]
@@ -154,18 +153,17 @@ class SolverStates:
 
 
 def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
-    import jax
-    import jax.numpy
-    from optax.tree_utils import tree_zeros_like
-    jax.config.update('jax_traceback_filtering', 'off')
-
-    xp = cast_array_module(jax.numpy)
-    dtype = t.cast(t.Type[numpy.floating], args['dtype'])
+    #jax.config.update('jax_traceback_filtering', 'off')
+    xp = cast_array_module(args['xp'])
+    dtype = args['dtype']
+    cdtype = to_complex_dtype(dtype)
     observer: Observer = args.get('observer', Observer())
     state = args['state']
     seed = args['seed']
     patterns = args['data'].patterns
-    pattern_mask = args['data'].pattern_mask
+    pattern_mask = xp.array(args['data'].pattern_mask)
+    assert_dtype(patterns, dtype)
+    assert_dtype(pattern_mask, dtype)
 
     noise_model = props.noise_model(None)
 
@@ -204,7 +202,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     rescale_factor = xp.mean(rescale_factors)
 
     logger.info("Pre-calculated intensities")
-    logger.info(f"Rescaling initial probe intensity by {rescale_factor:.2e}")
+    logger.info(f"Rescaling initial probe intensity by {float(rescale_factor):.2e}")
     state.probe.data *= xp.sqrt(rescale_factor)
     probe_int = xp.sum(abs2(state.probe.data))
 
@@ -215,6 +213,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     iter_constraint_states = [reg.init_state(state) for reg in iter_constraints]
 
     #with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+    #with torch.profiler.profile(with_stack=True) as prof:
     for i in range(1, props.niter+1):
         state.iter.engine_iter = i
         state.iter.total_iter = start_i + i
@@ -224,7 +223,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             set(k for (k, flag) in flags.items() if flag({'state': state, 'niter': props.niter}))
         )
         # gradients for per-iteration solvers
-        iter_grads = tree_zeros_like(extract_vars(state, iter_vars & _PER_ITER_VARS)[0])
+        iter_grads = tree.zeros_like(extract_vars(state, iter_vars & _PER_ITER_VARS)[0])
         # whether to shuffle groups this iteration
         iter_shuffle_groups = shuffle_groups({'state': state, 'niter': props.niter})
 
@@ -257,7 +256,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 xp=xp, dtype=dtype
             )
 
-            losses.append(loss)
+            losses.append(float(loss))
             check_finite(state.object.data, state.probe.data, context=f"object or probe, group {group_i}")
             observer.update_group(state, props.send_every_group)
 
@@ -278,9 +277,13 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 state, iter_constraint_states[reg_i]
             )
 
+        assert_dtype(state.object.data, cdtype)
+        assert_dtype(state.probe.data, cdtype)
+
         if 'positions' in iter_vars:
             # check positions are at least overlapping object
             state.object.sampling.check_scan(state.scan, state.probe.sampling.extent / 2.)
+            assert_dtype(state.scan, dtype)
 
         state.progress.iters = numpy.concatenate([state.progress.iters, [i + start_i]])
         state.progress.detector_errors = numpy.concatenate([state.progress.detector_errors, [loss]])
@@ -312,25 +315,25 @@ def run_group(
     xp: t.Any,
     dtype: t.Type[numpy.floating],
 ) -> t.Tuple[ReconsState, float, t.Dict[ReconsVar, t.Any], SolverStates]:
-    import jax
     xp = cast_array_module(xp)
 
-    ((loss, solver_states), grad) = jax.value_and_grad(run_model, has_aux=True)(
+    ((loss, solver_states), grad) = tree.value_and_grad(run_model, has_aux=True, xp=xp, sign=-1)(
         *extract_vars(state, vars, group),
         group=group, props=props, group_patterns=group_patterns, pattern_mask=pattern_mask,
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
         xp=xp, dtype=dtype
     )
-    # steepest descent direction
-    grad = jax.tree.map(lambda v: -v.conj(), grad, is_leaf=lambda x: x is None)
     for k in grad.keys():
         if k == 'probe':
             grad[k] /= group.shape[-1]
         else:
             grad[k] /= probe_int * group.shape[-1]
 
+    #print(f"obj grad: {xp.max(abs2(grad['object']))}")
+    #print(f"probe grad: {xp.max(abs2(grad['probe'])) if 'probe' in grad else None}")
+
     # update iter grads at group
-    iter_grads = jax.tree.map(lambda v1, v2: at(v1, tuple(group)).set(v2), iter_grads, filter_vars(grad, vars & _PER_ITER_VARS))
+    iter_grads = tree.map(lambda v1, v2: at(v1, tuple(group)).set(v2), iter_grads, filter_vars(grad, vars & _PER_ITER_VARS))
 
     for (sol_i, solver) in enumerate(group_solvers):
         solver_grads = filter_vars(grad, solver.params)

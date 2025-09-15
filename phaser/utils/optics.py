@@ -165,7 +165,7 @@ def fourier_shift_filter(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating
     xp = get_array_module(ky, kx)
     dtype = to_complex_dtype(ky.dtype)
 
-    (y, x) = split_array(xp.array(shifts, dtype=ky.dtype), axis=-1)
+    (y, x) = split_array(xp.asarray(shifts, dtype=ky.dtype), axis=-1)
 
     return xp.exp(xp.array(-2.j*numpy.pi, dtype=dtype) * (ufunc_outer(xp.multiply, x, kx) + ufunc_outer(xp.multiply, y, ky)))
 

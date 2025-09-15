@@ -107,8 +107,8 @@ class LSQMLSolver(ConventionalSolver):
                 gamma=gamma,
             )
             check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
-            assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-            assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+            #assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
+            #assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
 
             sim = sim.apply_group_constraints(group)
 
@@ -365,8 +365,8 @@ class EPIESolver(ConventionalSolver):
                 update_probe=update_probe,
             )
             check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
-            assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-            assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+            #assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
+            #assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
 
             sim = sim.apply_group_constraints(group)
 

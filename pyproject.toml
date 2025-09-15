@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phaserEM"
-version = "0.2"
+version = "0.3-dev"
 authors = [
   {name = "Colin Gilgenbach", email = "hexane@mit.edu"}
 ]
@@ -36,6 +36,7 @@ dependencies = [
     "click~=8.1.0",
     "rich>=12.0.0,<15",
     "tifffile>=2023.8.25",
+    "optree>=0.13.0",
     "py-pane==0.11.3",
     "typing_extensions~=4.7",
 ]
@@ -59,6 +60,9 @@ jax = [
     # tested on 0.4.25, 0.5.x, 0.6.x, and 0.7.0
     "jax>=0.4.25,<0.8",
     "optax>=0.2.2",
+]
+torch = [
+	"torch>=2.8.0",
 ]
 web = [
     "Quart>=0.20.0",
@@ -91,9 +95,10 @@ include = ["phaser*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "cuda: Run on CUDA backend",
+    "cupy: Run on Cupy backend",
     "jax: Run on jax backend",
-    "cpu: Run on CPU backend",
+    "torch: Run on PyTorch backend",
+    "numpy: Run on numpy backend",
     "slow: mark a test as slow",
 
     "expected_filename: Filename to load expected result from",

@@ -1,5 +1,6 @@
 from functools import partial
 import logging
+from math import prod
 import typing as t
 
 import numpy
@@ -205,7 +206,7 @@ class ObjL1:
         xp = get_array_module(sim.object.data)
 
         cost = xp.sum(xp.abs(sim.object.data - 1.0))
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
         return (cost * cost_scale * self.cost, state)
 
 
@@ -222,8 +223,9 @@ class ObjL2:
         xp = get_array_module(sim.object.data)
 
         cost = xp.sum(abs2(sim.object.data - 1.0))
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
-        return (cost * cost_scale * self.cost, state)
+
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
+        return (cost * cost_scale * self.cost, state)  # type: ignore
 
 
 class ObjPhaseL1:
@@ -239,7 +241,7 @@ class ObjPhaseL1:
         xp = get_array_module(sim.object.data)
 
         cost = xp.sum(xp.abs(xp.angle(sim.object.data)))
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
         return (cost * cost_scale * self.cost, state)
 
 
@@ -261,7 +263,7 @@ class ObjRecipL1:
             xp.abs(fft2(xp.prod(sim.object.data, axis=0)))
         )
         # scale cost by fraction of the total reconstruction in the group
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
 
         return (cost * cost_scale * self.cost, state)
 
@@ -289,7 +291,7 @@ class ObjTotalVariation:
         #)
         # scale cost by fraction of the total reconstruction in the group
         # TODO also scale by # of pixels or similar?
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
 
         return (cost * cost_scale * self.cost, state)
 
@@ -311,9 +313,9 @@ class ObjTikhonov:
             xp.sum(abs2(xp.diff(sim.object.data, axis=-2)))
         )
         # scale cost by fraction of the total reconstruction in the group
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
 
-        return (cost * cost_scale * self.cost, state)
+        return (cost * cost_scale * self.cost, state)  # type: ignore
 
 
 class LayersTotalVariation:
@@ -333,7 +335,7 @@ class LayersTotalVariation:
 
         cost = xp.sum(xp.abs(xp.diff(sim.object.data, axis=0)))
         # scale cost by fraction of the total reconstruction in the group
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
 
         return (cost * cost_scale * self.cost, state)
 
@@ -355,9 +357,9 @@ class LayersTikhonov:
 
         cost = xp.sum(abs2(xp.diff(sim.object.data, axis=0)))
         # scale cost by fraction of the total reconstruction in the group
-        cost_scale = (group.shape[-1] / numpy.prod(sim.scan.shape[:-1])).astype(cost.dtype)
+        cost_scale = xp.array(group.shape[-1] / prod(sim.scan.shape[:-1]), dtype=cost.dtype)
 
-        return (cost * cost_scale * self.cost, state)
+        return (cost * cost_scale * self.cost, state)  # type: ignore
 
 
 class ProbePhaseTikhonov:

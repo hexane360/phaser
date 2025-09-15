@@ -3,7 +3,7 @@ import logging
 import numpy
 
 from phaser.utils.misc import mask_fraction_of_groups
-from phaser.utils.num import cast_array_module, to_numpy, to_complex_dtype
+from phaser.utils.num import assert_dtype, cast_array_module, to_numpy, to_complex_dtype
 from phaser.observer import Observer
 from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
@@ -17,6 +17,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
     xp = cast_array_module(args['xp'])
     dtype = args['dtype']
+    cdtype = to_complex_dtype(dtype)
     observer: Observer = args.get('observer', Observer())
     seed = args['seed']
 
@@ -37,12 +38,12 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         xp=xp, dtype=dtype
     )
     patterns = args['data'].patterns
-    pattern_mask = xp.array(args['data'].pattern_mask)
+    pattern_mask = xp.asarray(args['data'].pattern_mask)
 
-    assert patterns.dtype == sim.dtype
-    assert pattern_mask.dtype == sim.dtype
-    assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-    assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+    assert_dtype(patterns, dtype)
+    assert_dtype(pattern_mask, dtype)
+    assert_dtype(sim.state.object.data, cdtype)
+    assert_dtype(sim.state.probe.data, cdtype)
 
     solver = props.solver(props)
     sim = solver.init(sim)
@@ -87,8 +88,8 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
             calc_error_mask=calc_error_mask,
             observer=observer,
         )
-        assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-        assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+        assert_dtype(sim.state.object.data, cdtype)
+        assert_dtype(sim.state.probe.data, cdtype)
 
         sim = sim.apply_iter_constraints()
 
@@ -104,7 +105,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
             update_mag = xp.linalg.norm(pos_update, axis=-1, keepdims=True)
             logger.info(f"Position update: mean {xp.mean(update_mag)}")
             sim.state.scan += pos_update
-            assert sim.state.scan.dtype == sim.dtype
+            assert_dtype(sim.state.scan, dtype)
 
             # check positions are at least overlapping object
             sim.state.object.sampling.check_scan(sim.state.scan, sim.state.probe.sampling.extent / 2.)

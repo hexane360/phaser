@@ -1,9 +1,12 @@
 
 import functools
+import re
 import typing as t
 
 import cupy  # pyright: ignore[reportMissingImports]
 import numpy
+
+from phaser.utils.misc import _MockModule
 
 # grid
 #  block
@@ -211,3 +214,34 @@ void {kernel_name}({const_s[0]}T *obj, {const_s[1]}T *cutouts, const long long *
 """, kernel_name)
     kernel.compile()
     return kernel
+
+
+def get_devices() -> t.Tuple[str, ...]:
+    n: int = cupy.cuda.runtime.getDeviceCount()
+    return tuple(f'cuda:{i}' for i in range(n))
+
+
+def to_device(device: t.Union[str, int, cupy.cuda.Device]) -> cupy.cuda.Device:
+    if isinstance(device, (int, cupy.cuda.Device)):
+        return cupy.cuda.Device(device)
+    device = str(device)
+    if (match := re.fullmatch(r'cuda:(\d)+', device)):
+        return cupy.cuda.Device(int(match[1]))
+    raise ValueError(f"Invalid device '{device}'")
+
+
+def set_default_device(device: cupy.cuda.Device):
+    if not isinstance(device, cupy.cuda.Device):
+        raise TypeError(f"Invalid device '{device}' for backend cupy")
+    device.use()
+
+
+def _wrap_call(f, *args: t.Any, **kwargs: t.Any) -> t.Any:
+    if (device := kwargs.pop('device', None)) is not None:
+        with to_device(device):
+            return f(*args, **kwargs)
+
+    return f(*args, **kwargs)
+
+
+mock_cupy = _MockModule(cupy, {}, _wrap_call)

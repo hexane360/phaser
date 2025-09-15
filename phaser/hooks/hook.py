@@ -4,7 +4,6 @@ import abc
 import importlib
 import typing as t
 
-import pane
 from pane.convert import ConverterHandlers, DataType
 from pane.converters import Converter, make_converter
 from pane.errors import ErrorNode, WrongTypeError, ParseInterrupt, ProductErrorNode
@@ -13,15 +12,17 @@ T = t.TypeVar('T')
 U = t.TypeVar('U')
 
 class Hook(t.Generic[T, U], abc.ABC):
-    known: t.ClassVar[t.Dict[str, t.Tuple[str, type]]] = {}
+    known: t.ClassVar[t.Dict[str, t.Union[t.Tuple[str, type], t.Tuple[str, type, t.Tuple[str, ...]]]]] = {}
 
     def __init__(
         self, ref: str, props: t.Optional[t.Any] = None, type: t.Optional[str] = None,
+        dependencies: t.Tuple[str, ...] = ()
     ):
         self.ref: str = ref
         self.type: t.Optional[str] = type
         self.f: t.Optional[t.Callable[..., U]] = None
         self.props: t.Optional[t.Any] = props
+        self.dependencies: t.Tuple[str, ...] = dependencies
 
     def func_ref(self) -> str:
         if self.type is not None:
@@ -34,6 +35,10 @@ class Hook(t.Generic[T, U], abc.ABC):
                 return globals()[self.ref]
             raise ValueError(f"Can't resolve function reference '{self.ref}'.")
 
+        if self.dependencies is not None:
+            from ._dependencies import check_dependencies
+            check_dependencies(self.dependencies, self.func_ref())
+
         (module_path, func_name) = self.ref.split(':')
         try:
             module = importlib.import_module(module_path)
@@ -42,9 +47,11 @@ class Hook(t.Generic[T, U], abc.ABC):
             raise
 
         try:
-            return getattr(module, func_name)
+            f = getattr(module, func_name)
         except AttributeError:
             raise AttributeError(f"No function '{func_name}' found in module '{module_path}'")
+
+        return f
 
     def resolve(self) -> t.Callable[..., U]:
         if self.f is None:
@@ -114,9 +121,13 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
             ref = str(val.pop('type'))
             props = val
 
+        dependencies = ()
+
         if ref in self.cls.known:
             ty = ref
-            (ref, props_ty) = self.cls.known[ty]
+            (ref, props_ty, *dep) = self.cls.known[ty]
+            if len(dep):
+                dependencies = dep[0]
 
             converter = make_converter(props_ty)
             props = converter.try_convert(props)
@@ -125,7 +136,7 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
         else:
             ty = None
 
-        return self.cls(ref, props, ty)
+        return self.cls(ref, props, ty, dependencies=dependencies)
 
     def collect_errors(self, val: t.Any) -> t.Optional[ErrorNode]:
         try:
@@ -143,7 +154,7 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
 
         if ref in self.cls.known:
             ty = ref
-            (ref, props_ty) = self.cls.known[ty]
+            (ref, props_ty, *dep) = self.cls.known[ty]
 
             converter = make_converter(props_ty)
             try:

@@ -7,6 +7,9 @@ import jax  # pyright: ignore[reportMissingImports]
 import jax.numpy as jnp    # pyright: ignore[reportMissingImports]
 
 
+Device: t.TypeAlias = t.Any
+
+
 def to_nd(arr: jax.Array, n: int) -> jax.Array:
     if arr.ndim > n:
         arr = arr.reshape(-1, *arr.shape[arr.ndim - n + 1:])
@@ -100,3 +103,48 @@ def affine_transform(
     return jax.vmap(
         lambda a: jax.scipy.ndimage.map_coordinates(a, tuple(coords), order=order, mode=jax_mode, cval=cval),
     )(to_nd(input, n_axes + 1)).reshape((*input.shape[:-n_axes], *output_shape))
+
+
+def get_devices() -> t.Tuple[Device, ...]:
+    devices = []
+
+    for backend in ('gpu', 'tpu', 'cpu'):
+        try:
+            devices.extend(jax.devices(backend))
+        except RuntimeError:
+            pass
+
+    return tuple(devices)
+
+
+def to_device(device: t.Union[str, Device]) -> Device:
+    if isinstance(device, jax.Device):
+        return device
+
+    split = device.rsplit(':', maxsplit=1)
+    if len(split) == 1:
+        [backend] = split
+        index = 0
+    else:
+        [backend, index] = split
+        index = int(index)
+
+    try:
+        backend_devices = jax.devices(backend)
+    except RuntimeError:
+        raise RuntimeError(f"Can't use device '{device}': jax backend '{backend}' is unavailable")
+
+    try:
+        return backend_devices[index]
+    except IndexError:
+        pass
+    if len(backend_devices) == 0:
+        raise RuntimeError(f"Can't use device '{device}': No available devices on jax backend '{backend}'")
+    raise RuntimeError(f"Can't use device '{device}': Device index {index} not available"
+                       f" ({len(backend_devices)} device(s) on jax backend '{backend}')")
+
+
+def set_default_device(device: Device):
+    if not isinstance(device, jax.Device):
+        raise TypeError(f"Invalid device '{device}' for backend jax")
+    jax.config.update('jax_default_device', device)

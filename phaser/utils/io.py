@@ -208,10 +208,10 @@ def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
     assert state.data.ndim == 3
     assert state.thicknesses.ndim == 1
     n_z = state.data.shape[0]
-    assert state.thicknesses.ndim == 1
-    assert state.thicknesses.size == n_z if n_z > 1 else state.thicknesses.size in (0, 1)
 
     thick = to_numpy(state.thicknesses)
+    assert thick.ndim == 1
+    assert thick.size == n_z if n_z > 1 else thick.size in (0, 1)
     group.create_dataset('thicknesses', data=thick)
     zs = group.create_dataset('zs', data=to_numpy(state.zs()))
     zs.make_scale("z")

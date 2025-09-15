@@ -3,7 +3,7 @@ import typing as t
 
 import numpy
 
-from ..types import Dataclass, Flag, process_schedule
+from ..types import Dataclass, SimpleFlag, process_schedule
 from .hook import Hook
 
 if t.TYPE_CHECKING:
@@ -23,7 +23,9 @@ class ScheduleHook(Hook[FlagArgs, float]):
     known = {}
 
 
-FlagLike: t.TypeAlias = t.Union[bool, Flag, FlagHook]
+Flag: t.TypeAlias = t.Callable[['FlagArgs'], bool]
+Schedule: t.TypeAlias = t.Callable[['FlagArgs'], float]
+FlagLike: t.TypeAlias = t.Union[bool, SimpleFlag, FlagHook]
 ScheduleLike: t.TypeAlias = t.Union[float, ScheduleHook]
 
 

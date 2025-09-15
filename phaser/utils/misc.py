@@ -1,11 +1,11 @@
-import dataclasses
+import functools
 import math
+from types import ModuleType
 import typing as t
 
 import numpy
 from numpy.typing import NDArray
 from numpy.random import SeedSequence, PCG64, BitGenerator, Generator
-from typing_extensions import dataclass_transform
 
 
 T = t.TypeVar('T')
@@ -217,79 +217,57 @@ class FloatKey(float):
             round(self, 5) == round(other, 5)
 
 
-@t.overload
-@dataclass_transform(kw_only_default=False, frozen_default=False)
-def jax_dataclass(cls: t.Type[T], /, *,
-    init: bool = True, kw_only: bool = False, frozen: bool = False,
-    static_fields: t.Sequence[str] = (), drop_fields: t.Sequence[str] = (),
-) -> t.Type[T]:
-    ...
-
-@t.overload
-@dataclass_transform(kw_only_default=False, frozen_default=False)
-def jax_dataclass(*,
-    init: bool = True, kw_only: bool = False, frozen: bool = False,
-    static_fields: t.Sequence[str] = (), drop_fields: t.Sequence[str] = (),
-) -> t.Callable[[t.Type[T]], t.Type[T]]:
-    ...
-
-def jax_dataclass(cls: t.Optional[t.Type[T]] = None, /, *,
-    init: bool = True, kw_only: bool = False, frozen: bool = False,
-    static_fields: t.Sequence[str] = (), drop_fields: t.Sequence[str] = (),
-) -> t.Union[t.Type[T], t.Callable[[t.Type[T]], t.Type[T]]]:
-    if cls is None:
-        return lambda cls: jax_dataclass(cls, init=init, kw_only=kw_only, frozen=frozen,
-                                         static_fields=static_fields, drop_fields=drop_fields)
-
-    cls = dataclasses.dataclass(init=init, kw_only=kw_only, frozen=frozen)(cls)
-    _register_dataclass(cls, static_fields=static_fields, drop_fields=drop_fields)
-    return cls
-
-
-def _register_dataclass(cls: type, static_fields: t.Sequence[str], drop_fields: t.Sequence[str]):
-    try:
-        from jax.tree_util import register_pytree_with_keys
-    except ImportError:
-        return
-
-    fields = dataclasses.fields(cls)
-    field_names = {field.name for field in fields}
-
-    if (extra := set(static_fields).difference(field_names)):
-        raise ValueError(f"Unknown field(s) passed to 'static_fields': {', '.join(map(repr, extra))}")
-    if (extra := set(drop_fields).difference(field_names)):
-        raise ValueError(f"Unknown field(s) passed to 'drop_fields': {', '.join(map(repr, extra))}")
-
-    data_fields = tuple(field_names.difference(static_fields).difference(drop_fields))
-
-    def flatten_with_keys(x: t.Any, /) -> tuple[t.Iterable[tuple[str, t.Any]], t.Hashable]:
-        meta = tuple(getattr(x, name) for name in static_fields)
-        trees = tuple((name, getattr(x, name)) for name in data_fields)
-        return trees, meta
-
-    def unflatten(meta: t.Hashable, trees: t.Iterable[t.Any], /) -> t.Any:
-        if not isinstance(meta, tuple):
-            raise TypeError
-        static_args = dict(zip(static_fields, meta, strict=True))
-        data_args = dict(zip(data_fields, trees, strict=True))
-        return cls(**static_args, **data_args)
-
-    def flatten(x: t.Any, /) -> tuple[t.Iterable[t.Any], t.Hashable]:
-        hashed = tuple(getattr(x, name) for name in static_fields)
-        trees = tuple(getattr(x, name) for name in data_fields)
-        return trees, hashed
-
-    register_pytree_with_keys(cls, flatten_with_keys, unflatten, flatten)
-
-
 def unwrap(val: t.Optional[T]) -> T:
     assert val is not None
     return val
+
+
+class _MockModule:
+    def __init__(self, module: ModuleType, rewrites: t.Dict[str, t.Callable], wrap: t.Callable):
+        self._inner: ModuleType = module
+        self._rewrites: t.Dict[str, t.Callable] = rewrites
+        self._wrap: t.Callable = wrap
+
+        self.__name__ = module.__name__
+        """
+        self.__spec__ = module.__spec__
+        self.__package__ = module.__package__
+        self.__loader__ = module.__loader__
+        self.__path__ = module.__path__
+        self.__doc__ = module.__doc__
+        self.__annotations__ = module.__annotations__
+        if hasattr(module, '__file__') and hasattr(module, '__cached__'):
+            self.__file__ = module.__file__
+            self.__cached__ = module.__cached__
+        """
+
+        self.__setattr__ = lambda name, val: setattr(self._inner, name, val)
+
+    def __getattr__(self, name: t.Any) -> t.Any:
+        fullpath = f"{self.__name__}.{name}"
+        if (rewrite := self._rewrites.get(fullpath, None)):
+            if (val := getattr(self._inner, name, None)) is not None:
+                return functools.update_wrapper(rewrite, val)
+            return rewrite
+
+        val = getattr(self._inner, name)
+
+        if isinstance(val, ModuleType):
+            return _MockModule(val, self._rewrites, self._wrap)
+
+        if hasattr(val, '__call__') and not isinstance(val, type):
+            def inner(*args, **kwargs):
+                return self._wrap(val, *args, **kwargs)
+
+            return inner
+            return functools.update_wrapper(inner, val)
+
+        return val
 
 
 __all__ = [
     'create_rng', 'create_rng_group',
     'create_sparse_groupings', 'create_compact_groupings',
     'mask_fraction_of_groups', 'FloatKey',
-    'jax_dataclass', 'unwrap',
+    'unwrap',
 ]

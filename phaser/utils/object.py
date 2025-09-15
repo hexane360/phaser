@@ -12,13 +12,14 @@ import numpy
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 from typing_extensions import Self
 
-from .num import get_array_module, cast_array_module, to_real_dtype, as_numpy, at
+from .num import get_array_module, cast_array_module, is_torch, to_real_dtype, as_numpy, at
 from .num import as_array, is_cupy, is_jax, NumT, ComplexT, DTypeT
-from .misc import create_rng, jax_dataclass
+from .tree import tree_dataclass
+from .misc import create_rng
 
 
 if t.TYPE_CHECKING:
-    from phaser.utils.image import _BoundaryMode
+    from phaser.utils.image import _InterpBoundaryMode
 
 
 @t.overload
@@ -49,7 +50,7 @@ def random_phase_object(shape: t.Iterable[int], sigma: float = 1e-6, *, seed: t.
     rng = create_rng(seed, 'random_phase_object')
 
     real_dtype = to_real_dtype(dtype) if dtype is not None else numpy.float64
-    obj_angle = xp2.array(rng.normal(0., sigma, tuple(shape)), dtype=real_dtype)
+    obj_angle = xp2.asarray(rng.normal(0., sigma, tuple(shape)), dtype=real_dtype)
     return xp2.cos(obj_angle) + xp2.sin(obj_angle) * 1.j
 
 
@@ -98,7 +99,7 @@ def resample_slices(
         # TODO more options in this case?
         new_total_thick = numpy.sum(new_thicknesses)
 
-        slice_frac = xp.array((new_thicknesses / new_total_thick)[(slice(None), *repeat(None, obj.ndim - 1))])
+        slice_frac = xp.asarray((new_thicknesses / new_total_thick)[(slice(None), *repeat(None, obj.ndim - 1))])
         return xp.exp((xp.log(obj) * slice_frac).astype(obj.dtype))
 
     if obj.shape[0] != len(old_thicknesses):
@@ -178,7 +179,7 @@ def _interp1d(arr: NDArray[NumT], old_zs: NDArray[numpy.floating], new_zs: NDArr
         else:
             slice_i = slice_is[i]
             # linearly interpolate
-            t = xp.array(float((new_z - old_zs[slice_i]) / delta_zs[slice_i]), dtype=real_dtype)
+            t = xp.asarray(float((new_z - old_zs[slice_i]) / delta_zs[slice_i]), dtype=real_dtype)
             slice = ((1-t)*arr[slice_i] + t*arr[slice_i + 1]).astype(arr.dtype)
 
         new_arr = at(new_arr, i).set(slice)
@@ -186,7 +187,7 @@ def _interp1d(arr: NDArray[NumT], old_zs: NDArray[numpy.floating], new_zs: NDArr
     return new_arr
 
 
-@jax_dataclass(frozen=True, init=False)
+@tree_dataclass(frozen=True, init=False)
 class ObjectSampling:
     shape: NDArray[numpy.int_]
     """Sampling shape `(n_y, n_x)`"""
@@ -286,19 +287,17 @@ class ObjectSampling:
             (scan_positions[..., 1] < obj_min[1]) | (scan_positions[..., 1] > obj_max[1])
         )
         if (n_outside := int(xp.sum(outside))):
-            raise ValueError(f"{n_outside}/{outside.size} probe positions completely outside object")
+            raise ValueError(f"{n_outside}/{xp.size(outside)} probe positions completely outside object")
 
     def _pos_to_object_idx(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> NDArray[numpy.float64]:
         """Return starting index for the cutout closest to centered around `pos` (`(y, x)`)"""
-
-        if not is_jax(pos):  # allow jax tracers to work right
-            pos = as_numpy(pos)
+        xp = get_array_module(pos)
 
         # for a given cutout, shift to the top left pixel of that cutout
         # e.g. a 2x2 cutout needs shifted by s/2
-        shift = -numpy.maximum(0., (numpy.array(cutout_shape[-2:]) - 1.)) / 2.
+        shift = -xp.maximum(0., (xp.array(cutout_shape[-2:]) - 1.)) / 2.
 
-        return ((pos - self.corner) / self.sampling + shift).astype(numpy.float64)  # type: ignore
+        return ((pos - xp.array(self.corner.copy())) / xp.array(self.sampling.copy()) + shift).astype(numpy.float64)  # type: ignore
 
     def slice_at_pos(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> t.Tuple[slice, slice]:
         """
@@ -312,9 +311,10 @@ class ObjectSampling:
         Returns slices which can be used to index into an object. E.g. `obj[slice_at_pos(pos, (32, 32))]`
         will return an array of shape `(32, 32)`.
         """
+        xp = get_array_module(pos)
 
         idxs = self._pos_to_object_idx(pos, cutout_shape)
-        (start_i, start_j) = map(int, numpy.round(idxs).astype(numpy.int64))
+        (start_i, start_j) = map(int, xp.round(idxs).astype(numpy.int64))
         assert start_i >= 0 and start_j >= 0
         return (
             slice(start_i, start_i + cutout_shape[-2]),
@@ -327,8 +327,10 @@ class ObjectSampling:
 
         Returns the shift from the rounded position towards the actual position, in length units.
         """
+        xp = get_array_module(pos)
+
         pos = self._pos_to_object_idx(as_array(pos), cutout_shape)
-        return (pos - get_array_module(pos).round(pos)).astype(numpy.float64) * self.sampling
+        return (pos - xp.round(pos)).astype(numpy.float64) * xp.asarray(self.sampling, copy=True)
 
     @t.overload
     def cutout(  # pyright: ignore[reportOverlappingOverload]
@@ -342,7 +344,7 @@ class ObjectSampling:
 
     def cutout(self, arr: numpy.ndarray, pos: ArrayLike, shape: t.Tuple[int, ...]) -> ObjectCutout[t.Any]:
         xp = get_array_module(arr, pos)
-        return ObjectCutout(self, xp.array(arr), xp.array(pos), shape)
+        return ObjectCutout(self, xp.asarray(arr), xp.asarray(pos), shape)
 
     def get_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, shape: t.Tuple[int, ...]) -> NDArray[NumT]:
         """
@@ -379,8 +381,8 @@ class ObjectSampling:
 
     def get_region_mask(self, pad: ArrayLike = 0., *, xp: t.Any = None) -> NDArray[numpy.bool_]:
         xp2 = numpy if xp is None else cast_array_module(xp)
-        mask = xp2.zeros(self.shape, dtype=numpy.bool_)
-        mask = at(mask, self.get_region_crop(pad=pad)).set(numpy.bool_(1))  # type: ignore
+        mask = xp2.zeros(tuple(self.shape), dtype=numpy.bool_)
+        mask = at(mask, self.get_region_crop(pad=pad)).set(t.cast(numpy.bool_, 1))
         return mask
 
     def get_region_center(self) -> NDArray[numpy.floating]:
@@ -429,7 +431,7 @@ class ObjectSampling:
 
     def resample(
         self, arr: NDArray[NumT], new_samp: 'ObjectSampling', *,
-        order: int = 1, mode: '_BoundaryMode' = 'grid-constant',
+        order: int = 1, mode: '_InterpBoundaryMode' = 'grid-constant',
         cval: t.Union[NumT, float] = 1.0,
         rotation: t.Optional[float] = None,
         affine: t.Optional[ArrayLike] = None,
@@ -491,8 +493,8 @@ class ObjectCutout(t.Generic[DTypeT]):
     _start_idxs: NDArray[numpy.int_] = field(init=False)
 
     def __post_init__(self):
-        self._start_idxs = numpy.round(self.sampling._pos_to_object_idx(self.pos, self.cutout_shape)).astype(numpy.int_) # type: ignore
-        self._start_idxs = get_array_module(self.obj).array(self._start_idxs)
+        xp = get_array_module(self.pos)
+        self._start_idxs = xp.round(self.sampling._pos_to_object_idx(self.pos, self.cutout_shape)).astype(numpy.int_) # type: ignore
 
     @property
     def shape(self) -> t.Tuple[int, ...]:
@@ -502,6 +504,10 @@ class ObjectCutout(t.Generic[DTypeT]):
         if is_jax(self.obj):
             from ._jax_kernels import get_cutouts
             return t.cast(NDArray[DTypeT], get_cutouts(self.obj, self._start_idxs, tuple(self.cutout_shape)))
+
+        if is_torch(self.obj):
+            from ._torch_kernels import get_cutouts
+            return get_cutouts(self.obj, self._start_idxs, tuple(self.cutout_shape))  # type: ignore
 
         if is_cupy(self.obj):
             try:

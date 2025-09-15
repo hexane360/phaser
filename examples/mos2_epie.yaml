@@ -1,11 +1,11 @@
 ---
 name: "mos2_epie"
-backend: cupy
+backend: torch
 
 # raw data source
 raw_data:
   type: empad
-  path: "sample_data/simulated_mos2/mos2_0.00_dstep1.0.json"
+  path: "~/Downloads/mos2/1/mos2/mos2_0.00_dstep1.0.json"
 
 post_load:
  - type: poisson
@@ -32,7 +32,8 @@ engines:
      beta_probe: 0.5
 
    group_constraints: []
-   iter_constraints: []
+   iter_constraints:
+     - type: remove_phase_ramp
 
    update_probe: {after: 5}
 

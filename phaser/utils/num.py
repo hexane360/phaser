@@ -3,21 +3,25 @@ General numeric utilities.
 """
 
 import functools
+from itertools import chain
 import logging
 import warnings
+from types import ModuleType, EllipsisType
 import typing as t
+import sys
 
 import numpy
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 
 from phaser.types import BackendName
-from .misc import jax_dataclass
+from .tree import tree_dataclass
 
 
 if t.TYPE_CHECKING:
-    from phaser.utils.image import _BoundaryMode
+    from phaser.utils.image import _InterpBoundaryMode
 
 
+Device: t.TypeAlias = t.Any
 Float: t.TypeAlias = t.Union[float, numpy.floating]
 NumT = t.TypeVar('NumT', bound=numpy.number)
 FloatT = t.TypeVar('FloatT', bound=numpy.floating)
@@ -27,98 +31,220 @@ T = t.TypeVar('T')
 P = t.ParamSpec('P')
 
 IndexLike: t.TypeAlias = t.Union[
-    int,
+    int, slice, EllipsisType,
     NDArray[numpy.integer[t.Any]],
     NDArray[numpy.bool_],
-    t.Tuple[t.Union[int, NDArray[numpy.integer[t.Any]], NDArray[numpy.bool_]], ...],
+    t.Tuple[t.Union[int, slice, EllipsisType, NDArray[numpy.integer[t.Any]], NDArray[numpy.bool_]], ...],
 ]
-
 
 logger = logging.getLogger(__name__)
 
-try:
+
+def _load_cupy() -> ModuleType:
+    from ._cuda_kernels import mock_cupy
+
+    with warnings.catch_warnings():
+        # https://github.com/cupy/cupy/issues/8718
+        warnings.filterwarnings(action='ignore', message=r"cupyx\.jit\.rawkernel is experimental", category=FutureWarning)
+        import cupyx.scipy.signal   # pyright: ignore[reportMissingImports,reportUnusedImport]
+        import cupyx.scipy.ndimage  # pyright: ignore[reportMissingImports,reportUnusedImport] # noqa: F401
+
+    return t.cast(ModuleType, mock_cupy)
+
+def _load_jax() -> ModuleType:
     import jax
     jax.config.update('jax_enable_x64', jax.default_backend() != 'METAL')
-    #jax.config.update('jax_log_compiles', True)
-    #jax.config.update('jax_debug_nans', True)
-except ImportError:
-    pass
+    import jax.scipy
+
+    return jax.numpy
+
+def _load_torch() -> ModuleType:
+    from ._torch_kernels import mock_torch
+    return t.cast(ModuleType, mock_torch)
+
+
+_NAME_REMAP: t.Dict[BackendName, BackendName] = {}
+
+_LOAD_FNS: t.Dict[BackendName, t.Callable[[], ModuleType]] = {
+    'cupy': _load_cupy,
+    'jax': _load_jax,
+    'torch': _load_torch,
+}
+
+
+class _BackendLoader:
+    def __init__(self):
+        self.inner: t.Dict[BackendName, t.Optional[ModuleType]] = {}
+
+    def _normalize(self, backend: BackendName) -> BackendName:
+        name = t.cast(BackendName, backend.lower())
+        name = _NAME_REMAP.get(name, name)
+
+        if name not in ('cupy', 'jax', 'numpy', 'torch'):
+            raise ValueError(f"Unknown backend '{backend}'")
+        return name
+
+    def _load(self, name: BackendName):
+        try:
+            self.inner[name] = _LOAD_FNS[name]()
+        except ImportError:
+            self.inner[name] = None
+
+    def get(self, name: BackendName):
+        name = self._normalize(name)
+        if name == 'numpy':
+            return numpy
+
+        if name not in self.inner:
+            self._load(name)
+
+        return None if t.TYPE_CHECKING else self.inner[name]
+
+    def __getitem__(self, name: BackendName):
+        if (backend := self.get(name)) is not None:
+            return backend
+
+        raise ValueError(f"Backend '{name}' is not available")
+
+_BACKEND_LOADER = _BackendLoader()
 
 
 def get_backend_module(backend: t.Optional[BackendName] = None):
     """Get the module `xp` associated with a compute backend"""
     if backend is None:
-        return get_default_backend_module()
+        backend = get_default_backend()
 
-    backend = t.cast(BackendName, backend.lower())
-    if backend not in ('cuda', 'cupy', 'jax', 'cpu', 'numpy'):
-        raise ValueError(f"Unknown backend '{backend}'")
+    return _BACKEND_LOADER[backend]
+
+
+def get_backend_scipy(backend: BackendName):
+    """Get the scipy module associated with a compute backend"""
+
+    name = _BACKEND_LOADER._normalize(backend)
+    # ensure backend is loadable
+    _BACKEND_LOADER[backend]
 
     if not t.TYPE_CHECKING:
+        if name == 'torch':
+            raise ValueError("`get_backend_scipy` is not supported for the PyTorch backend")
+        if name == 'jax':
+            return sys.modules['jax.scipy']
+        if name == 'cupy':
+            return sys.modules['cupyx.scipy']
+
+    import scipy
+    return scipy
+
+
+def get_default_backend() -> BackendName:
+    # check for jax or torch GPUs first
+    if _BACKEND_LOADER.get('jax') is not None:
+        import jax
         try:
-            if backend == 'jax':
-                import jax.numpy
-                return jax.numpy
-            if backend in ('cupy', 'cuda'):
-                import cupy
-                return cupy
-        except ImportError:
-            raise ValueError(f"Backend '{backend}' is not available")
-
-    return numpy
-
-
-def detect_supported_backends() -> t.Dict[BackendName, t.Tuple[str, ...]]:
-    backends: t.Dict[BackendName, t.Tuple[str, ...]] = {'numpy': ('cpu',)}
-
-    try:
-        import jax.numpy  # type: ignore
-        devices = jax.devices()
-        backends['jax'] = tuple(f"{device.platform}:{device.id}" for device in devices)
-    except ImportError:
-        pass
-
-    try:
-        import cupy  # type: ignore
-        n_devices = cupy.cuda.runtime.getDeviceCount()
-        backends['cupy'] = tuple(f'cuda:{i}' for i in range(n_devices))
-    except ImportError:
-        pass
-
-    return backends
-
-
-def get_default_backend_module():
-    if not t.TYPE_CHECKING:
-        try:
-            import jax.numpy
-            return jax.numpy
-        except ImportError:
+            if len(jax.devices('gpu')):
+                return 'jax'
+        except RuntimeError:
             pass
-
         try:
-            import cupy
-            return cupy
-        except ImportError:
+            if len(jax.devices('tpu')):
+                return 'jax'
+        except RuntimeError:
             pass
+    if _BACKEND_LOADER.get('torch') is not None:
+        import torch
+        if torch.get_default_device().type != 'cpu':
+            return 'torch'
 
-    return numpy
+    for backend in ('jax', 'torch', 'cupy'):
+        if _BACKEND_LOADER.get(backend) is not None:
+            return backend
+    return 'numpy'
+
+
+def get_devices() -> t.Tuple[t.Tuple[str, Device], ...]:
+    devices: t.List[t.Tuple[str, Device]] = []
+
+    if _BACKEND_LOADER.get('jax') is not None:
+        from ._jax_kernels import get_devices
+        devices.extend(('jax', device) for device in get_devices())
+    if _BACKEND_LOADER.get('torch') is not None:
+        from ._torch_kernels import get_devices
+        devices.extend(('torch', device) for device in get_devices())
+    if _BACKEND_LOADER.get('cupy') is not None:
+        from ._cuda_kernels import get_devices
+        devices.extend(('cupy', device) for device in get_devices())
+    devices.append(('numpy', 'cpu'))
+
+    return tuple(devices)
+
+
+def to_device(device: t.Union[str, Device], xp: t.Any) -> Device:
+    if xp_is_torch(xp):
+        from ._torch_kernels import to_device
+        return to_device(device)
+    if xp_is_cupy(xp):
+        from ._cuda_kernels import to_device
+        return to_device(device)
+    if xp_is_jax(xp):
+        from ._jax_kernels import to_device
+        return to_device(device)
+    if xp is not numpy:
+        raise TypeError(f"Expected an array backend, got '{xp}'")
+    if device != 'cpu':
+        raise ValueError(f"Invalid device '{device}' for backend 'numpy'")
+    return device
+
+
+def get_backend_devices(xp: t.Any) -> t.Tuple[Device, ...]:
+    if xp_is_torch(xp):
+        from ._torch_kernels import get_devices
+        return get_devices()
+    if xp_is_cupy(xp):
+        from ._cuda_kernels import get_devices
+        return get_devices()
+    if xp_is_jax(xp):
+        from ._jax_kernels import get_devices
+        return get_devices()
+    if xp is not numpy:
+        raise TypeError(f"Expected an array backend, got '{xp}'")
+
+    return ('cpu',)
+
+
+def set_default_device(device: Device, xp: t.Any):
+    if xp_is_torch(xp):
+        from ._torch_kernels import set_default_device
+        set_default_device(device)
+    elif xp_is_cupy(xp):
+        from ._cuda_kernels import set_default_device
+        set_default_device(device)
+    elif xp_is_jax(xp):
+        from ._jax_kernels import set_default_device
+        set_default_device(device)
+    elif xp is not numpy:
+        raise TypeError(f"Expected an array backend, got '{xp}'")
+    elif device != 'cpu':
+        raise ValueError(f"Invalid device '{device}' for backend 'numpy'")
 
 
 def get_array_module(*arrs: t.Optional[ArrayLike]):
-    try:
-        import jax
-        if any(isinstance(arr, jax.Array) for arr in arrs) \
-           and not t.TYPE_CHECKING:
-            return jax.numpy
-    except ImportError:
-        pass
-    try:
-        from cupy import get_array_module as f  # type: ignore
-        if not t.TYPE_CHECKING:
-            return f(*arrs)
-    except ImportError:
-        pass
+    if (xp := _BACKEND_LOADER.get('jax')) is not None:
+        import jax.tree
+        if any(
+            isinstance(arr, xp.ndarray)
+            for arr in chain.from_iterable(map(jax.tree.leaves, arrs))
+        ):
+            return xp
+    if (xp := _BACKEND_LOADER.get('torch')) is not None:
+        from torch.utils._pytree import tree_leaves
+        if any(
+            isinstance(arr, (xp._MockTensor, xp._C.TensorBase))  # type: ignore
+            for arr in chain.from_iterable(map(tree_leaves, arrs))
+        ):
+            return xp
+    if (xp := _BACKEND_LOADER.get('cupy')) is not None:
+        if any(isinstance(arr, xp.ndarray) for arr in arrs):
+            return xp
     return numpy
 
 
@@ -131,33 +257,22 @@ def cast_array_module(xp: t.Any):
 def get_scipy_module(*arrs: t.Optional[ArrayLike]):
     # pyright: ignore[reportMissingImports,reportUnusedImport]
 
-    import scipy
-
-    try:
-        import jax
-        if any(isinstance(arr, jax.Array) for arr in arrs) \
-           and not t.TYPE_CHECKING:
-            return jax.scipy
-    except ImportError:
-        pass
-    try:
-        with warnings.catch_warnings():
-            # https://github.com/cupy/cupy/issues/8718
-            warnings.filterwarnings(action='ignore', message=r"cupyx\.jit\.rawkernel is experimental", category=FutureWarning)
-
-            import cupyx.scipy.signal  # pyright: ignore[reportMissingImports]
-            import cupyx.scipy.ndimage  # pyright: ignore[reportMissingImports]  # noqa: F401
-            from cupyx.scipy import get_array_module as f  # pyright: ignore[reportMissingImports]
-
-        if not t.TYPE_CHECKING:
+    if not t.TYPE_CHECKING:
+        if (xp := _BACKEND_LOADER.get('jax')) is not None:
+            if any(isinstance(arr, xp.ndarray) for arr in arrs):
+                return sys.modules['jax.scipy']
+        if (xp := _BACKEND_LOADER.get('torch')) is not None:
+            if any(isinstance(arr, (xp._MockTensor, xp._C.TensorBase)) for arr in arrs):  # type: ignore
+                raise ValueError("`get_scipy_module` is not supported for the PyTorch backend")
+        if (xp := _BACKEND_LOADER.get('cupy')) is not None:
+            f = sys.modules['cupyx.scipy'].get_array_module
             return f(*arrs)
-    except ImportError:
-        pass
 
+    import scipy
     return scipy
 
 
-def to_numpy(arr: t.Union[DTypeT, NDArray[DTypeT]], stream=None) -> NDArray[DTypeT]:
+def to_numpy(arr: t.Union[DTypeT, NDArray[DTypeT], float, DTypeT], stream=None) -> NDArray[DTypeT]:
     """
     Convert an array to numpy.
     For cupy backend, this is equivalent to `cupy.asnumpy`.
@@ -165,7 +280,8 @@ def to_numpy(arr: t.Union[DTypeT, NDArray[DTypeT]], stream=None) -> NDArray[DTyp
     if not t.TYPE_CHECKING:
         if is_jax(arr):
             return numpy.array(arr)
-
+        if is_torch(arr):
+            return arr.numpy(force=True)
         if is_cupy(arr):
             return arr.get(stream)
 
@@ -180,7 +296,8 @@ def as_numpy(arr: ArrayLike, stream=None) -> NDArray:
     if not t.TYPE_CHECKING:
         if is_jax(arr):
             return numpy.array(arr)
-
+        if is_torch(arr):
+            return arr.numpy(force=True)
         if is_cupy(arr):
             return arr.get(stream)
 
@@ -201,46 +318,57 @@ def as_array(arr: ArrayLike, xp: t.Any = None) -> numpy.ndarray:
     return numpy.asarray(arr)
 
 
-def is_cupy(arr: NDArray[DTypeT]) -> bool:
-    try:
-        import cupy  # pyright: ignore[reportMissingImports]
-    except ImportError:
+def is_cupy(arr: NDArray[numpy.generic]) -> bool:
+    if (cupy := _BACKEND_LOADER.get('cupy')) is None:
         return False
     return isinstance(arr, cupy.ndarray)
 
 
 def is_jax(arr: t.Any) -> bool:
-    try:
-        import jax  # pyright: ignore[reportMissingImports]
-    except ImportError:
+    if (jnp := _BACKEND_LOADER.get('jax')) is None:
         return False
+    import jax  # pyright[ignoreMissingImports]
+
     return any(
-        isinstance(arr, jax.Array) for arr in jax.tree_util.tree_leaves(arr)
+        isinstance(arr, jnp.ndarray)
+        for arr in jax.tree_util.tree_leaves(arr)
+    )
+
+
+def is_torch(arr: t.Any) -> bool:
+    if (torch := t.cast(ModuleType, _BACKEND_LOADER.get('torch'))) is None:
+        return False
+
+    return any(
+        isinstance(arr, (torch._MockTensor, torch._C.TensorBase))
+        for arr in torch.utils._pytree.tree_leaves(arr)  
     )
 
 
 def xp_is_cupy(xp: t.Any) -> bool:
-    try:
-        import cupy  # pyright: ignore[reportMissingImports]
-        return xp is cupy
-    except ImportError:
-        return False
-
+    return xp is sys.modules.get('cupy')
 
 def xp_is_jax(xp: t.Any) -> bool:
-    try:
-        import jax.numpy  # pyright: ignore[reportMissingImports]
-        return xp is jax.numpy
-    except ImportError:
+    return xp is sys.modules.get('jax.numpy')
+
+def xp_is_torch(xp: t.Any) -> bool:
+    if (torch := _BACKEND_LOADER.get('torch')) is None:
         return False
+    return xp is torch
 
 
 def block_until_ready(arr: NDArray[DTypeT]) -> NDArray[DTypeT]:
     if hasattr(arr, 'block_until_ready'):  # jax
         return arr.block_until_ready()  # type: ignore
 
+    if is_torch(arr):
+        import torch
+        device = torch.get_default_device()
+        if device.type == 'cuda':
+            torch.cuda.synchronize(device)
+
     if is_cupy(arr):
-        import cupy  # pyright: ignore[reportMissingImports]
+        cupy = sys.modules['cupy']
         stream = cupy.cuda.get_current_stream()
         stream.synchronize()
 
@@ -261,20 +389,17 @@ class _JitKernel(t.Generic[P, T]):
         self.inner = f
         functools.update_wrapper(self, f)
 
-        if cupy_fuse:
-            try:
-                import cupy  # pyright: ignore[reportMissingImports]
-                self.inner = cupy.fuse()(self.inner)
-            except ImportError:
-                pass
+        if cupy_fuse and (cupy := _BACKEND_LOADER.get('cupy')):
+            self.inner = cupy.fuse()(self.inner)  # type: ignore
 
         # in jax: self.__call__ -> jax.jit -> jax_f -> f
         # otherwise: self.__call__ -> f
-        try:
-            import jax
-        except ImportError:
-            self.jax_jit = None
-        else:
+        if _BACKEND_LOADER.get('jax') is not None:
+            if t.TYPE_CHECKING:
+                import jax
+            else:
+                jax = sys.modules['jax']
+
             @functools.wraps(f)
             def jax_f(*args: P.args, **kwargs: P.kwargs) -> T:
                 logger.info(f"JIT-compiling kernel '{self.__qualname__}'...")
@@ -285,6 +410,8 @@ class _JitKernel(t.Generic[P, T]):
                 donate_argnums=donate_argnums, donate_argnames=donate_argnames,
                 inline=inline, #compiler_options=compiler_options
             )
+        else:
+            self.jax_jit = None
 
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
@@ -316,12 +443,8 @@ def fuse(*args, **kwargs) -> t.Callable[[T], T]:
     """
     Equivalent to `cupy.fuse`, if supported.
     """
-    try:
-        import cupy  # pyright: ignore[reportMissingImports]
-        if not t.TYPE_CHECKING:
-            return cupy.fuse(*args, **kwargs)
-    except ImportError:
-        pass
+    if (xp := _BACKEND_LOADER.get('cupy')):
+        return xp.fuse(*args, **kwargs)  # type: ignore
     return lambda x: x
 
 
@@ -331,6 +454,17 @@ def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwa
         return jax.debug.callback(callback, *args, **kwargs)
     except ImportError:
         callback(*args, **kwargs)
+
+
+def assert_dtype(arr: numpy.ndarray, dtype: t.Type[numpy.generic]):
+    if is_torch(arr):
+        from ._torch_kernels import to_torch_dtype, to_numpy_dtype
+
+        if arr.dtype != to_torch_dtype(dtype):
+            raise TypeError(f"Expected array to be dtype {dtype}, got dtype {to_numpy_dtype(arr.dtype)} instead")
+    else:
+        if arr.dtype != dtype:
+            raise TypeError(f"Expected array to be dtype {dtype}, got dtype {arr.dtype} instead")
 
 
 _COMPLEX_MAP: t.Dict[t.Type[numpy.floating], t.Type[numpy.complexfloating]] = {
@@ -367,6 +501,9 @@ def to_complex_dtype(dtype: DTypeLike) -> t.Type[numpy.complexfloating]:
     """
     Convert a floating point dtype to a complex version.
     """
+    if _BACKEND_LOADER.get('torch') is not None:
+        from ._torch_kernels import to_numpy_dtype
+        dtype = to_numpy_dtype(dtype)  # type: ignore
 
     if not (isinstance(dtype, type) and issubclass(dtype, numpy.generic)):
         dtype = numpy.dtype(dtype).type
@@ -399,6 +536,9 @@ def to_real_dtype(dtype: DTypeLike) -> t.Type[numpy.floating]:
     """
     Convert a complex dtype to a plain float version.
     """
+    if _BACKEND_LOADER.get('torch') is not None:
+        from ._torch_kernels import to_numpy_dtype
+        dtype = to_numpy_dtype(dtype)  # type: ignore
 
     if not (isinstance(dtype, type) and issubclass(dtype, numpy.generic)):
         dtype = numpy.dtype(dtype).type
@@ -439,6 +579,8 @@ def ifft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
     """
 
     xp = get_array_module(a)
+    if xp_is_torch(xp):
+        return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), dim=(-2, -1))  # type: ignore
     return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), axes=(-2, -1))
 
 @t.overload
@@ -465,6 +607,8 @@ def fft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
     """
 
     xp = get_array_module(a)
+    if xp_is_torch(xp):
+        return xp.fft.fft2(xp.fft.ifftshift(a, dim=(-2, -1)), norm='ortho')  # type: ignore
     return xp.fft.fft2(xp.fft.ifftshift(a, axes=(-2, -1)), norm='ortho')
 
 
@@ -506,10 +650,51 @@ def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
     """
     Return the squared amplitude of a complex array.
 
-    This is cheaper than `abs(x)**2.`
+    This is cheaper than `abs(x)**2`
     """
-    x = get_array_module(x).array(x)
-    return x.real**2. + x.imag**2.  # type: ignore
+    xp = get_array_module(x)
+    x = xp.asarray(x)
+
+    if xp_is_torch(xp):
+        if not xp.is_complex(x):  # type: ignore
+            return x**2  # type: ignore
+    else:
+        if not xp.iscomplexobj(x):
+            return x**2  # type: ignore
+
+    return x.real**2 + x.imag**2  # type: ignore
+
+
+_PadMode: t.TypeAlias = t.Literal['constant', 'edge', 'reflect', 'wrap']
+
+
+@t.overload
+def pad(
+    arr: NDArray[DTypeT], pad_width: t.Union[int, t.Tuple[int, int], t.Sequence[t.Tuple[int, int]]], /, *,
+    mode: _PadMode = 'constant', cval: float = 0.,
+) -> NDArray[DTypeT]:
+    ...
+
+@t.overload
+def pad(
+    arr: ArrayLike, pad_width: t.Union[int, t.Tuple[int, int], t.Sequence[t.Tuple[int, int]]], /, *,
+    mode: _PadMode = 'constant', cval: float = 0.,
+) -> numpy.ndarray:
+    ...
+
+def pad(
+    arr: ArrayLike, pad_width: t.Union[int, t.Tuple[int, int], t.Sequence[t.Tuple[int, int]]], /, *,
+    mode: _PadMode = 'constant', cval: float = 0.,
+) -> numpy.ndarray:
+    xp = get_array_module(arr)
+
+    if xp_is_torch(xp):
+        pass
+        #from ._torch_kernels import pad
+        #return pad(arr, pad_width, mode=mode, cval=cval)  # type: ignore
+
+    return xp.pad(arr, pad_width, mode=mode, constant_values=cval)
+
 
 
 @t.overload
@@ -529,6 +714,9 @@ def ufunc_outer(ufunc: numpy.ufunc, x: ArrayLike, y: ArrayLike) -> numpy.ndarray
         from ._jax_kernels import outer
         return outer(ufunc, x, y)
 
+    if not t.TYPE_CHECKING and is_torch(x):
+        return ufunc(x[(..., *((None,) * y.ndim))], y[(*((None,) * x.ndim), ...)])
+
     return ufunc.outer(x, y)
 
 
@@ -541,7 +729,7 @@ def check_finite(*arrs: NDArray[numpy.inexact], context: t.Optional[str] = None)
         raise ValueError("NaN or inf encountered")
 
 
-@jax_dataclass(frozen=True, init=False, drop_fields=('extent',))
+@tree_dataclass(frozen=True, init=False, drop_fields=('extent',))
 class Sampling:
     shape: NDArray[numpy.int_]
     """Sampling shape (n_y, n_x)"""
@@ -714,7 +902,7 @@ class Sampling:
         self, arr: NDArray[NumT], new_samp: 'Sampling', *,
         rotation: float = 0.0,
         order: int = 1,
-        mode: '_BoundaryMode' = 'grid-constant',
+        mode: '_InterpBoundaryMode' = 'grid-constant',
         cval: t.Union[NumT, float] = 0.0,
     ) -> NDArray[NumT]:
         from .image import affine_transform, rotation_matrix
@@ -736,7 +924,7 @@ class Sampling:
         self, arr: NDArray[NumT], new_samp: 'Sampling', *,
         rotation: float = 0.0,
         order: int = 1,
-        mode: '_BoundaryMode' = 'grid-constant',
+        mode: '_InterpBoundaryMode' = 'grid-constant',
         cval: t.Union[NumT, float] = 0.0,
         fftshift: bool = True,
     ) -> NDArray[NumT]:
@@ -811,7 +999,7 @@ def at(arr: NDArray[DTypeT], idx: IndexLike) -> _AtImpl[DTypeT]:
 
 
 __all__ = [
-    'get_backend_module', 'get_default_backend_module',
+    'get_backend_module', 'get_default_backend',
     'get_array_module', 'cast_array_module', 'get_scipy_module',
     'to_numpy', 'as_numpy', 'as_array',
     'is_cupy', 'is_jax', 'xp_is_cupy', 'xp_is_jax',

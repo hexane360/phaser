@@ -2,19 +2,27 @@
 import pytest
 import numpy
 
-BACKENDS: set[str] = set(('cpu', 'jax', 'cuda'))
+BACKENDS: set[str] = set(('cpu', 'jax', 'cupy', 'torch'))
 AVAILABLE_BACKENDS: set[str] = set(('cpu',))
 
 try:
     import cupy  # pyright: ignore[reportMissingImports]
     if cupy.cuda.runtime.getDeviceCount() > 0:
-        AVAILABLE_BACKENDS.add('cuda')
+        AVAILABLE_BACKENDS.add('cupy')
 except ImportError:
     pass
 
 try:
     import jax  # pyright: ignore[reportMissingImports]  # noqa: F401
     AVAILABLE_BACKENDS.add('jax')
+except ImportError:
+    pass
+
+
+try:
+    import torch  # pyright: ignore[reportMissingImports]  # noqa: F401
+    torch.asarray([1, 2, 3, 4]).numpy(force=True)  # ensures torch is loaded, fixes a strange error with pytest
+    AVAILABLE_BACKENDS.add('torch')
 except ImportError:
     pass
 

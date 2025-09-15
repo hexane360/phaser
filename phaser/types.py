@@ -12,7 +12,7 @@ from typing_extensions import Self
 
 if t.TYPE_CHECKING:
     from phaser.state import ReconsState
-    from phaser.hooks.schedule import FlagArgs, FlagLike, ScheduleLike
+    from phaser.hooks.schedule import FlagArgs, FlagLike, Flag, ScheduleLike, Schedule
 
 T = t.TypeVar('T')
 
@@ -75,7 +75,7 @@ class _ReconsVarsAnnotation(ConvertAnnotation):
         return hash(self.__class__.__name__)
 
 
-BackendName: t.TypeAlias = t.Literal['cuda', 'cupy', 'jax', 'cpu', 'numpy']
+BackendName: t.TypeAlias = t.Literal['cupy', 'jax', 'torch', 'numpy']
 ReconsVar: t.TypeAlias = t.Literal['object', 'probe', 'positions', 'tilt']
 
 ReconsVars: t.TypeAlias = t.Annotated[t.FrozenSet[ReconsVar], _ReconsVarsAnnotation()]
@@ -122,7 +122,7 @@ class SliceTotal(Dataclass):
 Slices: t.TypeAlias = t.Union[SliceList, SliceStep, SliceTotal]
 
 
-class Flag(Dataclass):
+class SimpleFlag(Dataclass):
     after: int = 0
     every: int = 1
     before: t.Optional[int] = None
@@ -154,21 +154,21 @@ class _ConstFlag:
 
 
 @lru_cache
-def process_flag(flag: 'FlagLike') -> t.Callable[['FlagArgs'], bool]:
+def process_flag(flag: 'FlagLike') -> 'Flag':
     if isinstance(flag, bool):
         return _ConstFlag(flag)
     return flag
 
 
 @lru_cache
-def process_schedule(schedule: 'ScheduleLike') -> t.Callable[['FlagArgs'], float]:
+def process_schedule(schedule: 'ScheduleLike') -> 'Schedule':
     if isinstance(schedule, (int, float)):
         return lambda _: schedule
     return schedule
 
 
 def flag_any_true(flag: t.Callable[['FlagArgs'], bool], niter: int) -> bool:
-    if isinstance(flag, Flag):
+    if isinstance(flag, SimpleFlag):
         return flag.any_true(niter)
     elif isinstance(flag, _ConstFlag):
         return flag.val

@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 
 from phaser.hooks.solver import NoiseModel
 from phaser.plan import AmplitudeNoisePlan, AnscombeNoisePlan, PoissonNoisePlan
-from phaser.utils.num import get_array_module, Float
+from phaser.utils.num import get_array_module, Float, to_numpy
 from phaser.state import ReconsState
 
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 import typing as t
 
-from .types import Dataclass, Slices, BackendName, Flag, ReconsVars, IsVersion, EmptyDict
+from .types import Dataclass, Slices, BackendName, SimpleFlag, ReconsVars, IsVersion, EmptyDict
 from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
 from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
 from .hooks.schedule import FlagLike, ScheduleLike
@@ -64,7 +64,7 @@ class EnginePlan(Dataclass, kw_only=True):
     update_positions: FlagLike = False
     update_tilt: FlagLike = False
 
-    calc_error: FlagLike = Flag(every=1)
+    calc_error: FlagLike = SimpleFlag(every=1)
     calc_error_fraction: float = 0.1
 
     save: FlagLike = False
@@ -180,6 +180,7 @@ class ReconsPlan(Dataclass, kw_only=True):
     name: str
 
     backend: t.Optional[BackendName] = None
+    device: t.Optional[str] = None
     dtype: t.Literal['float32', 'float64'] = 'float32'
 
     wavelength: t.Optional[float] = None

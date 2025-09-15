@@ -3,14 +3,15 @@ import logging
 import typing as t
 
 import numpy
-from numpy.typing import NDArray, DTypeLike
+from numpy.typing import NDArray
 from typing_extensions import Self
 
 from phaser.utils.num import (
     get_array_module, to_real_dtype, to_complex_dtype,
     fft2, ifft2, is_jax, to_numpy, block_until_ready, ufunc_outer
 )
-from phaser.utils.misc import FloatKey, jax_dataclass, create_compact_groupings, create_sparse_groupings, shuffled
+from phaser.utils.tree import tree_dataclass
+from phaser.utils.misc import FloatKey, create_compact_groupings, create_sparse_groupings, shuffled
 from phaser.utils.optics import fresnel_propagator, fourier_shift_filter
 from phaser.state import ReconsState
 from phaser.hooks.solver import NoiseModel
@@ -83,7 +84,7 @@ def stream_patterns(
             continue
 
 
-@jax_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))
+@tree_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))
 class SimulationState:
     state: ReconsState
 
@@ -99,7 +100,7 @@ class SimulationState:
     iter_constraint_states: t.Tuple[t.Any, ...]
 
     xp: t.Any
-    dtype: DTypeLike
+    dtype: t.Type[numpy.floating]
     start_iter: int
 
     def __init__(
@@ -109,7 +110,7 @@ class SimulationState:
         group_constraints: t.Tuple[GroupConstraint[t.Any], ...],
         iter_constraints: t.Tuple[IterConstraint[t.Any], ...],
         xp: t.Any,
-        dtype: DTypeLike,
+        dtype: t.Type[numpy.floating],
         noise_model_state: t.Optional[t.Any] = None,
         group_constraint_states: t.Optional[t.Tuple[t.Any, ...]] = None,
         iter_constraint_states: t.Optional[t.Tuple[t.Any, ...]] = None,

@@ -137,42 +137,6 @@ def check_array_equals_file(name: str, *, out_name: t.Optional[str] = None, deci
     return decorator
 
 
-def get_backend_module(backend: str):
-    """Get the module `xp` associated with a compute backend"""
-    backend = backend.lower()
-    if backend not in ('cuda', 'jax', 'cpu'):
-        raise ValueError(f"Unknown backend '{backend}'")
-
-    if not t.TYPE_CHECKING:
-        if backend == 'jax':
-            import jax.numpy
-            return jax.numpy
-        if backend == 'cuda':
-            import cupy
-            return cupy
-
-    import numpy
-    return numpy
-
-
-def get_backend_scipy(backend: str):
-    """Get the scipy module associated with a compute backend"""
-    backend = backend.lower()
-    if backend not in ('cuda', 'jax', 'cpu'):
-        raise ValueError(f"Unknown backend '{backend}'")
-
-    if not t.TYPE_CHECKING:
-        if backend == 'jax':
-            import jax.scipy
-            return jax.scipy
-        if backend == 'cuda':
-            import cupyx.scipy
-            return cupyx.scipy
-
-    import scipy
-    return scipy
-
-
 _import = builtins.__import__
 
 

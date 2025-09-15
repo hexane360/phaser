@@ -8,7 +8,7 @@ import typing as t
 import numpy
 from numpy.typing import ArrayLike, NDArray
 
-from .num import get_array_module, get_scipy_module, to_numpy, at, is_jax, abs2
+from .num import get_array_module, get_scipy_module, to_numpy, at, abs2, xp_is_jax, xp_is_torch
 
 
 NumT = t.TypeVar('NumT', bound=numpy.number)
@@ -131,7 +131,7 @@ def scale_to_integral_type(
     return (xp.clip((imax + 1) / (vmax - vmin) * (arr - vmin), 0, imax)).astype(dtype)
 
 
-_BoundaryMode: t.TypeAlias = t.Literal['constant', 'nearest', 'mirror', 'reflect', 'wrap', 'grid-mirror', 'grid-wrap', 'grid-constant']
+_InterpBoundaryMode: t.TypeAlias = t.Literal['constant', 'nearest', 'mirror', 'reflect', 'wrap', 'grid-mirror', 'grid-wrap', 'grid-constant']
 
 
 def to_affine_matrix(arr: ArrayLike, ndim: int = 2) -> NDArray[numpy.floating]:
@@ -182,25 +182,32 @@ def affine_transform(
     offset: t.Optional[ArrayLike] = None,
     output_shape: t.Optional[t.Tuple[int, ...]] = None,
     order: int = 1,
-    mode: _BoundaryMode = 'grid-constant',
+    mode: _InterpBoundaryMode = 'grid-constant',
     cval: t.Union[NumT, float] = 0.0,
 ) -> NDArray[NumT]:
     if mode in ('constant', 'wrap'):
         # these modes aren't supported by jax
         raise ValueError(f"Resampling mode '{mode}' not supported (try 'grid-constant' or 'grid-wrap' instead)")
-    
 
     xp = get_array_module(input, matrix, offset)
-    scipy = get_scipy_module(input, matrix, offset)
 
-    if is_jax(input):
-        if order > 1:
+    if xp_is_torch(xp):
+        from ._torch_kernels import affine_transform, torch
+        return t.cast(NDArray[NumT], affine_transform(
+            t.cast(torch.Tensor, input), matrix, offset,
+            output_shape, order, mode, cval 
+        ))
+
+    if xp_is_jax(xp):
+        if order not in (0, 1):
             raise ValueError(f"Interpolation order {order} not supported (jax currently only supports order=0, 1)")
         from ._jax_kernels import affine_transform, jax
         return t.cast(NDArray[NumT], affine_transform(
             t.cast(jax.Array, input), matrix, offset,
             output_shape, order, mode, cval
         ))
+
+    scipy = get_scipy_module(input, matrix, offset)
 
     if offset is None:
         offset = 0.
