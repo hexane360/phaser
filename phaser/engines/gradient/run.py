@@ -324,13 +324,13 @@ def run_group(
         xp=xp, dtype=dtype
     )
     for k in grad.keys():
-        if k == 'probe':
-            grad[k] /= group.shape[-1]
-        else:
-            grad[k] /= probe_int * group.shape[-1]
-
-    #print(f"obj grad: {xp.max(abs2(grad['object']))}")
-    #print(f"probe grad: {xp.max(abs2(grad['probe'])) if 'probe' in grad else None}")
+        # scale gradients appropriately
+        # per-pattern variables are normalized by the grouping `group.shape[-1]`
+        # Additionally, all gradients except the probe should be normalized by probe intensity
+        grad[k] /= xp.array(
+            (1.0 if k in _PER_ITER_VARS else group.shape[-1]) * (1.0 if k == 'probe' else probe_int),
+            dtype=dtype
+        )
 
     # update iter grads at group
     iter_grads = tree.map(lambda v1, v2: at(v1, tuple(group)).set(v2), iter_grads, filter_vars(grad, vars & _PER_ITER_VARS))

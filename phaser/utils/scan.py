@@ -12,16 +12,16 @@ from .num import get_array_module, cast_array_module, NumT
 
 @t.overload
 def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,  # pyright: ignore[reportOverlappingOverload]
-                     rotation: float = 0., *, dtype: NumT, xp: t.Any = None) -> NDArray[NumT]:
+                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: NumT, xp: t.Any = None) -> NDArray[NumT]:
     ...
 
 @t.overload
 def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
-                     rotation: float = 0., *, dtype: t.Optional[DTypeLike] = None, xp: t.Any = None) -> NDArray[numpy.floating]:
+                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: t.Optional[DTypeLike] = None, xp: t.Any = None) -> NDArray[numpy.floating]:
     ...
 
 def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
-                     rotation: float = 0., *, dtype: t.Any = None, xp: t.Any = None) -> NDArray[numpy.number]:
+                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: t.Any = None, xp: t.Any = None) -> NDArray[numpy.number]:
     """
     Make a raster scan, centered around the origin.
 
@@ -45,14 +45,18 @@ def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
     yy = xp2.arange(shape[0], dtype=dtype) - xp2.asarray(shape[0] / 2., dtype=dtype)
     xx = xp2.arange(shape[1], dtype=dtype) - xp2.asarray(shape[1] / 2., dtype=dtype)
     pts = xp2.stack(xp2.meshgrid(yy, xx, indexing='ij'), axis=-1)
+    pts *= xp2.broadcast_to(xp2.asarray(scan_step), (2,)).astype(dtype)
 
+    if affine is not None:
+        affine = xp2.asarray(affine, dtype=dtype)
+        pts = (pts @ affine.T)
 
     if rotation != 0.:
         theta = rotation * numpy.pi/180.
         mat = xp2.asarray([[numpy.cos(theta), -numpy.sin(theta)], [numpy.sin(theta), numpy.cos(theta)]], dtype=dtype)
         pts = (pts @ mat.T)
 
-    return pts * xp2.broadcast_to(xp2.asarray(scan_step), (2,)).astype(dtype)  # type: ignore
+    return t.cast(NDArray[numpy.number], pts)
 
 
 __all__ = [
