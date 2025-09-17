@@ -1,4 +1,3 @@
-
 import numpy
 from numpy.typing import NDArray
 
@@ -16,13 +15,8 @@ def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> NDArray[numpy.flo
         raise ValueError("scan 'step_size' must be specified by metadata or manually")
 
     scan = make_raster_scan(
-        props.shape, props.step_size, props.rotation or 0.0,
-        dtype=args['dtype'], xp=xp,
+        props.shape, props.step_size, props.rotation or 0.0, props.affine,
+        dtype=args['dtype'], xp=xp
     )
-
-    if props.affine is not None:
-        affine = xp.array(props.affine, dtype=scan.dtype)
-        # equivalent to (affine @ scan.T).T (active transformation)
-        scan = scan @ affine.T
 
     return scan
