@@ -51,6 +51,7 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
         # [x, y] -> [y, x]
         'shape': tuple(reversed(metadata.scan_shape)),
         'step_size': tuple(s*1e10 for s in reversed(metadata.scan_step)),  # m to A
+        'rotation': metadata.scan_rotation or 0.0,
         'affine': metadata.scan_correction[::-1, ::-1] if metadata.scan_correction is not None else None,
     }
 

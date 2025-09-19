@@ -41,9 +41,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         
         path = _get_dir(f)
         
-        file = dm.file_reader(f, lazy=True)
-
-  
+        file = dm.file_reader(f, lazy=True) 
 
         metadata = {'file_type':'gatan_file',
              'name':str(f.stem),
@@ -75,6 +73,8 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         
         gatan_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageTags'] # first image metadata
         imagedata_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageData']
+        digiscan_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageTags']['DigiScan']
+
 
         e_calibration = imagedata_metadata['Calibrations']['Brightness']
         metadata['e_scaling'] = e_calibration['Scale']
@@ -99,6 +99,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
         metadata['camera_length'] =  microscope['STEM Camera Length']
         metadata['voltage'] = microscope['Voltage']
+
 
         # diffraction step
 
@@ -135,7 +136,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
 
         metadata['scan_step'] = [scan_scale*scan_step for scan_step in scan_steps]
-
+        metadata['scan_rotation'] = digiscan_metadata['Rotation']
 
         metadata['detector_shape'] = [data_dim[1], data_dim[0]]
         metadata['scan_shape'] = [data_dim[2], data_dim[3]]
