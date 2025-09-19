@@ -1,0 +1,49 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    branches: [main]
+    types:
+      - completed
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    # require tests to succeed, and 'ci: deploy' in commit message
+    if: "${{ github.event.workflow_run.conclusion == 'success' && contains(github.event.workflow_run.head_commit.message, 'ci: deploy') }}"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip build setuptools wheel cibuildwheel==2.14.0
+          pip install -e .
+      - name: Get version
+        id: version
+        # outputs project, version, and tag
+        run: python .github/scripts/get_versioninfo.py
+      - name: Build wheels
+        run: python -m build
+     #- name: Upload wheels
+     #   uses: actions/upload-artifact@v3
+     #   with:
+     #     path: dist/*
+      - name: Create tag & release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: '${{ steps.version.outputs.tag }}'
+          commit: '${{ github.event.head_commit.id }}'
+          body: '${{ steps.version.outputs.project }} version ${{ steps.version.outputs.version }}'
+          name: 'Version ${{ steps.version.outputs.version }}'
+          artifacts: 'dist/*'
+      - name: Deploy to PyPi
+        uses: pypa/gh-action-pypi-publish@release/v1
