@@ -20,10 +20,11 @@ class Patterns():
     """Raw diffraction patterns, with 0-frequency sample in corner"""
     pattern_mask: NDArray[numpy.floating]
     """Mask indicating which portions of the diffraction patterns contain data."""
+    patterns_id: NDArray[numpy.integer]
 
     def to_numpy(self) -> Self:
         return self.__class__(
-            to_numpy(self.patterns), to_numpy(self.pattern_mask)
+            to_numpy(self.patterns), to_numpy(self.pattern_mask), to_numpy(self.patterns_id)
         )
 
 

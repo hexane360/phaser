@@ -88,6 +88,7 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
 
     return {
         'patterns': patterns,
+        'patterns_id': numpy.load('id.npy').astype(numpy.int8),
         'mask': numpy.fft.ifftshift(mask, axes=(-1, -2)),
         'sampling': sampling,
         'wavelength': wavelength,

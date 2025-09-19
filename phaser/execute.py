@@ -254,7 +254,7 @@ def initialize_reconstruction(
 
     raw_data = load_raw_data(plan, xp, seed, init_state=init_state)
 
-    data = Patterns(raw_data['patterns'], raw_data['mask'])
+    data = Patterns(raw_data['patterns'], raw_data['mask'], raw_data['patterns_id'])
     sampling = raw_data['sampling']
     wavelength = unwrap(raw_data.get('wavelength', None))
     probe_hook = raw_data.get('probe_hook', None)
@@ -279,8 +279,18 @@ def initialize_reconstruction(
         probe = pane.from_data(probe_hook, ProbeHook)(  # type: ignore
             {'sampling': sampling, 'wavelength': wavelength, 'dtype': dtype, 'seed': seed, 'xp': xp}
         )
+
+    ## (num_scan, probe_modes, *probe_shape)
+    ##TODO hardcoded for now to num_scan=3
+    probe.data = probe.data.reshape(1, *probe.data.shape)
+    probe.data = xp.tile(probe.data, (3, 1, 1, 1))
+    
     if probe.data.ndim == 2:
+        probe.data = probe.data.reshape((1, 1, *probe.data.shape))
+    elif probe.data.ndim == 3:
         probe.data = probe.data.reshape((1, *probe.data.shape))
+
+    print(probe.data.shape)
 
     if init_state.scan is not None and plan.init.scan is None:
         logging.info("Re-using scan from initial state...")
@@ -399,19 +409,25 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
         state.object.data = state.object.sampling.resample(state.object.data, obj_sampling)
         state.object.sampling = obj_sampling
 
-    current_probe_modes = state.probe.data.shape[0]
-    if engine.probe_modes != current_probe_modes:
-        # fix probe modes
-        if engine.probe_modes < current_probe_modes:
-            # TODO: redistribute intensity here
-            state.probe.data = state.probe.data[:engine.probe_modes]
-        else:
-            from phaser.utils.optics import make_hermetian_modes
-            if current_probe_modes != 1:
-                logging.info("Summing probe modes (in real-space) before recreating with different # of modes")
+    new_probe_data = []
 
-            base_mode = xp.sum(state.probe.data, axis=0)
-            state.probe.data = make_hermetian_modes(base_mode, engine.probe_modes, base_mode_power=engine.base_mode_power)
+    for num_scan in range(state.probe.data.shape[0]):
+        current_probe_modes = state.probe.data.shape[1]
+        if engine.probe_modes != current_probe_modes:
+            # fix probe modes
+            if engine.probe_modes < current_probe_modes:
+                # TODO: redistribute intensity here
+                new_probe_data.append(state.probe.data[num_scan, :engine.probe_modes])
+            else:
+                from phaser.utils.optics import make_hermetian_modes
+                if current_probe_modes != 1:
+                    logging.info("Summing probe modes (in real-space) before recreating with different # of modes")
+
+                base_mode = xp.sum(state.probe.data[num_scan], axis=0)
+                new_probe_data.append(make_hermetian_modes(base_mode, engine.probe_modes, base_mode_power=engine.base_mode_power))
+    new_probe_data = xp.stack(new_probe_data, axis=0)
+    state.probe.data = new_probe_data
+    print(state.probe.data.shape)
 
     if engine.slices is not None and (len(engine.slices.thicknesses) != len(state.object.thicknesses)
                                       or not numpy.allclose(engine.slices.thicknesses, state.object.thicknesses)):

@@ -166,6 +166,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     seed = args['seed']
     patterns = args['data'].patterns
     pattern_mask = args['data'].pattern_mask
+    patterns_id = args['data'].patterns_id
 
     noise_model = props.noise_model(None)
 
@@ -195,9 +196,9 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
 
     # runs rescaling
     rescale_factors = []
-    for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups.iter(state.scan),
-                                                                        patterns, xp=xp, buf_n=props.buffer_n_groups)):
-        group_rescale_factors = dry_run(state, group, propagators, group_patterns, xp=xp, dtype=dtype)
+    for (group_i, (group, group_patterns, group_patterns_id)) in enumerate(stream_patterns(groups.iter(state.scan),
+                                                                        patterns, patterns_id, xp=xp, buf_n=props.buffer_n_groups)):
+        group_rescale_factors = dry_run(state, group, propagators, group_patterns, group_patterns_id, xp=xp, dtype=dtype)
         rescale_factors.append(group_rescale_factors)
 
     rescale_factors = xp.concatenate(rescale_factors, axis=0)
@@ -240,8 +241,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         ]
         losses = []
 
-        for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups.iter(state.scan, i, iter_shuffle_groups),
-                                                                            patterns, xp=xp, buf_n=props.buffer_n_groups)):
+        for (group_i, (group, group_patterns, group_patterns_id)) in enumerate(stream_patterns(groups.iter(state.scan, i, iter_shuffle_groups),
+                                                                            patterns, patterns_id, xp=xp, buf_n=props.buffer_n_groups)):
             (state, loss, iter_grads, solver_states) = run_group(
                 state, group=group, vars=iter_vars,
                 noise_model=noise_model,
@@ -252,6 +253,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 solver_states=solver_states,
                 props=propagators,
                 group_patterns=group_patterns, #load_group(group),
+                group_patterns_id=group_patterns_id,
                 pattern_mask=pattern_mask,
                 probe_int=probe_int,
                 xp=xp, dtype=dtype
@@ -307,6 +309,7 @@ def run_group(
     solver_states: SolverStates,
     props: t.Optional[NDArray[numpy.complexfloating]],
     group_patterns: NDArray[numpy.floating],
+    group_patterns_id: NDArray[numpy.integer],
     pattern_mask: NDArray[numpy.floating],
     probe_int: t.Union[float, numpy.floating],
     xp: t.Any,
@@ -317,7 +320,7 @@ def run_group(
 
     ((loss, solver_states), grad) = jax.value_and_grad(run_model, has_aux=True)(
         *extract_vars(state, vars, group),
-        group=group, props=props, group_patterns=group_patterns, pattern_mask=pattern_mask,
+        group=group, props=props, group_patterns=group_patterns, group_patterns_id=group_patterns_id, pattern_mask=pattern_mask,
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
         xp=xp, dtype=dtype
     )
@@ -360,6 +363,7 @@ def run_model(
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]], # base propagator, shape (n_slices-1, ny, nx)
     group_patterns: NDArray[numpy.floating],
+    group_patterns_id: NDArray[numpy.integer],
     pattern_mask: NDArray[numpy.floating],
     noise_model: NoiseModel[t.Any],
     regularizers: t.Sequence[CostRegularizer[t.Any]],
@@ -380,7 +384,7 @@ def run_model(
     probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
-    probes = ifft2(fft2(probes) * group_subpx_filters)
+    probes = ifft2(fft2(probes[group_patterns_id]) * group_subpx_filters)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         # psi: (batch, n_probe, Ny, Nx)
@@ -415,6 +419,7 @@ def dry_run(
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]],
     group_patterns: NDArray[numpy.floating],
+    group_patterns_id: NDArray[numpy.integer],
     xp: t.Any,
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
@@ -423,7 +428,7 @@ def dry_run(
     probes = sim.probe.data
     group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
-    probes = ifft2(fft2(probes) * group_subpx_filters)
+    probes = ifft2(fft2(probes[group_patterns_id]) * group_subpx_filters)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:

@@ -18,6 +18,7 @@ if t.TYPE_CHECKING:
 
 class RawData(t.TypedDict):
     patterns: NDArray[numpy.floating]
+    patterns_id: NDArray[numpy.integer]
     mask: NDArray[numpy.floating]
     sampling: 'Sampling'
     wavelength: NotRequired[t.Optional[float]]
@@ -120,9 +121,15 @@ class RasterScanProps(Dataclass):
     affine: t.Optional[t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))]] = None
 
 
+class CustomScanProps(Dataclass):
+    path: str
+    """Path to .npy file containing scan array matching the size of the scan"""
+
+
 class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
     known = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
+        'custom': ('phaser.hooks.scan:load_custom_scan', CustomScanProps),
     }
 
 
