@@ -5,7 +5,7 @@ from numpy.typing import NDArray
 from typing_extensions import Self
 
 from phaser.utils.num import Sampling, to_numpy, get_array_module, Float
-from phaser.utils.tree import tree_dataclass
+from phaser.utils.tree import tree_dataclass, field
 from phaser.utils.object import ObjectSampling
 
 if t.TYPE_CHECKING:
@@ -128,41 +128,17 @@ class ObjectState():
 
 @tree_dataclass
 class ProgressState:
-    iters: NDArray[numpy.integer]
+    iters: t.List[int] = field(default_factory=list)
     """Iterations error measurements were taken at."""
-    detector_errors: NDArray[numpy.floating]
+    values: t.List[float] = field(default_factory=list)
     """Detector error measurements at those iterations"""
-
-    def to_numpy(self) -> Self:
-        return self.__class__(
-            to_numpy(self.iters), to_numpy(self.detector_errors)
-        )
 
     def copy(self) -> Self:
         import copy
         return copy.deepcopy(self)
 
-    @staticmethod
-    def empty() -> 'ProgressState':
-        return ProgressState(
-            numpy.array([], dtype=numpy.uint64),
-            numpy.array([], dtype=numpy.float64),
-        )
 
-    # TODO: this is a hack to prevent JIT recompilation.
-    def __hash__(self) -> int:
-        return id(self)
-
-    def __eq__(self, other: t.Any) -> bool:
-        if type(self) is not type(other):
-            return False
-        xp = get_array_module(self.iters, other.iters)
-        return (
-            xp.array_equal(self.iters, other.iters) and
-            xp.array_equal(self.detector_errors, other.detector_errors)
-        )
-
-@tree_dataclass(kw_only=True, static_fields=('progress',))
+@tree_dataclass(kw_only=True, drop_fields=('progress',))
 class ReconsState:
     iter: IterState
     wavelength: Float
@@ -173,7 +149,7 @@ class ReconsState:
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: t.Optional[NDArray[numpy.floating]] = None
     """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
-    progress: ProgressState
+    progress: t.Dict[str, ProgressState] = field(default_factory=dict)
 
     def to_xp(self, xp: t.Any) -> Self:
         return self.__class__(
@@ -193,7 +169,7 @@ class ReconsState:
             object=self.object.to_numpy(),
             scan=to_numpy(self.scan),
             tilt=None if self.tilt is None else to_numpy(self.tilt),
-            progress=self.progress.to_numpy(),
+            progress=self.progress,
             wavelength=float(self.wavelength),
         )
 
@@ -221,7 +197,7 @@ class PartialReconsState:
     scan: t.Optional[NDArray[numpy.floating]] = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     tilt: t.Optional[NDArray[numpy.floating]] = None
-    progress: t.Optional[ProgressState] = None
+    progress: t.Optional[t.Dict[str, ProgressState]] = None
 
     def to_numpy(self) -> Self:
         return self.__class__(
@@ -230,8 +206,8 @@ class PartialReconsState:
             object=self.object.to_numpy() if self.object is not None else None,
             scan=to_numpy(self.scan) if self.scan is not None else None,
             tilt=to_numpy(self.tilt) if self.tilt is not None else None,
-            progress=self.progress.to_numpy() if self.progress is not None else None,
             wavelength=float(self.wavelength) if self.wavelength is not None else None,
+            progress=self.progress,
         )
 
     def to_complete(self) -> ReconsState:
@@ -239,7 +215,7 @@ class PartialReconsState:
         if len(missing):
             raise ValueError(f"ReconsState missing {', '.join(map(repr, missing))}")
 
-        progress = self.progress if self.progress is not None else ProgressState.empty()
+        progress = self.progress if self.progress is not None else {}
         iter = self.iter if self.iter is not None else IterState.empty()
 
         return ReconsState(

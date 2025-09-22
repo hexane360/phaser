@@ -27,6 +27,9 @@ class IterConstraint(HasState[StateT], t.Protocol[StateT]):
 
 @t.runtime_checkable
 class CostRegularizer(HasState[StateT], t.Protocol[StateT]):
+    def name(self) -> str:
+        ...
+
     def calc_loss_group(self, group: NDArray[numpy.integer], sim: 'ReconsState', state: StateT) -> t.Tuple[Float, StateT]:
         ...
 

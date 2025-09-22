@@ -162,15 +162,30 @@ def hdf5_read_iter_state(group: h5py.Group) -> IterState:
     )
 
 
-def hdf5_read_progress_state(group: h5py.Group) -> ProgressState:
-    iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
-    errors = numpy.asarray(_hdf5_read_dataset(group, 'detector_errors', numpy.float64))
-    assert iters.ndim == errors.ndim == 1
-    assert iters.shape == errors.shape
+def hdf5_read_progress_state(group: h5py.Group) -> t.Dict[str, ProgressState]:
+    if 'iters' in group and 'detector_errors' in group:
+        # read old-style, convert to new style
+        iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
+        values = numpy.asarray(_hdf5_read_dataset(group, 'detector_errors', numpy.float64))
+        assert iters.ndim == values.ndim == 1
+        assert iters.shape == values.shape
 
-    return ProgressState(
-        iters=iters, detector_errors=errors,
-    )
+        return {'total_loss': ProgressState(iters.tolist(), values.tolist())}
+
+    # read new-style
+    d: t.Dict[str, ProgressState] = {}
+
+    for (k, group) in group.items():
+        if not isinstance(group, h5py.Group):
+            continue
+        iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
+        values = numpy.asarray(_hdf5_read_dataset(group, 'values', numpy.float64))
+        assert iters.ndim == values.ndim == 1
+        assert iters.shape == values.shape
+
+        d[k] = ProgressState(iters.tolist(), values.tolist())
+
+    return d
 
 
 def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfLike):
@@ -236,12 +251,15 @@ def hdf5_write_iter_state(state: IterState, group: h5py.Group):
     group.create_dataset("total_iter", (), numpy.uint64, data=state.total_iter)
 
 
-def hdf5_write_progress_state(state: ProgressState, group: h5py.Group):
-    iters = group.create_dataset("iters", data=state.iters.astype(numpy.uint64))
-    iters.make_scale("total_iter")
-    dataset = group.create_dataset("detector_errors", data=state.detector_errors.astype(numpy.float64))
-    dataset.dims[0].label = 'total_iter'
-    dataset.dims[0].attach_scale(iters)
+def hdf5_write_progress_state(state: t.Dict[str, ProgressState], group: h5py.Group):
+    for (k, v) in state.items():
+        subgroup = group.require_group(k)
+
+        iters = subgroup.create_dataset("iters", data=numpy.array(v.iters, dtype=numpy.uint64))
+        iters.make_scale("total_iter")
+        dataset = subgroup.create_dataset("values", data=numpy.array(v.values, dtype=numpy.float64))
+        dataset.dims[0].label = 'total_iter'
+        dataset.dims[0].attach_scale(iters)
 
 
 def _parse_version(version: str) -> t.Tuple[int, ...]:
@@ -276,7 +294,7 @@ def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: t.Type[DTypeT]) -> t
                          f"Expected a dataset of dtype '{dtype_category}' at path '{group.name}{path}', instead found {dataset.dtype}.")
 
     # ensure promotion is correct. eg dtype = numpy.floating promotes with numpy.float32
-    out_dtype = numpy.promote_types(dataset.dtype, _CATEGORY_MIN_DTYPE.get(dtype, dtype))
+    out_dtype = numpy.promote_types(dataset.dtype, _CATEGORY_MIN_DTYPE.get(dtype_category, dtype))
     return dataset[()].astype(out_dtype)
 
 

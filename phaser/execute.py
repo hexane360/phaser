@@ -14,7 +14,7 @@ from phaser.utils.object import ObjectSampling
 from phaser.utils.misc import unwrap
 from .hooks import EngineHook, Hook, ObjectHook, RawData
 from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
-from .state import Patterns, ReconsState, PartialReconsState, IterState, ProgressState, PreparedRecons
+from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons
 from .observer import Observer, LoggingObserver, PatienceObserver, SaveObserver, ObserverSet
 
 
@@ -353,9 +353,9 @@ def initialize_reconstruction(
         object=obj,
         scan=scan,
         tilt=tilt,
-        progress=ProgressState(iters=numpy.array([]), detector_errors=numpy.array([])),
         wavelength=wavelength
     )
+    state = state.to_xp(xp)  # TODO: figure out why this isn't already the case
     data, state = _normalize_scan_shape(data, state)
 
     # process post_init hooks

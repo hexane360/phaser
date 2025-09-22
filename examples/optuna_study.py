@@ -136,7 +136,7 @@ class OptunaObserver(Observer):
         with open(self.trial_path / 'plan.json', 'w') as f:
             json.dump(plan_json, f, indent=4)
 
-    def update_iteration(self, state: ReconsState, i: int, n: int, error: t.Optional[float] = None):
+    def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         i = state.iter.total_iter
 
         if i % MEASURE_EVERY == 0:

@@ -9,6 +9,7 @@ from typing_extensions import Self, dataclass_transform
 T = t.TypeVar('T')
 Leaf: t.TypeAlias = t.Any
 Tree: t.TypeAlias = t.Any
+field = dataclasses.field
 
 class TreeSpec(t.Protocol):
     @property
@@ -156,16 +157,39 @@ def grad(
     f: t.Callable,
     argnums: t.Union[int, t.Tuple[int, ...]] = 0,
     has_aux: bool = False, *, xp: t.Optional[t.Any] = None,
+    sign: float = 1.0,
 ) -> t.Callable[..., Tree]:
     from phaser.utils.num import xp_is_torch, xp_is_jax
 
     if xp is None or xp_is_jax(xp):
         import jax  # type: ignore
-        return jax.grad(f, argnums, has_aux=has_aux)
-    if xp_is_torch(xp):
+        f = jax.grad(f, argnums, has_aux=has_aux)
+        # conjugate to get Wirtinger derivative (not required on torch)
+        conj = True
+    elif xp_is_torch(xp):
         import torch.func  # type: ignore
-        return torch.func.grad(f, argnums, has_aux=has_aux)
-    raise ValueError("`grad` is only supported for backends 'jax' and 'torch'")
+        f = torch.func.grad(f, argnums, has_aux=has_aux)
+        # torch conjugates automatically
+        conj = False
+    else:
+        raise ValueError("`grad` is only supported for backends 'jax' and 'torch'")
+
+    @functools.wraps(f)
+    def wrapper(*args: t.Any, **kwargs: t.Any) -> Tree:
+        if has_aux:
+            (grad, aux) = f(*args, **kwargs)
+        else:
+            aux = None
+            grad = f(*args, **kwargs)
+
+        if conj:
+            grad = map(lambda arr: arr.conj() * sign, grad, is_leaf=lambda x: x is None)
+        else:
+            grad = map(lambda arr: arr * sign, grad, is_leaf=lambda x: x is None)
+
+        return (grad, aux) if has_aux else grad
+
+    return wrapper
 
 
 def value_and_grad(
@@ -181,29 +205,29 @@ def value_and_grad(
         f = jax.value_and_grad(f, argnums, has_aux=has_aux)
 
         @functools.wraps(f)
-        def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Tuple[Tree, Tree]:
+        def jax_wrapper(*args: t.Any, **kwargs: t.Any) -> t.Tuple[Tree, Tree]:
             (value, grad) = f(*args, **kwargs)
             # conjugate to get Wirtinger derivative, multiply by sign
             grad = map(lambda arr: arr.conj() * sign, grad, is_leaf=lambda x: x is None)
             return (value, grad)
 
-        return wrapper
+        return jax_wrapper
 
     if not xp_is_torch(xp):
-        raise ValueError("`grad` is only supported for backends 'jax' and 'torch'")
+        raise ValueError("`value_and_grad` is only supported for backends 'jax' and 'torch'")
 
     import torch.func  # type: ignore
     f = torch.func.grad_and_value(f, argnums, has_aux=has_aux)
 
     @functools.wraps(f)
-    def wrapper(*args: t.Any, **kwargs: t.Any) -> t.Tuple[Tree, Tree]:
+    def torch_wrapper(*args: t.Any, **kwargs: t.Any) -> t.Tuple[Tree, Tree]:
         # flip order of return values
         (grad, value) = f(*args, **kwargs)
         # multiply by sign
         grad = map(lambda arr: arr * sign, grad, is_leaf=lambda x: x is None)
         return (value, grad)
 
-    return wrapper
+    return torch_wrapper
 
 
 def leaves(
@@ -414,3 +438,11 @@ def _register_dataclass(cls: type, static_fields: t.Sequence[str], drop_fields: 
             cls, flatten, lambda trees, meta: unflatten(meta, trees),
             flatten_with_keys_fn=flatten_with_keys,  # type: ignore
         )
+
+
+__all__ = [
+    'flatten', 'flatten_with_path', 'unflatten', 'map', 'reduce', 'sum',
+    'map_with_path', 'grad', 'value_and_grad', 'leaves', 'structure', 'leaves_with_path',
+    'zeros_like', 'ones_like', 'full_like', 'cast', 'clip', 'conj', 'update_moment',
+    'update_moment_per_elem_norm', 'bias_correction', 'scale', 'tree_dataclass', 'field',
+]

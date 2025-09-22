@@ -151,20 +151,19 @@ function ProbePlotSub({probes}: {probes: ProbeData}) {
     </Figure>;
 }
 
-
-export function ProgressPlot({state}: {state: PrimitiveAtom<ProgressData | null>}) {
+export function ProgressPlot({state}: {state: PrimitiveAtom<Record<string, ProgressData>>}) {
     const progress = useAtomValue(state);
-    if (!progress || !np) return <div></div>;
-    return <ProgressPlotSub progress={progress} />;
+    if (!progress || !np || !progress.total_loss) return <div></div>;
+
+    return <ProgressPlotSub progress={progress.total_loss} />;
 }
 
 function ProgressPlotSub({progress}: {progress: ProgressData}) {
     const markerId = React.useMemo(() => makeId("marker"), []);
     const markerRef = `url(#${markerId})`;
 
-    const xs = progress.iters.toNestedArray() as Array<number>;
-    const ys = progress.detector_errors.toNestedArray() as Array<number>;
-
+    const xs = progress.iters;
+    const ys = progress.values;
     const x_max = Math.max(10, ...xs.filter(isFinite));
     const ys_filt = ys.filter(isFinite);
 

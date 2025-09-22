@@ -114,7 +114,7 @@ export interface ReconsData {
     probe: ProbeData;
     object: ObjectData;
     scan: NArray;
-    progress: ProgressData;
+    progress: Record<string, ProgressData>;
 }
 
 export type PartialReconsData = { [P in keyof ReconsData]?: ReconsData[P] | null | undefined };
@@ -153,6 +153,6 @@ export interface ObjectData {
 };
 
 export interface ProgressData {
-    iters: NArray;
-    detector_errors: NArray;
+    iters: [number];
+    values: [number];
 }

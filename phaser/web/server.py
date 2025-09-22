@@ -68,7 +68,7 @@ class Worker(Subscribable[WorkerUpdate], abc.ABC):
         """UTC time worker started running at"""
         self.hostname: t.Optional[str] = None
         """Hostname worker is running on"""
-        self.backends: t.Optional[t.Dict[str, t.Tuple[str, ...]]] = None
+        self.backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
         """Computational backends available to worker"""
 
     @abc.abstractmethod

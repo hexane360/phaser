@@ -1,13 +1,11 @@
 import logging
 
-import numpy
-
 from phaser.utils.misc import mask_fraction_of_groups
 from phaser.utils.num import assert_dtype, cast_array_module, to_numpy, to_complex_dtype
 from phaser.observer import Observer
 from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
-from phaser.state import ReconsState
+from phaser.state import ReconsState, ProgressState
 from phaser.types import process_flag
 from ..common.simulation import SimulationState, make_propagators, GroupManager
 
@@ -54,6 +52,14 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
     position_solver = None if props.position_solver is None else props.position_solver(None)
     position_solver_state = None if position_solver is None else position_solver.init_state(sim.state)
 
+    # populate missing keys in progress dictionary
+    for k in ('detector_loss', 'total_loss'):
+        if k not in sim.state.progress:
+            sim.state.progress[k] = ProgressState()
+
+    # save progress, it will get clobbered by JIT kernels
+    progress = sim.state.progress
+
     observer.init_engine(
         sim.state, recons_name=args['recons_name'],
         plan=props, noise_model=noise_model.name(),
@@ -69,6 +75,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         propagators=propagators
     )
 
+    sim.state.progress = progress
     observer.start_engine(sim.state)
 
     for i in range(1, props.niter+1):
@@ -114,11 +121,12 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         if group_errors is not None and len(group_errors):
             error = float(to_numpy(xp.nanmean(xp.concatenate(group_errors))))
 
-            # TODO don't do this
-            sim.state.progress.iters = numpy.concatenate([sim.state.progress.iters, [i + start_i]])
-            sim.state.progress.detector_errors = numpy.concatenate([sim.state.progress.detector_errors, [error]])
+            for k in ('detector_loss', 'total_loss'):
+                progress[k].iters.append(i + start_i)
+                progress[k].values.append(error)
 
-        observer.update_iteration(sim.state, i, props.niter, error)
+        sim.state.progress = progress
+        observer.update_iteration(sim.state, i, props.niter, {'total_loss': error})
 
     observer.finish_engine(sim.state)
     return sim.state

@@ -52,7 +52,7 @@ function App(props: {}) {
     const statusState: PrimitiveAtom<JobStatus | null> = atom(null as JobStatus | null);
     const probeState: PrimitiveAtom<ProbeData | null> = atom(null as ProbeData | null);
     const objectState: PrimitiveAtom<ObjectData | null> = atom(null as ObjectData | null);
-    const progressState: PrimitiveAtom<ProgressData | null> = atom(null as ProgressData | null);
+    const progressState: PrimitiveAtom<Record<string, ProgressData>> = atom({});
     const logsState: PrimitiveAtom<Array<LogRecord>> = atom([] as Array<LogRecord>);
 
     async function updateState(raw_state: Record<string, any>) {
@@ -147,7 +147,19 @@ async function getLogs(before?: number): Promise<LogsData> {
     return await response.json() as LogsData;
 }
 
-async function decodeState(state: Record<any, any>): Promise<any> {
+async function decodeState(state: any): Promise<any> {
+    if (typeof state !== 'object' || state === null) {
+        return state;
+    }
+
+    if (state instanceof Array) {
+        let out: Array<any> = [];
+        for (const v of state) {
+            out.push(await decodeState(v));
+        }
+        return out;
+    }
+
     if (state._ty !== undefined) {
         if (state._ty === 'numpy') {
             return np!.from_interchange(state as IArrayInterchange);

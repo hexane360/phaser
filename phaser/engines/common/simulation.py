@@ -32,7 +32,8 @@ class GroupManager:
         self.compact = compact
         self.seed = seed
         self.groups: t.Optional[t.List[NDArray[numpy.int64]]] = None
-        self.n_groups: int = int(numpy.ceil(numpy.prod(scan.shape[:-1]) / self.grouping))
+        self.n_pos = numpy.prod(scan.shape[:-1])
+        self.n_groups: int = int(numpy.ceil(self.n_pos / self.grouping))
 
     def _make(self, scan: NDArray[numpy.floating], i: int = 0) -> t.List[NDArray[numpy.int64]]:
         if self.compact:

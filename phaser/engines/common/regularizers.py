@@ -197,6 +197,10 @@ class ObjL1:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
 
+    @staticmethod
+    def name() -> str:
+        return 'obj_l1'
+
     def init_state(self, sim: ReconsState) -> None:
         return None
 
@@ -213,6 +217,10 @@ class ObjL1:
 class ObjL2:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: Float = props.cost
+
+    @staticmethod
+    def name() -> str:
+        return 'obj_l2'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -232,6 +240,10 @@ class ObjPhaseL1:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
 
+    @staticmethod
+    def name() -> str:
+        return 'obj_phase_l1'
+
     def init_state(self, sim: ReconsState) -> None:
         return None
 
@@ -248,6 +260,10 @@ class ObjPhaseL1:
 class ObjRecipL1:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
+
+    @staticmethod
+    def name() -> str:
+        return 'obj_recip_l1'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -272,6 +288,10 @@ class ObjTotalVariation:
     def __init__(self, args: None, props: TVRegularizerProps):
         self.cost: float = props.cost
         self.eps: float = props.eps
+
+    @staticmethod
+    def name() -> str:
+        return 'obj_tv'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -300,6 +320,10 @@ class ObjTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
 
+    @staticmethod
+    def name() -> str:
+        return 'obj_tikh'
+
     def init_state(self, sim: ReconsState) -> None:
         return None
 
@@ -321,6 +345,10 @@ class ObjTikhonov:
 class LayersTotalVariation:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
+
+    @staticmethod
+    def name() -> str:
+        return 'layers_tv'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -344,6 +372,10 @@ class LayersTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
 
+    @staticmethod
+    def name() -> str:
+        return 'layers_tikh'
+
     def init_state(self, sim: ReconsState) -> None:
         return None
 
@@ -365,6 +397,10 @@ class LayersTikhonov:
 class ProbePhaseTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
+
+    @staticmethod
+    def name() -> str:
+        return 'probe_phase_tikh'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -389,6 +425,10 @@ class ProbeRecipTikhonov:
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost
 
+    @staticmethod
+    def name() -> str:
+        return 'probe_recip_tikh'
+
     def init_state(self, sim: ReconsState) -> None:
         return None
 
@@ -411,6 +451,10 @@ class ProbeRecipTotalVariation:
     def __init__(self, args: None, props: TVRegularizerProps):
         self.cost: float = props.cost
         self.eps: float = props.eps
+
+    @staticmethod
+    def name() -> str:
+        return 'probe_recip_tv'
 
     def init_state(self, sim: ReconsState) -> None:
         return None
