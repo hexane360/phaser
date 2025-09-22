@@ -2,7 +2,6 @@
 
 import re
 import logging
-import typing as t
 
 import numpy
 import pane
@@ -120,7 +119,7 @@ def test_load_raw_data_prev_state(caplog):
 
     assert "Wavelength of reconstruction (1.00e+00) doesn't match wavelength of previous state (2.00e+00)" in caplog.text
     assert "Mean pattern intensity is very low (0.0 particles)." in caplog.text
-    assert recons.state.probe is probe_state
+    assert numpy.all(numpy.isclose(recons.state.probe.data, probe_state.data))
 
     plan['init'] = {
         'scan': {}
@@ -131,9 +130,9 @@ def test_load_raw_data_prev_state(caplog):
     ))
 
     # probe from state overrides probe from raw data
-    assert recons.state.probe is probe_state
+    assert numpy.all(numpy.isclose(recons.state.probe.data, probe_state.data))
     # but scan should be modeled
-    assert recons.state.scan is not scan_state
+    assert ~numpy.all(numpy.isclose(recons.state.scan, scan_state))
 
     plan['init'] = {
         'scan': {},
@@ -149,8 +148,8 @@ def test_load_raw_data_prev_state(caplog):
     ))
 
     # both should be modeled
-    assert recons.state.probe is not probe_state
-    assert recons.state.scan is not scan_state
+    assert ~numpy.all(numpy.isclose(recons.state.probe.data, probe_state.data))
+    assert ~numpy.all(numpy.isclose(recons.state.scan, scan_state))
 
 
 def test_load_3d_raw_data():
