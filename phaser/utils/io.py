@@ -255,7 +255,7 @@ def hdf5_write_progress_state(state: t.Dict[str, ProgressState], group: h5py.Gro
     for (k, v) in state.items():
         subgroup = group.require_group(k)
 
-        iters = subgroup.create_dataset("iters", data=numpy.array(v.iters, dtype=numpy.uint64))
+        iters = subgroup.create_dataset("iters", data=numpy.array(v.iters, dtype=numpy.int64))
         iters.make_scale("total_iter")
         dataset = subgroup.create_dataset("values", data=numpy.array(v.values, dtype=numpy.float64))
         dataset.dims[0].label = 'total_iter'

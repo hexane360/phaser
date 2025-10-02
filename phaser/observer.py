@@ -6,7 +6,7 @@ import time
 import typing as t
 
 from phaser.plan import ReconsPlan, EnginePlan, SaveOptions
-from phaser.state import ReconsState, PartialReconsState
+from phaser.state import ReconsState, PartialReconsState, ProgressState
 from phaser.types import EarlyTermination, flag_any_true, process_flag
 
 if t.TYPE_CHECKING:
@@ -75,6 +75,8 @@ class LoggingObserver(Observer):
 
         self.init_start_time: t.Optional[float] = None
         self.recons_start_time: t.Optional[float] = None
+        self.init_start_utc: t.Optional[float] = None
+        self.recons_start_utc: t.Optional[float] = None
         self.engine_start_time: t.Optional[float] = None
         self.iter_start_time: t.Optional[float] = None
 
@@ -87,18 +89,36 @@ class LoggingObserver(Observer):
         mm, ss = divmod(seconds, 60)
         return f"{int(mm):02d}:{ss:06.3f}"
 
+    def get_utc(self) -> float:
+        return time.time_ns() * 1e-9
+
     def init_recons(self, plan: ReconsPlan):
         self.logger.info("Initializing reconstruction...")
         self.init_start_time = time.monotonic()
+        self.init_start_utc = self.get_utc()
 
     def start_recons(self, init_state: ReconsState):
         self.recons_start_time = time.monotonic()
+        self.recons_start_utc = self.get_utc()
 
         if self.init_start_time is not None:
             delta = self.recons_start_time - self.init_start_time
             self.logger.info(f"Initialized reconstruction in {self._format_mmss(delta)}")
         else:
             self.logger.info("Initialized reconstruction")
+
+        if init_state.iter.total_iter == 0:
+            utc_prog = ProgressState()
+
+            if self.init_start_utc is not None:
+                utc_prog.iters.append(-1)
+                utc_prog.values.append(self.init_start_utc)
+            utc_prog.iters.append(0)
+            utc_prog.values.append(self.recons_start_utc)
+            init_state.progress['utc'] = utc_prog
+
+            if self.init_start_time is not None:
+                init_state.progress['time'] = ProgressState([0], [self.recons_start_time - self.init_start_time])
 
     def init_engine(
         self, init_state: ReconsState, *, recons_name: str,
@@ -127,6 +147,13 @@ class LoggingObserver(Observer):
         other_errors = f"\n    Error breakdown: {other_errors}" if other_errors else ""
         self.logger.info(f"Finished iter {i:{w}}/{n}{time_s}{error_s}{other_errors}")
         self.iter_start_time = finish_time
+
+        if 'utc' in state.progress:
+            state.progress['utc'].iters.append(state.iter.total_iter)
+            state.progress['utc'].values.append(self.get_utc())
+        if 'time' in state.progress and self.init_start_time is not None:
+            state.progress['time'].iters.append(state.iter.total_iter)
+            state.progress['time'].values.append(finish_time - self.init_start_time)
 
     def finish_engine(self, state: ReconsState):
         self.logger.info("Engine finished!")
