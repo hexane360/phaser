@@ -29,13 +29,14 @@ class ClampObjectAmplitude:
         return self.apply_iter(sim, state)
 
     def apply_iter(self, sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
-        amp = to_real_dtype(sim.object.data.dtype)(self.amplitude)
+        cast = to_real_dtype(sim.object.data.dtype)
+        amp = [cast(a) for a in self.amplitude] if isinstance(self.amplitude, list) else cast(self.amplitude)
         sim.object.data = clamp_amplitude(sim.object.data, amp)
         return (sim, None)
 
 
 @partial(jit, donate_argnames=('obj',), cupy_fuse=True)
-def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[float, numpy.floating, t.List[float]]) -> NDArray[numpy.complexfloating]:
+def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[float, numpy.floating, t.Sequence[float]]) -> NDArray[numpy.complexfloating]:
     xp = get_array_module(obj)
 
     obj_amp = xp.abs(obj)
