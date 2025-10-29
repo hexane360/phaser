@@ -35,11 +35,20 @@ class ClampObjectAmplitude:
 
 
 @partial(jit, donate_argnames=('obj',), cupy_fuse=True)
-def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[float, numpy.floating]) -> NDArray[numpy.complexfloating]:
+def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[float, numpy.floating, t.Tuple[float, float]]) -> NDArray[numpy.complexfloating]:
     xp = get_array_module(obj)
 
     obj_amp = xp.abs(obj)
-    scale = xp.minimum(obj_amp, amplitude) / obj_amp
+    new_amp = obj_amp
+    if isinstance(amplitude, tuple):
+        min_amp, max_amp = amplitude
+        new_amp = xp.maximum(new_amp, min_amp)
+        new_amp = xp.minimum(new_amp, max_amp)
+
+    else:
+        new_amp = xp.minimum(new_amp, amplitude)
+
+    scale = xp.where(obj_amp > 0, new_amp / obj_amp, 0.0) #no divide by 0
     return obj * scale
 
 
