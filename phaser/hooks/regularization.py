@@ -1,5 +1,5 @@
 import typing as t
-
+from typing import Union, List
 import numpy
 from numpy.typing import NDArray
 
@@ -35,7 +35,7 @@ class CostRegularizer(HasState[StateT], t.Protocol[StateT]):
 
 
 class ClampObjectAmplitudeProps(Dataclass):
-    amplitude: float = 1.1
+    amplitude: t.Union[float, List[float]] = 1.1
 
 
 class LimitProbeSupportProps(Dataclass):
