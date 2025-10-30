@@ -273,8 +273,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         # report losses normalized by # of probe positions
         losses = tree.map(lambda v: float(v / groups.n_pos), losses)
         for (k, v) in losses.items():
-            progress[k].iters.append(i + start_i)
-            progress[k].values.append(v)
+            progress[k].iters.append(int(i + start_i))
+            progress[k].values.append(float(v))
 
         # update per-iteration solvers
         for (sol_i, solver) in enumerate(iter_solvers):
