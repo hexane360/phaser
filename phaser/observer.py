@@ -149,10 +149,10 @@ class LoggingObserver(Observer):
         self.iter_start_time = finish_time
 
         if 'utc' in state.progress:
-            state.progress['utc'].iters.append(state.iter.total_iter)
+            state.progress['utc'].iters.append(int(state.iter.total_iter))
             state.progress['utc'].values.append(self.get_utc())
         if 'time' in state.progress and self.init_start_time is not None:
-            state.progress['time'].iters.append(state.iter.total_iter)
+            state.progress['time'].iters.append(int(state.iter.total_iter))
             state.progress['time'].values.append(finish_time - self.init_start_time)
 
     def finish_engine(self, state: ReconsState):

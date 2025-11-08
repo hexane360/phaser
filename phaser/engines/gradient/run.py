@@ -8,7 +8,7 @@ from typing_extensions import Self
 
 from phaser.hooks.solver import NoiseModel
 from phaser.utils.num import (
-    assert_dtype, get_array_module, cast_array_module, jit,
+    assert_dtype, get_array_module, cast_array_module, jit, to_numpy,
     fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_real_dtype
 )
 import phaser.utils.tree as tree
@@ -108,17 +108,14 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
         state.probe.data += update['probe']
     if 'object' in update:
         state.object.data += update['object']
-    if 'positions' in update:
-        xp = get_array_module(update['positions'])
-        # subtract mean position update
-        update['positions'] -= xp.mean(update['positions'], tuple(range(update['positions'].ndim - 1)))
-        logger.info(f"Position update: mean {xp.mean(xp.linalg.norm(update['positions'], axis=-1))}")
-        state.scan += update['positions']
     if 'tilt' in update:
-        xp = get_array_module(update['tilt'])
-        mean_tilt_update = xp.mean(xp.abs(update['tilt']), tuple(range(update['tilt'].ndim - 1)))
-        logger.info(f"Tilt update: mean {mean_tilt_update} mrad")
         state.tilt += update['tilt']
+    if 'positions' in update:
+        # subtract mean position update
+        xp = get_array_module(update['positions'])
+        update['positions'] -= xp.mean(update['positions'], tuple(range(update['positions'].ndim - 1)))
+
+        state.scan += update['positions']
 
     return state
 
@@ -187,7 +184,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         state, recons_name=args['recons_name'],
         plan=props, noise_model=noise_model.name(),
     )
-    start_i = state.iter.total_iter
+    start_i = int(state.iter.total_iter)
 
     propagators = make_propagators(state, props.bwlim_frac)
 
@@ -212,9 +209,16 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     iter_solver_states = [solver.init_state(state) for solver in iter_solvers]
     iter_constraint_states = [reg.init_state(state) for reg in iter_constraints]
 
-    loss_keys = ('detector_loss', 'total_loss', *(reg.name() for reg in regularizers))
+    loss_keys = (
+        'detector_loss', 'total_loss', *(reg.name() for reg in regularizers),
+    )
+    other_keys = (
+        *(('pos_update_rms',) if 'positions' in all_vars else ()),
+        *(('tilt_update_rms',) if 'tilt' in all_vars else ()),
+    )
+
     # populate missing keys in progress dictionary
-    for k in loss_keys:
+    for k in (*loss_keys, *other_keys):
         if k not in state.progress:
             state.progress[k] = ProgressState()
 
@@ -285,6 +289,20 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 state, iter_solver_states[sol_i], filter_vars(iter_grads, solver.params), losses['total_loss']
             )
             state = apply_update(state, update)
+
+            if 'positions' in update:
+                pos_update_rms = float(xp.mean(xp.linalg.norm(update['positions'], axis=-1)))
+                progress['pos_update_rms'].iters.append(i + start_i)
+                progress['pos_update_rms'].values.append(pos_update_rms)
+                logger.info(f"Position update: mean {pos_update_rms}")  # RMS position update
+
+            if 'tilt' in update:
+                mean_tilt_update = to_numpy(xp.mean(xp.abs(update['tilt']), tuple(range(update['tilt'].ndim - 1))))
+                tilt_update_rms = float(xp.mean(xp.linalg.norm(update['tilt'], axis=-1)))
+                progress['tilt_update_rms'].iters.append(i + start_i)
+                progress['tilt_update_rms'].values.append(tilt_update_rms)
+                logger.info(f"Tilt update: mean {mean_tilt_update} mrad")  # average tilt update, [y, x]
+
 
         for (reg_i, reg) in enumerate(iter_constraints):
             (state, iter_constraint_states[reg_i]) = reg.apply_iter(

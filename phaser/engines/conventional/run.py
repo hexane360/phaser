@@ -6,7 +6,7 @@ from phaser.observer import Observer
 from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
 from phaser.state import ReconsState, ProgressState
-from phaser.types import process_flag
+from phaser.types import process_flag, flag_any_true
 from ..common.simulation import SimulationState, make_propagators, GroupManager
 
 
@@ -51,9 +51,12 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
     position_solver = None if props.position_solver is None else props.position_solver(None)
     position_solver_state = None if position_solver is None else position_solver.init_state(sim.state)
+    if position_solver is not None and flag_any_true(update_positions, props.niter):
+        other_keys = ('pos_update_rms',)
+    else:
+        other_keys = ()
 
-    # populate missing keys in progress dictionary
-    for k in ('detector_loss', 'total_loss'):
+    for k in ('detector_loss', 'total_loss', *other_keys):
         if k not in sim.state.progress:
             sim.state.progress[k] = ProgressState()
 
@@ -64,7 +67,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         sim.state, recons_name=args['recons_name'],
         plan=props, noise_model=noise_model.name(),
     )
-    start_i = sim.state.iter.total_iter
+    start_i = int(sim.state.iter.total_iter)
 
     propagators = make_propagators(sim.state, props.bwlim_frac)
 
@@ -109,13 +112,16 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
             pos_update, position_solver_state = position_solver.perform_update(sim.state.scan, pos_update, position_solver_state)
             # subtract mean again (this can change with momentum)
             pos_update -= xp.mean(pos_update, tuple(range(pos_update.ndim - 1)))
-            update_mag = xp.linalg.norm(pos_update, axis=-1, keepdims=True)
-            logger.info(f"Position update: mean {xp.mean(update_mag)}")
+            pos_update_rms = float(xp.mean(xp.linalg.norm(pos_update, axis=-1, keepdims=True)))
+            logger.info(f"Position update: mean {pos_update_rms}")
             sim.state.scan += pos_update
             assert_dtype(sim.state.scan, dtype)
 
             # check positions are at least overlapping object
             sim.state.object.sampling.check_scan(sim.state.scan, sim.state.probe.sampling.extent / 2.)
+
+            progress['pos_update_rms'].iters.append(i + start_i)
+            progress['pos_update_rms'].values.append(pos_update_rms)
 
         error = None
         if group_errors is not None and len(group_errors):
