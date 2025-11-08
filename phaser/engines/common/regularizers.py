@@ -42,15 +42,14 @@ def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[floa
     new_amp = obj_amp
     if isinstance(amplitude, list):
         min_amp, max_amp = amplitude
-        new_amp = xp.maximum(new_amp, min_amp)
-        new_amp = xp.minimum(new_amp, max_amp)
+        if min is not None and max is not None:
+            new_amp = xp.clip(new_amp, min_amp, max_amp)  # faster than doing sequentially
 
     else:
         new_amp = xp.minimum(new_amp, amplitude)
 
     scale = xp.where(obj_amp > 0, new_amp / obj_amp, 0.0) #no divide by 0
     return obj * scale
-
 
 class LimitProbeSupport:
     def __init__(self, args: None, props: LimitProbeSupportProps):
