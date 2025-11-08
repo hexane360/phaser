@@ -1,5 +1,4 @@
 import typing as t
-from typing import Union, List
 import numpy
 from numpy.typing import NDArray
 
