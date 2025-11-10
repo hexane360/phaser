@@ -2,6 +2,7 @@ import typing as t
 
 import numpy
 from numpy.typing import ArrayLike, NDArray
+import warnings
 
 from phaser.utils.num import fft2, ifft2, abs2, Sampling, get_array_module, at, to_numpy, NumT
 from phaser.utils.object import ObjectSampling
@@ -227,6 +228,8 @@ def align_object_to_ground_truth(
     ))
     if max_shift < 0:
         raise ValueError("Error: Ground truth extent smaller than object extent")
+    elif max_shift * ground_truth_samp.sampling[0] < 10:
+        warnings.warn("Ground truth extent is only slightly larger than the object extent, which might not be enough for cross-correlation to find the best alignment. ")
     #print(f"max_shift: {max_shift:.3f} px ({max_shift * ground_truth_samp.sampling[0]:.3f} angstrom)")
 
     shift = numpy.array(_cross_correlate(upsamp_obj[tuple(crop)], ground_truth[tuple(crop)], max_shift))
