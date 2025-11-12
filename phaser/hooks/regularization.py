@@ -34,7 +34,7 @@ class CostRegularizer(HasState[StateT], t.Protocol[StateT]):
 
 
 class ClampObjectAmplitudeProps(Dataclass):
-    amplitude: t.Union[float, t.List[float]] = 1.1
+    amplitude: t.Union[float, t.List[t.Optional[float]]] = 1.1
 
 
 class LimitProbeSupportProps(Dataclass):

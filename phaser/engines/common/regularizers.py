@@ -19,7 +19,14 @@ from phaser.hooks.regularization import (
 
 class ClampObjectAmplitude:
     def __init__(self, args: None, props: ClampObjectAmplitudeProps):
-        self.amplitude = props.amplitude
+        self.min: t.Optional[float]
+        self.max: t.Optional[float]
+
+        if isinstance(props.amplitude, list):
+            self.min, self.max = props.amplitude
+        else:
+            self.min = None
+            self.max = props.amplitude
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -29,24 +36,25 @@ class ClampObjectAmplitude:
 
     def apply_iter(self, sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
         cast = to_real_dtype(sim.object.data.dtype)
-        amp = [cast(a) for a in self.amplitude] if isinstance(self.amplitude, list) else cast(self.amplitude)
-        sim.object.data = clamp_amplitude(sim.object.data, amp)
+        sim.object.data = clamp_amplitude(sim.object.data, self.min, self.max)
         return (sim, None)
 
 
 @partial(jit, donate_argnames=('obj',), cupy_fuse=True)
-def clamp_amplitude(obj: NDArray[numpy.complexfloating], amplitude: t.Union[float, numpy.floating, t.List[float]]) -> NDArray[numpy.complexfloating]:
+def clamp_amplitude(obj: NDArray[numpy.complexfloating], min: t.Optional[float], max: t.Optional[float]) -> NDArray[numpy.complexfloating]:
     xp = get_array_module(obj)
 
     obj_amp = xp.abs(obj)
     new_amp = obj_amp
-    if isinstance(amplitude, list):
-        min_amp, max_amp = amplitude
-        if min is not None and max is not None:
-            new_amp = xp.clip(new_amp, min_amp, max_amp)  # faster than doing sequentially
 
+    if min is not None and max is not None:
+        new_amp = xp.clip(new_amp, min, max)
+    elif min is not None:
+        new_amp = xp.maximum(new_amp, min)
+    elif max is not None:
+        new_amp = xp.minimum(new_amp, max)
     else:
-        new_amp = xp.minimum(new_amp, amplitude)
+        return obj
 
     scale = xp.where(obj_amp > 0, new_amp / obj_amp, 0.0) #no divide by 0
     return obj * scale
