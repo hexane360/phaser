@@ -7,9 +7,101 @@ import typing as t
 
 import numpy
 from numpy.typing import NDArray, ArrayLike
+import pane
+from pane.annotations import Condition
+from pane.util import pluralize
 
 from .num import get_array_module, ifft2, abs2, NumT, ufunc_outer, is_jax, cast_array_module
 from .num import Float, Sampling, to_complex_dtype, to_real_dtype, split_array, to_numpy
+
+
+class Krivanek(pane.PaneBase):
+    n: int
+    m: int
+    scale_factor: float = 1.0
+
+    def __post_init__(self):
+        if (
+            self.n < 0 or self.m < 0 or
+            self.m > self.n + 1 or
+            self.m % 2 + self.n % 2 != 1
+        ):
+            raise ValueError(f"Invalid Krivanek aberration n={self.n} m={self.m}")
+
+    @staticmethod
+    def from_known(s: str) -> 'Krivanek':
+        try:
+            return _KNOWN_ABERRATIONS[s.lower()]
+        except (KeyError, TypeError):
+            raise ValueError(f"Unknown aberration '{s}'") from None
+
+
+_KNOWN_ABERRATIONS: t.Dict[str, Krivanek] = {
+    'c1': Krivanek.make_unchecked(1, 0),
+    'a1': Krivanek.make_unchecked(1, 2),
+    'b2': Krivanek.make_unchecked(2, 1, 3.0),  # C_21 = 3*B2
+    'a2': Krivanek.make_unchecked(2, 3),
+    'c3': Krivanek.make_unchecked(3, 0),
+    's3': Krivanek.make_unchecked(3, 2, 4.0),  # C_32 = 3*S3
+    'a3': Krivanek.make_unchecked(3, 4),
+    'b4': Krivanek.make_unchecked(4, 1, 4.0),  # C_41 = 4*B4
+    'd4': Krivanek.make_unchecked(4, 3, 4.0),  # C_43 = 4*D4
+    'a4': Krivanek.make_unchecked(4, 5),
+    'c5': Krivanek.make_unchecked(5, 0),
+}
+
+KnownAberration: t.TypeAlias = t.Annotated[str, Condition(
+    lambda s: s.lower() in _KNOWN_ABERRATIONS,
+    'known aberration',
+    lambda exp, plural: pluralize('known aberration', plural)
+)]
+
+
+class Cartesian(pane.PaneBase, kw_only=True):
+    a: float
+    b: float = 0.0
+
+    def __complex__(self) -> complex:
+        return complex(self.a, self.b)
+
+
+class Polar(pane.PaneBase, kw_only=True):
+    mag: float
+    angle: float = 0.0  # degrees
+
+    def __complex__(self) -> complex:
+        theta = numpy.deg2rad(self.angle)
+        return self.mag * complex(numpy.cos(theta), numpy.sin(theta))
+
+
+class KrivanekComplex(Krivanek, kw_only=True):
+    val: complex
+
+    def __complex__(self) -> complex:
+        return self.val
+
+class KrivanekCartesian(Krivanek, Cartesian, kw_only=True):
+    ...
+
+class KrivanekPolar(Krivanek, Polar, kw_only=True):
+    ...
+
+
+Aberration: t.TypeAlias = t.Union[
+    t.Dict[KnownAberration, t.Union[complex, Cartesian, Polar]],
+    KrivanekComplex, KrivanekCartesian, KrivanekPolar,
+]
+AberrationList: t.TypeAlias = t.List[Aberration]
+
+
+def _normalize_aberrations(aberrations: t.Iterable[Aberration]) -> t.Iterator[KrivanekComplex]:
+    for ab in aberrations:
+        if isinstance(ab, dict):
+            for known, val in ab.items():
+                ty = Krivanek.from_known(known)
+                yield KrivanekComplex(ty.n, ty.m, val=ty.scale_factor * complex(val))
+        else:
+            yield KrivanekComplex(ab.n, ab.m, val=complex(ab))
 
 
 @t.overload

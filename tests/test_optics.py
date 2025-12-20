@@ -1,10 +1,15 @@
 
 import numpy
+import pytest
 
 from .utils import with_backends, check_array_equals_file
 
 from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
-from phaser.utils.optics import make_focused_probe, fresnel_propagator
+from phaser.utils.optics import (
+    make_focused_probe, fresnel_propagator,
+    Aberration, AberrationList, _normalize_aberrations,
+    Krivanek, Cartesian, Polar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
+)
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
@@ -56,3 +61,34 @@ def test_propagator_sign(backend: BackendName) -> numpy.ndarray:
 
     probe = ifft2(fft2(probe) * prop)
     return to_numpy(xp.abs(probe))
+
+
+def test_parse_aberrations():
+    import pane
+    result = pane.convert([
+        {'c3': 5.0},                         # haider complex
+        {'b2': {'a': 5.0, 'b': -2.0}},       # haider cartesian
+        {'a1': {'mag': 5.0, 'angle': 90.0}}, # haider polar
+        {'n': 4, 'm': 1, 'val': 1+1.j},      # krivanek complex
+        {'n': 1, 'm': 0, 'a': 5.0},          # krivanek cartesian
+        {'n': 5, 'm': 0, 'mag': 5.0},        # krivanek polar
+    ], AberrationList)
+
+    assert result == [
+        {'c3': complex(5.0)},
+        {'b2': Cartesian(a=5.0, b=-2.0)},
+        {'a1': Polar(mag=5.0, angle=90.0)},
+        KrivanekComplex(4, 1, val=1+1.j),
+        KrivanekCartesian(1, 0, a=5.0, b=0.0),
+        KrivanekPolar(5, 0, mag=5.0, angle=0.0),
+    ]
+
+    assert list(_normalize_aberrations(result)) == [
+        KrivanekComplex.make_unchecked(3, 0, val=complex(5.0)),
+        KrivanekComplex.make_unchecked(2, 1, val=15.0-6.0j),
+        KrivanekComplex.make_unchecked(1, 2, val=pytest.approx(5.0j)),
+        KrivanekComplex.make_unchecked(4, 1, val=1+1.j),
+        KrivanekComplex.make_unchecked(1, 0, val=complex(5.0)),
+        KrivanekComplex.make_unchecked(5, 0, val=complex(5.0)),
+    ]
+    # TODO test failures
