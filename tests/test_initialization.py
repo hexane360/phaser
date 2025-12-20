@@ -82,6 +82,7 @@ def test_load_raw_data_override():
         'type': 'focused',
         'conv_angle': 20.0,
         'defocus': 200.0,
+        'aberrations': (),
     }
 
     assert pane.into_data(raw_data['scan_hook']) == {  # type: ignore

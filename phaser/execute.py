@@ -473,7 +473,7 @@ def merge(left: t.Any, right: t.Any) -> t.Any:
             return right
         d = merge(left.props or {}, right.props or {})
         d['type'] = right.type if right.type is not None else right.ref
-        return pane.from_data(d, right.__class__)
+        return pane.convert(d, right.__class__)
 
     if (left_d := _as_dict(left)) is not None and (right_d := _as_dict(right)) is not None:
         keys = set(left_d.keys()) | set(right_d.keys())

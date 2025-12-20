@@ -8,6 +8,7 @@ from typing_extensions import NotRequired
 
 from ..types import Dataclass, Slices
 from .hook import Hook
+from ..utils.optics import Aberration
 
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling
@@ -84,8 +85,6 @@ class RawDataHook(Hook[None, RawData]):
     }
 
 
-
-
 class ProbeHookArgs(t.TypedDict):
     sampling: 'Sampling'
     wavelength: float
@@ -97,6 +96,7 @@ class ProbeHookArgs(t.TypedDict):
 class FocusedProbeProps(Dataclass):
     defocus: t.Optional[float] = None  # defocus, + is overfocus [A]
     conv_angle: t.Optional[float] = None  # semiconvergence angle [mrad]
+    aberrations: t.Sequence[Aberration] = ()
 
 
 class ProbeHook(Hook[ProbeHookArgs, 'ProbeState']):
