@@ -104,23 +104,44 @@ def _normalize_aberrations(aberrations: t.Iterable[Aberration]) -> t.Iterator[Kr
             yield KrivanekComplex(ab.n, ab.m, val=complex(ab))
 
 
+def aberration_surface(
+    thetay: NDArray[numpy.float64], thetax: NDArray[numpy.float64],
+    aberrations: t.Iterable[Aberration]
+) -> NDArray[numpy.floating]:
+    xp = get_array_module(thetay, thetax)
+    chi = xp.zeros_like(thetay)
+    omega = thetax + thetay*1.j
+
+    for ab in _normalize_aberrations(aberrations):
+        p = (ab.n + 1 + ab.m) // 2
+        q = ab.n + 1 - p
+        prod = omega**p + omega.conj()**q
+        chi += (prod.real * ab.val.real + prod.imag * ab.val.imag) / (ab.n+1)
+
+    return chi
+
+
 @t.overload
 def make_focused_probe(ky: NDArray[numpy.float64], kx: NDArray[numpy.float64], wavelength: Float,
-                       aperture: Float, *, defocus: Float = 0.) -> NDArray[numpy.complex128]:
+                       aperture: Float, *, defocus: Float = 0.,
+                       aberrations: t.Sequence[Aberration] = ()) -> NDArray[numpy.complex128]:
     ...
 
 @t.overload
 def make_focused_probe(ky: NDArray[numpy.float32], kx: NDArray[numpy.float32], wavelength: Float,
-                       aperture: Float, *, defocus: Float = 0.) -> NDArray[numpy.complex64]:
+                       aperture: Float, *, defocus: Float = 0.,
+                       aberrations: t.Sequence[Aberration] = ()) -> NDArray[numpy.complex64]:
     ...
 
 @t.overload
 def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
-                       aperture: Float, *, defocus: Float = 0.) -> NDArray[numpy.complexfloating]:
+                       aperture: Float, *, defocus: Float = 0.,
+                       aberrations: t.Sequence[Aberration] = ()) -> NDArray[numpy.complexfloating]:
     ...
 
 def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
-                       aperture: Float, *, defocus: Float = 0.) -> NDArray[numpy.complexfloating]:
+                       aperture: Float, *, defocus: Float = 0.,
+                       aberrations: t.Sequence[Aberration] = ()) -> NDArray[numpy.complexfloating]:
     """
     Create a focused probe from a circular aperture of semi-angle `aperture` (in mrad).
 
@@ -131,8 +152,12 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     thetay, thetax = ky * wavelength, kx * wavelength
     theta2 = thetay**2 + thetax**2
 
-    phase = (defocus/(2. * wavelength)) * theta2
-    probe = xp.exp(-2.j*numpy.pi * phase)
+    # wavefront error, length units
+    chi = defocus/2. * theta2
+    if len(aberrations) > 0:
+        chi += aberration_surface(thetay, thetax, aberrations)
+
+    probe = xp.exp(-2.j*numpy.pi/wavelength * chi)
 
     mask = theta2 <= (aperture * 1e-3)**2
     probe *= mask

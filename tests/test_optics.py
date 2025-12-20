@@ -2,9 +2,11 @@
 import numpy
 import pytest
 
+from phaser.utils.physics import Electron
+
 from .utils import with_backends, check_array_equals_file
 
-from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
+from phaser.utils.num import abs2, get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
 from phaser.utils.optics import (
     make_focused_probe, fresnel_propagator,
     Aberration, AberrationList, _normalize_aberrations,
@@ -31,6 +33,24 @@ def test_defocused_probe(backend: BackendName) -> numpy.ndarray:
     sampling = Sampling((1024, 1024), extent=(25., 25.))
 
     probe = make_focused_probe(*sampling.recip_grid(dtype=numpy.float32, xp=xp), wavelength=0.0251, aperture=10., defocus=200.)
+    return to_numpy(probe)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@check_array_equals_file('probe_25mrad_aberrated.tiff', decimal=5)
+def test_aberrated_probe(backend: BackendName) -> numpy.ndarray:
+    xp = get_backend_module(backend)
+    sampling = Sampling((1024, 1024), extent=(39.05, 39.05))
+    wavelength = Electron(200e3).wavelength
+
+    probe = make_focused_probe(
+        *sampling.recip_grid(dtype=numpy.float32, xp=xp), wavelength, aperture=25., defocus=10.,
+        aberrations=[
+            {'a1': -12.0+5.0j},
+            KrivanekCartesian(2, 3, a=300., b=-400.),
+            KrivanekComplex(3, 0, val=-500_000.0),
+        ]
+    )
     return to_numpy(probe)
 
 
