@@ -115,7 +115,7 @@ def aberration_surface(
     for ab in _normalize_aberrations(aberrations):
         p = (ab.n + 1 + ab.m) // 2
         q = ab.n + 1 - p
-        prod = omega**p + omega.conj()**q
+        prod = omega**p * omega.conj()**q
         chi += (prod.real * ab.val.real + prod.imag * ab.val.imag) / (ab.n+1)
 
     return chi
