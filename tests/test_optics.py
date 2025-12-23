@@ -6,11 +6,11 @@ from phaser.utils.physics import Electron
 
 from .utils import with_backends, check_array_equals_file
 
-from phaser.utils.num import abs2, get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
+from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
 from phaser.utils.optics import (
     make_focused_probe, fresnel_propagator,
-    Aberration, AberrationList, _normalize_aberrations,
-    Krivanek, Cartesian, Polar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
+    AberrationList, _normalize_aberrations,
+    Cartesian, Polar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
 )
 
 
@@ -37,18 +37,39 @@ def test_defocused_probe(backend: BackendName) -> numpy.ndarray:
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
-@check_array_equals_file('probe_25mrad_aberrated.tiff', decimal=5)
+@check_array_equals_file('probe_30mrad_aberrated.tiff', decimal=5,
+                         out_name='probe_30mrad_aberrated_{backend}.tiff')
 def test_aberrated_probe(backend: BackendName) -> numpy.ndarray:
     xp = get_backend_module(backend)
-    sampling = Sampling((1024, 1024), extent=(39.05, 39.05))
+    sampling = Sampling((1024, 1024), extent=(50.0, 50.0))
+    wavelength = Electron(300e3).wavelength
+
+    probe = make_focused_probe(
+        *sampling.recip_grid(dtype=numpy.float32, xp=xp), wavelength, aperture=30., defocus=0.,
+        aberrations=[
+            {'a1': 10.0+10.0j},
+            {'b2': (1e3+2e3j) / 3},
+            KrivanekComplex(3, 2, val=50e3j),
+        ]
+    )
+    return to_numpy(probe)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@check_array_equals_file('probe_15mrad_spherical.tiff', decimal=5,
+                         out_name='probe_15mrad_spherical_{backend}.tiff')
+def test_spherical_probe(backend: BackendName) -> numpy.ndarray:
+    xp = get_backend_module(backend)
+    sampling = Sampling((1024, 1024), extent=(50.0, 50.0))
     wavelength = Electron(200e3).wavelength
 
     probe = make_focused_probe(
-        *sampling.recip_grid(dtype=numpy.float32, xp=xp), wavelength, aperture=25., defocus=10.,
+        *sampling.recip_grid(dtype=numpy.float32, xp=xp), wavelength, aperture=15.,
+        defocus=-578.266,
         aberrations=[
-            {'a1': -12.0+5.0j},
-            KrivanekCartesian(2, 3, a=300., b=-400.),
-            KrivanekComplex(3, 0, val=-500_000.0),
+            {'c3': 1.0e+7},
+            {'a1': 20.0+20.0j},
+            KrivanekCartesian(3, 2, a=1.5e6, b=2.0e6),
         ]
     )
     return to_numpy(probe)

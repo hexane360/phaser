@@ -42,7 +42,7 @@ _KNOWN_ABERRATIONS: t.Dict[str, Krivanek] = {
     'b2': Krivanek.make_unchecked(2, 1, 3.0),  # C_21 = 3*B2
     'a2': Krivanek.make_unchecked(2, 3),
     'c3': Krivanek.make_unchecked(3, 0),
-    's3': Krivanek.make_unchecked(3, 2, 4.0),  # C_32 = 3*S3
+    's3': Krivanek.make_unchecked(3, 2, 3.0),  # C_32 = 3*S3
     'a3': Krivanek.make_unchecked(3, 4),
     'b4': Krivanek.make_unchecked(4, 1, 4.0),  # C_41 = 4*B4
     'd4': Krivanek.make_unchecked(4, 3, 4.0),  # C_43 = 4*D4
@@ -157,7 +157,7 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     if len(aberrations) > 0:
         chi += aberration_surface(thetay, thetax, aberrations)
 
-    probe = xp.exp(-2.j*numpy.pi/wavelength * chi)
+    probe = xp.exp(2.j*numpy.pi/wavelength * chi)
 
     mask = theta2 <= (aperture * 1e-3)**2
     probe *= mask
@@ -165,7 +165,7 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     # normalize intensity of probe
     probe /= xp.sqrt(xp.sum(abs2(probe)))
 
-    return ifft2(probe)
+    return ifft2(probe).conj()
 
 
 def make_hermetian_modes(
@@ -342,7 +342,7 @@ def estimate_probe_radius(wavelength: Float, aperture: Float, defocus: Float, *,
     aperture *= 1e-3  # mrad -> rad
 
     if threshold == 'geom':
-        return float(defocus * aperture)
+        return abs(float(defocus * aperture))
 
     rel_defocus = numpy.abs(defocus) / wavelength
 
