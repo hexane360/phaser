@@ -153,7 +153,7 @@ class AdamSolverPlan(Dataclass, kw_only=True):
     b1: float = 0.9
     b2: float = 0.999
     eps: float = 1.0e-8
-    eps_root: float = 1.0e-8  # needed on mps w/ adam
+    eps_root: float = 0.0
 
     nesterov: bool = False
 

@@ -13,7 +13,7 @@ StateT = t.TypeVar('StateT')
 if t.TYPE_CHECKING:
     from phaser.engines.common.simulation import SimulationState
     from phaser.execute import Observer
-    from phaser.plan import ConventionalEnginePlan, GradientEnginePlan
+    from phaser.plan import ConventionalEnginePlan, GradientEnginePlan  # noqa: F401
     from phaser.state import ReconsState
 
 

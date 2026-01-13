@@ -13,7 +13,7 @@ from ..utils.optics import Aberration
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling
     from phaser.utils.object import ObjectSampling
-    from ..state import ObjectState, ProbeState, ReconsState, Patterns
+    from ..state import ObjectState, ProbeState, ReconsState, Patterns  # noqa: F401
     from ..execute import Observer
 
 

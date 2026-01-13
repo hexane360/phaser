@@ -43,7 +43,7 @@ def offset_patterns(raw_data: RawData, props: OffsetProps) -> RawData:
     return raw_data
 
 def bin_patterns(raw_data: RawData, props: BinProps) -> RawData:
-    xp = get_array_module(raw_data['patterns'])
+    #xp = get_array_module(raw_data['patterns'])
     bin_factor = props.bin
     patterns = raw_data['patterns']
     Ny, Nx = patterns.shape[-2:]

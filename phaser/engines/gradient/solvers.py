@@ -26,7 +26,7 @@ import typing as t
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import get_array_module
+from phaser.utils.num import get_array_module, to_real_dtype
 import phaser.utils.tree as tree
 from phaser.hooks.solver import GradientSolver, GradientSolverArgs
 from phaser.hooks.schedule import ScheduleLike, Schedule
@@ -229,7 +229,7 @@ def scale_by_adam(
     def init_fn(params: Params) -> ScaleByAdamState:
         xp = get_array_module(params)
         mu = tree.zeros_like(params, dtype=mu_dtype)  # First moment
-        nu = tree.zeros_like(params)  # Second moment
+        nu = tree.map(lambda x: xp.zeros_like(x, dtype=to_real_dtype(x.dtype)), params)  # Second moment
         return ScaleByAdamState(n=xp.zeros((), dtype=xp.int32), mu=mu, nu=nu)
 
     def update_fn(
