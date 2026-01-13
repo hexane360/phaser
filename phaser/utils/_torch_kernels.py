@@ -1,7 +1,6 @@
 import functools
 import itertools
 import operator
-from types import ModuleType
 import typing as t
 
 import numpy
@@ -233,19 +232,22 @@ def unwrap(arr: torch.Tensor, discont: t.Optional[float] = None, axis: int = -1,
 
 
 def indices(
-    shape: t.Tuple[int, ...], dtype: t.Union[str, None, t.Type[numpy.generic], torch.dtype] = None, sparse: bool = False
+    shape: t.Tuple[int, ...],
+    dtype: t.Union[str, None, t.Type[numpy.generic], torch.dtype] = None,
+    sparse: bool = False,
+    device: t.Optional[torch.device] = None,
 ) -> t.Union[torch.Tensor, t.Tuple[torch.Tensor, ...]]:
-    dtype = to_torch_dtype(dtype) if dtype is not None else torch.int64
+    dtype = to_torch_dtype(dtype) if dtype is not None else torch.int32
 
     n = len(shape)
 
     if sparse:
         return tuple(
-            _MockTensor(torch.arange(s, dtype=dtype).reshape((1,) * i + (s,) + (1,) * (n - i - 1)))
+            _MockTensor(torch.arange(s, dtype=dtype, device=device).reshape((1,) * i + (s,) + (1,) * (n - i - 1)))
             for (i, s) in enumerate(shape)
         )
 
-    arrs = tuple(torch.arange(s, dtype=dtype) for s in shape)
+    arrs = tuple(torch.arange(s, dtype=dtype, device=device) for s in shape)
     return _MockTensor(torch.stack(torch.meshgrid(*arrs, indexing='ij'), dim=0))
 
 
@@ -275,23 +277,26 @@ def affine_transform(
     order: int = 1, mode: _InterpBoundaryMode = 'grid-constant',
     cval: ArrayLike = 0.0,
 ) -> torch.Tensor:
+    float_dtype = torch.get_default_dtype()
 
     if output_shape is None:
         output_shape = input.shape
     n_axes = len(output_shape)  # num axes to transform over
 
-    idxs = t.cast(torch.Tensor, indices(output_shape, dtype=torch.float64))
+    idxs = t.cast(torch.Tensor, indices(output_shape, dtype=float_dtype, device=input.device))
 
-    matrix = asarray(matrix)
+    matrix = asarray(matrix, dtype=float_dtype)
     if matrix.size() == (n_axes + 1, n_axes + 1):
         # homogenous transform matrix
         coords = torch.tensordot(
             matrix, torch.stack((*idxs, torch.ones_like(idxs[0])), dim=0), dims=1
         )[:-1]
     elif matrix.size() == (n_axes,):
-        coords = (idxs.T * matrix + asarray(offset)).T
+        coords = (idxs.T * matrix + asarray(offset, dtype=float_dtype)).T
     else:
         raise ValueError(f"Expected matrix of shape ({n_axes + 1}, {n_axes + 1}) or ({n_axes},), instead got shape {matrix.shape}")
+
+    cval = torch.asarray(cval, dtype=input.dtype)
 
     return _MockTensor(torch.vmap(
         lambda a: map_coordinates(a, coords, order=order, mode=mode, cval=cval)
@@ -352,7 +357,7 @@ def _map_coordinates_constant(
 ) -> torch.Tensor:
     from phaser.utils.num import to_real_dtype
     weight_dtype = to_torch_dtype(to_real_dtype(to_numpy_dtype(arr.dtype)))
-    cval = torch.tensor(cval)
+    cval = torch.tensor(cval, device=arr.device)
 
     is_valid = lambda idx, size: (0 <= idx) & (idx < size)  # noqa: E731
     clip = lambda idx, size: torch.clip(idx, 0, size - 1)   # noqa: E731
@@ -402,6 +407,17 @@ def set_default_device(device: torch.device):
     if not isinstance(device, torch.device):
         raise TypeError(f"Invalid device '{device}' for backend torch")
     torch.set_default_device(device)
+
+    default_dtype = to_torch_dtype(max_supported_float(device))
+    torch.set_default_dtype(default_dtype)
+
+
+def max_supported_float(
+    device: t.Optional[torch.device] = None
+) -> t.Union[t.Type[numpy.float32], t.Type[numpy.float64]]:
+    if device is None:
+        device = torch.get_default_device()
+    return numpy.float32 if device.type in ('mps', 'xpu') else numpy.float64
 
 
 def _wrap_call(f, *args: t.Any, **kwargs: t.Any) -> t.Any:

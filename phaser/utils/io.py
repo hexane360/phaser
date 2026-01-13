@@ -199,9 +199,9 @@ def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfL
     if state.object is not None:
         hdf5_write_object_state(state.object, file.create_group("object"))
     if state.scan is not None:
-        file.create_dataset('scan', data=to_numpy(state.scan.astype(numpy.float64)))
+        file.create_dataset('scan', data=to_numpy(state.scan).astype(numpy.float64))
     if state.tilt is not None:
-        file.create_dataset('tilt', data=to_numpy(state.tilt.astype(numpy.float64)))
+        file.create_dataset('tilt', data=to_numpy(state.tilt).astype(numpy.float64))
     if state.iter is not None:
         hdf5_write_iter_state(state.iter, file.create_group("iter"))
     if state.progress is not None:
@@ -339,7 +339,7 @@ def _hdf5_read_string(group: h5py.Group, path: str) -> str:
 
 def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: t.Optional[numpy.ndarray], dtype: t.Any):
     if data is not None:
-        group.create_dataset(name, data=to_numpy(data.astype(dtype)))
+        group.create_dataset(name, data=to_numpy(data).astype(dtype))
     else:
         group.create_dataset(name, dtype=h5py.Empty(dtype))
 

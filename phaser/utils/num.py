@@ -235,6 +235,16 @@ def set_default_device(device: Device, xp: t.Any):
         raise ValueError(f"Invalid device '{device}' for backend 'numpy'")
 
 
+def max_supported_float(
+    xp: t.Any,
+    device: t.Optional[Device] = None,
+) -> t.Union[t.Type[numpy.float32], t.Type[numpy.float64]]:
+    if xp_is_torch(xp):
+        from ._torch_kernels import max_supported_float
+        return max_supported_float(device)
+    return numpy.float64
+
+
 def get_array_module(*arrs: t.Optional[ArrayLike]):
     if (xp := _BACKEND_LOADER.get('jax')) is not None:
         import jax.tree
@@ -855,7 +865,7 @@ class Sampling:
         xp2 = get_array_module(self.shape, self.extent, self.sampling) if xp is None else cast_array_module(xp)
 
         if dtype is None:
-            dtype = numpy.common_type(self.extent, self.sampling)
+            dtype = max_supported_float(xp2)
 
         ky: NDArray[numpy.number] = xp2.fft.fftfreq(self.shape[0], self.sampling[0]).astype(dtype)
         kx: NDArray[numpy.number] = xp2.fft.fftfreq(self.shape[1], self.sampling[1]).astype(dtype)

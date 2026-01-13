@@ -13,7 +13,7 @@ from numpy.typing import ArrayLike, DTypeLike, NDArray
 from typing_extensions import Self
 
 from .num import get_array_module, cast_array_module, is_torch, to_real_dtype, as_numpy, at
-from .num import as_array, is_cupy, is_jax, NumT, ComplexT, DTypeT
+from .num import as_array, is_cupy, is_jax, max_supported_float, NumT, ComplexT, DTypeT
 from .tree import tree_dataclass
 from .misc import create_rng
 
@@ -292,12 +292,14 @@ class ObjectSampling:
     def _pos_to_object_idx(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> NDArray[numpy.float64]:
         """Return starting index for the cutout closest to centered around `pos` (`(y, x)`)"""
         xp = get_array_module(pos)
+        dtype = max_supported_float(xp)
 
         # for a given cutout, shift to the top left pixel of that cutout
         # e.g. a 2x2 cutout needs shifted by s/2
-        shift = -xp.maximum(0., (xp.array(cutout_shape[-2:]) - 1.)) / 2.
+        shift = -xp.maximum(0., (xp.array(cutout_shape[-2:], dtype=dtype) - 1.)) / 2.
 
-        return ((pos - xp.array(self.corner.copy())) / xp.array(self.sampling.copy()) + shift).astype(numpy.float64)  # type: ignore
+        return ((xp.asarray(pos) - xp.array(self.corner.copy(), dtype=dtype))
+            / xp.array(self.sampling.copy(), dtype=dtype) + shift).astype(dtype)  # type: ignore
 
     def slice_at_pos(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> t.Tuple[slice, slice]:
         """
@@ -328,9 +330,10 @@ class ObjectSampling:
         Returns the shift from the rounded position towards the actual position, in length units.
         """
         xp = get_array_module(pos)
+        dtype = max_supported_float(xp)
 
         pos = self._pos_to_object_idx(as_array(pos), cutout_shape)
-        return (pos - xp.round(pos)).astype(numpy.float64) * xp.asarray(self.sampling, copy=True)
+        return (pos - xp.round(pos)) * xp.asarray(self.sampling, dtype=dtype, copy=True)  # type: ignore
 
     @t.overload
     def cutout(  # pyright: ignore[reportOverlappingOverload]
