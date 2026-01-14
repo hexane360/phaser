@@ -306,14 +306,15 @@ def conj(
 
 
 def update_moment(updates: Tree, moments: Tree, decay: float, order: int) -> Tree:
-  return map(
-      lambda g, t: (
-          (1 - decay) * (g**order) + decay * t if g is not None else None
-      ),
-      updates,
-      moments,
-      is_leaf=lambda x: x is None,
-  )
+    return map(
+        lambda g, t: (
+            (1 - decay) * (g**order) + decay * t
+            if g is not None else None
+        ),
+        updates,
+        moments,
+        is_leaf=lambda x: x is None,
+    )
 
 
 def update_moment_per_elem_norm(updates: Tree, moments: Tree, decay: float, order: int) -> Tree:

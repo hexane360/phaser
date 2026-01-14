@@ -114,6 +114,16 @@ _PAD_MODE_MAP: t.Dict[_PadMode, str] = {
     'wrap': 'circular',
 }
 
+
+def nan_to_num(arr: torch.Tensor, **kwargs: t.Any) -> torch.Tensor:
+    if torch.is_complex(arr):
+        return torch.view_as_complex(
+            torch.nan_to_num(torch.view_as_real(arr), **kwargs)
+        )
+
+    return torch.nan_to_num(arr, **kwargs) 
+
+
 def min(
     arr: torch.Tensor, axis: t.Union[int, t.Tuple[int, ...], None] = None, *,
     keepdims: bool = False
@@ -170,6 +180,14 @@ def maximum(
         x2 = _MockTensor(torch.asarray(x2))
 
     return torch.maximum(x1, x2)
+
+
+def cumsum(
+    arr: torch.Tensor, axis: t.Optional[int] = None,
+) -> torch.Tensor:
+    if axis is None:
+        return torch.cumsum(arr.ravel(), 0)
+    return torch.cumsum(arr, axis)
 
 
 def split(
@@ -452,9 +470,11 @@ mock_torch = _MockModule(torch, {
     'torch.mod': functools.update_wrapper(lambda *args, **kwargs: _MockTensor(_wrap_call(torch.remainder, *args, **kwargs)), torch.remainder),  # type: ignore
     'torch.split': split,
     'torch.pad': pad,
+    'torch.nan_to_num': nan_to_num,
     'torch.min': min, 'torch.max': max,
     'torch.nanmin': nanmin, 'torch.nanmax': nanmax,
     'torch.minimum': minimum, 'torch.maximum': maximum,
+    'torch.cumsum': cumsum,
     'torch.unwrap': unwrap,
     'torch.indices': indices,
     'torch.size': size,
