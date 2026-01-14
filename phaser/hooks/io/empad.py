@@ -46,7 +46,7 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
             'shape': scan_shape,
             'step_size': tuple(s*1e10 for s in reversed(meta.scan_step)),  # m to A
             'affine': meta.scan_correction[::-1, ::-1] if meta.scan_correction is not None else None,
-            'rotation': meta.det_rotation - meta.scan_rotation,
+            'rotation': (meta.det_rotation or 0.0) - meta.scan_rotation,
         }
 
         #TODO: add tilt to metafile

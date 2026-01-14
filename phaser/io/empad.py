@@ -58,7 +58,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     Flips to apply to the raw diffraction patterns, (flip_y, flip_x, transpose).
     Defaults to `(True, False, False)` (appears to be the most common orientation).
     """
-    det_rotation: float = 0.0
+    det_rotation: t.Optional[float] = None
     """Detector rotation (degrees)."""
 
     orig_path: t.Optional[Path] = None
