@@ -65,18 +65,32 @@ def validate(path: t.Union[str, Path], json: bool = False):
 
         sys.exit(1)
 
+    if json:
+        from json import dump, dumps
+
+        def _serialize_complex(val: t.Any) -> t.Any:
+            if isinstance(val, complex):
+                return {'re': val.real, 'im': val.imag}
+            raise TypeError()
+
+        try:
+            s = dumps({
+                'result': 'success',
+                'plans': [(plan.name, plan.into_data()) for plan in plans],
+            }, default=_serialize_complex)
+        except Exception as e:
+            print(f"Failed to serialize validated plans: {e}", file=sys.stderr)
+            dump({'result': 'error', 'error': str(e)}, sys.stdout)
+            print()
+            sys.exit(2)
+
+        sys.stdout.write(s)
+        print()
+
     if len(plans) == 1:
         print("Validation of plan successful!", file=sys.stderr)
     else:
         print(f"Validation of {len(plans)} plans successful!", file=sys.stderr)
-
-    if json:
-        from json import dump
-        dump({
-            'result': 'success',
-            'plans': [(plan.name, plan.into_data()) for plan in plans],
-        }, sys.stdout)
-        print()
 
 
 @cli.command('worker')

@@ -302,6 +302,23 @@ class _ReconsVarsConverter(Converter[t.FrozenSet[ReconsVar]]):
         return self.inner.collect_errors(val)
 
 
+class ComplexCartesian(pane.PaneBase, kw_only=True):
+    re: float
+    im: float = 0.0
+
+    def __complex__(self) -> complex:
+        return complex(self.re, self.im)
+
+
+class ComplexPolar(pane.PaneBase, kw_only=True):
+    mag: float
+    angle: float = 0.0  # degrees
+
+    def __complex__(self) -> complex:
+        theta = numpy.deg2rad(self.angle)
+        return self.mag * complex(numpy.cos(theta), numpy.sin(theta))
+
+
 __all__ = [
     'BackendName', 'Dataclass', 'Slices', 'Flag',
     'process_flag', 'flag_any_true',

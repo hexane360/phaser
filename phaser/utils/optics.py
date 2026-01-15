@@ -11,6 +11,7 @@ import pane
 from pane.annotations import Condition
 from pane.util import pluralize
 
+from phaser.types import ComplexCartesian, ComplexPolar
 from .num import get_array_module, ifft2, abs2, NumT, ufunc_outer, is_jax, cast_array_module
 from .num import Float, Sampling, to_complex_dtype, to_real_dtype, split_array, to_numpy
 
@@ -57,38 +58,21 @@ KnownAberration: t.TypeAlias = t.Annotated[str, Condition(
 )]
 
 
-class Cartesian(pane.PaneBase, kw_only=True):
-    a: float
-    b: float = 0.0
-
-    def __complex__(self) -> complex:
-        return complex(self.a, self.b)
-
-
-class Polar(pane.PaneBase, kw_only=True):
-    mag: float
-    angle: float = 0.0  # degrees
-
-    def __complex__(self) -> complex:
-        theta = numpy.deg2rad(self.angle)
-        return self.mag * complex(numpy.cos(theta), numpy.sin(theta))
-
-
 class KrivanekComplex(Krivanek, kw_only=True):
-    val: complex
+    val: t.Union[complex, ComplexCartesian, ComplexPolar]
 
     def __complex__(self) -> complex:
-        return self.val
+        return complex(self.val)
 
-class KrivanekCartesian(Krivanek, Cartesian, kw_only=True):
+class KrivanekCartesian(Krivanek, ComplexCartesian, kw_only=True):
     ...
 
-class KrivanekPolar(Krivanek, Polar, kw_only=True):
+class KrivanekPolar(Krivanek, ComplexPolar, kw_only=True):
     ...
 
 
 Aberration: t.TypeAlias = t.Union[
-    t.Dict[KnownAberration, t.Union[complex, Cartesian, Polar]],
+    t.Dict[KnownAberration, t.Union[complex, ComplexCartesian, ComplexPolar]],
     KrivanekComplex, KrivanekCartesian, KrivanekPolar,
 ]
 AberrationList: t.TypeAlias = t.List[Aberration]

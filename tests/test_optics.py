@@ -10,7 +10,7 @@ from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy
 from phaser.utils.optics import (
     make_focused_probe, fresnel_propagator,
     AberrationList, _normalize_aberrations,
-    Cartesian, Polar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
+    ComplexCartesian, ComplexPolar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
 )
 
 
@@ -69,7 +69,7 @@ def test_spherical_probe(backend: BackendName) -> numpy.ndarray:
         aberrations=[
             {'c3': 1.0e+7},
             {'a1': 20.0+20.0j},
-            KrivanekCartesian(3, 2, a=1.5e6, b=2.0e6),
+            KrivanekCartesian(3, 2, re=1.5e6, im=2.0e6),
         ]
     )
     return to_numpy(probe)
@@ -108,19 +108,19 @@ def test_parse_aberrations():
     import pane
     result = pane.convert([
         {'c3': 5.0},                         # haider complex
-        {'b2': {'a': 5.0, 'b': -2.0}},       # haider cartesian
+        {'b2': {'re': 5.0, 'im': -2.0}},     # haider cartesian
         {'a1': {'mag': 5.0, 'angle': 90.0}}, # haider polar
         {'n': 4, 'm': 1, 'val': 1+1.j},      # krivanek complex
-        {'n': 1, 'm': 0, 'a': 5.0},          # krivanek cartesian
+        {'n': 1, 'm': 0, 're': 5.0},         # krivanek cartesian
         {'n': 5, 'm': 0, 'mag': 5.0},        # krivanek polar
     ], AberrationList)
 
     assert result == [
         {'c3': complex(5.0)},
-        {'b2': Cartesian(a=5.0, b=-2.0)},
-        {'a1': Polar(mag=5.0, angle=90.0)},
+        {'b2': ComplexCartesian(re=5.0, im=-2.0)},
+        {'a1': ComplexPolar(mag=5.0, angle=90.0)},
         KrivanekComplex(4, 1, val=1+1.j),
-        KrivanekCartesian(1, 0, a=5.0, b=0.0),
+        KrivanekCartesian(1, 0, re=5.0, im=0.0),
         KrivanekPolar(5, 0, mag=5.0, angle=0.0),
     ]
 
