@@ -278,10 +278,81 @@ def square_pixel_transfer(shape: t.Tuple[int, int], *, xp: t.Any = None) -> NDAr
     return xp.sinc(ky) * xp.sinc(kx)
 
 
+# convert scipy boundary mode to numpy.pad mode
+_INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
+    'reflect': 'symmetric',
+    'mirror': 'reflect',
+    'nearest': 'edge',
+    'grid-mirror': 'reflect',
+    'grid-wrap': 'wrap',
+    'grid-constant': 'constant',
+}
+
+
+def _canonicalize_axis(axis: int, num_dims: int) -> int:
+  """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
+  axis = axis.__index__()
+  if not -num_dims <= axis < num_dims:
+        raise ValueError(f"axis {axis} is out of bounds for array of dimension {num_dims}")
+  if axis < 0:
+        axis = axis + num_dims
+  return axis
+
+
+def convolve1d(
+    arr: NDArray[NumT], weights: ArrayLike, axis: int = -1, *,
+    mode: _InterpBoundaryMode = 'reflect', cval: float = 0.
+) -> NDArray[NumT]:
+    xp = get_array_module(arr, weights)
+
+    arr = xp.asarray(arr)
+    weights = xp.asarray(weights)
+    if weights.ndim != 1:
+        raise ValueError("Expected 'weights' to be 1D")
+    axis = _canonicalize_axis(axis, arr.ndim)
+
+    if xp_is_torch(xp):
+        from ._torch_kernels import _convolve1d, _MockTensor
+
+        return t.cast(NDArray[NumT], _convolve1d(
+            t.cast(_MockTensor, arr),
+            t.cast(_MockTensor, weights),
+            axis=axis, mode=mode, cval=cval
+        ))
+
+    scipy = get_scipy_module(arr, weights)
+
+    if xp_is_jax(xp):
+        r = len(weights) // 2
+        pad_mode = _INTERP_TO_PAD.get(mode, mode)
+        pad_kwargs = {'constant_values': cval} if pad_mode == 'constant' else {}
+
+        pad = tuple(
+            (len(weights) - r - 1, r) if i == axis else (0, 0)
+            for i in range(arr.ndim)
+        )
+        weights = weights[tuple(
+            slice(None) if i == axis else None
+            for i in range(arr.ndim)
+        )]
+        # TODO: use jax.lax.conv_general_dilated directly
+        return scipy.signal.convolve(
+            xp.pad(arr, pad, mode=pad_mode, **pad_kwargs),  # type: ignore
+            weights, mode='valid', method='direct'
+        ).astype(arr.dtype)
+
+    return scipy.ndimage.convolve1d(
+        arr, weights, axis, mode=mode, cval=cval
+    )
+
+
+
+
 __all__ = [
     'apply_flips',
     'remove_linear_ramp', 'colorize_complex', 'scale_to_integral_type',
     'affine_transform', 'to_affine_matrix',
+    'convolve1d',
     'scale_matrix', 'rotation_matrix', 'translation_matrix',
     'gaussian_transfer', 'square_pixel_transfer',
 ]

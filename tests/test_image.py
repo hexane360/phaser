@@ -3,13 +3,14 @@ import typing as t
 import numpy
 from numpy.typing import ArrayLike, NDArray
 from numpy.testing import assert_array_almost_equal
+import scipy.ndimage as osp
 import pytest
 
 from .utils import with_backends, check_array_equals_file
 
 from phaser.utils.num import get_backend_module, BackendName, to_numpy, Sampling
 from phaser.utils.image import (
-    affine_transform, _InterpBoundaryMode
+    affine_transform, _InterpBoundaryMode, convolve1d
 )
 
 
@@ -75,3 +76,37 @@ def test_resample(
     (checker, old_samp) = checkerboard
 
     return to_numpy(old_samp.resample(xp.array(checker), sampling, rotation=rotation, order=order))
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize(('arr', 'weights', 'axis'), [
+    ([1, 2, 3, 4, 5], [1, 2], 0),
+    ([1.0, 2.0, 3.0, 4.0, 5.0], [1.0, 2.0], 0),
+    ([[[1, 2], [3, 4]], [[2, 3], [4, 5]], [[3, 4], [5, 6]]], [1, 2, 3], 0),
+    ([[[1, 2], [3, 4]], [[2, 3], [4, 5]], [[3, 4], [5, 6]]], [1, 2, 3], -1),
+    ([1+1.j, 2+2.j, 3+3.j], [1-1.j, 2-1.j], 0),
+])
+@pytest.mark.parametrize(('mode', 'cval'), [
+    ('constant', 1.0), ('nearest', 0.0), ('mirror', 0.0),
+    ('reflect', 0.0), ('wrap', 0.0),
+])
+def test_convolve1d(
+    arr, weights, axis, mode, cval,
+    backend: BackendName,
+):
+    if mode == 'reflect' and backend == 'torch':
+        pytest.xfail("'reflect' not supported on torch")
+
+    arr = numpy.asarray(arr)
+    weights = numpy.asarray(weights)
+
+    xp = get_backend_module(backend)
+
+    expected = osp.convolve1d(
+        arr, weights, axis=axis, mode=mode, cval=cval
+    )
+    actual = to_numpy(convolve1d(
+        xp.array(arr), xp.array(weights), axis=axis, mode=mode, cval=cval
+    ))
+    assert actual.dtype == expected.dtype
+
+    assert_array_almost_equal(actual, expected, decimal=6)

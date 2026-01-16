@@ -6,6 +6,7 @@ import typing as t
 import numpy
 from numpy.typing import ArrayLike
 import torch
+import torch.nn.functional as F
 
 from phaser.utils.num import _PadMode
 from phaser.utils.image import _InterpBoundaryMode
@@ -218,7 +219,7 @@ def pad(
     pad = tuple(itertools.chain.from_iterable(t.cast(t.Sequence[t.Tuple[int, int]], reversed(pad))))
 
     kwargs = {'value': cval} if mode == 'constant' else {}
-    return _MockTensor(torch.nn.functional.pad(arr, pad, mode=_PAD_MODE_MAP[mode], **kwargs))
+    return _MockTensor(F.pad(arr, pad, mode=_PAD_MODE_MAP[mode], **kwargs))
 
 
 def unwrap(arr: torch.Tensor, discont: t.Optional[float] = None, axis: int = -1, *,
@@ -403,6 +404,44 @@ def _map_coordinates_constant(
 
     result = functools.reduce(operator.add, outputs)
     return result.type(arr.dtype)
+
+
+_INTERP_TO_TORCH_PAD: t.Dict[_InterpBoundaryMode, str] = {
+    'nearest': 'replicate',
+    'wrap': 'circular',
+    'grid-wrap': 'circular',
+    'constant': 'constant',
+    'grid-constant': 'constant',
+    'mirror': 'reflect',
+}
+
+
+def _convolve1d(
+    arr: torch.Tensor, weights: torch.Tensor, axis: int, *,
+    mode: _InterpBoundaryMode, cval: float = 0.
+) -> torch.Tensor:
+    pad_mode = _INTERP_TO_TORCH_PAD.get(mode)
+    if pad_mode is None:
+        raise ValueError(f"Pad mode '{mode}' not implemented for torch backend")
+
+    # reorder to last axis
+    reorder = axis != arr.ndim - 1
+    if reorder:
+        arr = torch.moveaxis(arr, axis, -1)
+    leading_shape = arr.shape[:-1]
+    arr = arr.reshape((-1, arr.shape[-1]))
+    r = len(weights) // 2
+
+    # torch's conv1d is actually a correlation
+    weights = weights.flip(0)
+
+    # TODO: this will fail for some pads where weights is large, investigate further
+    arr = F.pad(arr, (len(weights) - r - 1, r), mode=pad_mode, value=cval)
+    arr = F.conv1d(
+        arr[:, None, :], weights[None, None, :]
+    )[:, 0].reshape((*leading_shape, -1))
+
+    return torch.moveaxis(arr, -1, axis) if reorder else arr
 
 
 def get_devices() -> t.Tuple[torch.device, ...]:

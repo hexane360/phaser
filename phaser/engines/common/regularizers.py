@@ -9,6 +9,7 @@ from phaser.utils.num import (
     get_array_module, get_scipy_module, Float, unstack,
     jit, fft2, ifft2, abs2, xp_is_jax, to_real_dtype, to_numpy
 )
+from phaser.utils.image import convolve1d
 from phaser.state import ReconsState
 from phaser.hooks.regularization import (
     ClampObjectAmplitudeProps, LimitProbeSupportProps, NonNegObjectPhaseProps,
@@ -142,7 +143,6 @@ class RegularizeLayers:
 
     def apply_iter(self, sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
         xp = get_array_module(sim.object.data)
-        scipy = get_scipy_module(sim.object.data)
         dtype = to_real_dtype(sim.object.data)
 
         if len(sim.object.thicknesses) < 2:
@@ -161,17 +161,9 @@ class RegularizeLayers:
 
         # we convolve the log of object, because the transmission
         # function is multiplicative, not additive
-
-        if xp_is_jax(xp):
-            new_obj = xp.exp(scipy.signal.convolve(
-                xp.pad(xp.log(sim.object.data), ((r, r), (0, 0), (0, 0)), mode='edge'),
-                kernel[:, None, None],
-                mode="valid"
-            ))
-        else:
-            new_obj = xp.exp(scipy.ndimage.convolve1d(xp.log(
-                sim.object.data
-            ), kernel, axis=0, mode='nearest'))
+        new_obj = xp.exp(convolve1d(xp.log(
+            sim.object.data
+        ), kernel, axis=0, mode='nearest'))
 
         assert new_obj.shape == sim.object.data.shape
         assert new_obj.dtype == sim.object.data.dtype
