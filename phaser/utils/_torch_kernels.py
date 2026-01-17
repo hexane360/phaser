@@ -296,7 +296,7 @@ def affine_transform(
     order: int = 1, mode: _InterpBoundaryMode = 'grid-constant',
     cval: ArrayLike = 0.0,
 ) -> torch.Tensor:
-    float_dtype = torch.get_default_dtype()
+    float_dtype = max_supported_float(input.device)
 
     if output_shape is None:
         output_shape = input.shape
