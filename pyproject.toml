@@ -62,7 +62,7 @@ jax = [
     "optax>=0.2.2",
 ]
 torch = [
-	"torch>=2.8.0",
+    "torch>=2.8.0",
 ]
 web = [
     "Quart>=0.20.0",
@@ -83,7 +83,7 @@ Repository = "https://github.com/hexane360/phaser.git"
 Documentation = "https://hexane360.github.io/phaser/dev"
 
 [project.scripts]
-phaser = "phaser.main:cli"
+phaser = "phaser.cli:cli"
 
 [tool.setuptools.packages.find]
 include = ["phaser*"]
@@ -109,7 +109,7 @@ typeCheckingMode = "standard"
 exclude = [
     "tests", "notebooks/", "examples", ".github",
     "build", "venv", ".venv",
-    "**/node_modules", "**/__pycache__"
+    "**/node_modules", "**/__pycache__", "**/.*",
 ]
 
 reportIncompatibleMethodOverride = "information"
