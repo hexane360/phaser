@@ -376,7 +376,7 @@ def _map_coordinates_constant(
 ) -> torch.Tensor:
     from phaser.utils.num import to_real_dtype
     weight_dtype = to_torch_dtype(to_real_dtype(to_numpy_dtype(arr.dtype)))
-    cval = torch.tensor(cval, device=arr.device)
+    cval = torch.asarray(cval, device=arr.device)
 
     is_valid = lambda idx, size: (0 <= idx) & (idx < size)  # noqa: E731
     clip = lambda idx, size: torch.clip(idx, 0, size - 1)   # noqa: E731

@@ -11,9 +11,15 @@ def cli():
 
 @cli.command('run')
 @click.argument('path', type=click.Path(exists=True, dir_okay=False))
-def run(path: t.Union[str, Path]):
+@click.option('--raise-on-warn/--no-raise-on-warn')
+def run(path: t.Union[str, Path], *, raise_on_warn: bool = False):
     from .plan import ReconsPlan
     from .execute import execute_plan
+
+    if raise_on_warn:
+        import warnings
+        warnings.simplefilter('error')
+
     plans = ReconsPlan.from_yaml_all(path)
 
     for plan in plans:
