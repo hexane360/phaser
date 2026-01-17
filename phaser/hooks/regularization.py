@@ -3,12 +3,12 @@ import numpy
 from numpy.typing import NDArray
 
 from phaser.types import Dataclass
-from phaser.utils.num import Float
 from . import Hook
 
 from .solver import HasState, StateT
 
 if t.TYPE_CHECKING:
+    from phaser.utils.num import Float
     from phaser.state import ReconsState
 
 
@@ -29,7 +29,7 @@ class CostRegularizer(HasState[StateT], t.Protocol[StateT]):
     def name(self) -> str:
         ...
 
-    def calc_loss_group(self, group: NDArray[numpy.integer], sim: 'ReconsState', state: StateT) -> t.Tuple[Float, StateT]:
+    def calc_loss_group(self, group: NDArray[numpy.integer], sim: 'ReconsState', state: StateT) -> t.Tuple['Float', StateT]:
         ...
 
 

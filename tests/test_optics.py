@@ -6,12 +6,12 @@ from phaser.utils.physics import Electron
 
 from .utils import with_backends, check_array_equals_file
 
-from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
-from phaser.utils.optics import (
-    make_focused_probe, fresnel_propagator,
-    AberrationList, _normalize_aberrations,
+from phaser.types import (
     ComplexCartesian, ComplexPolar, KrivanekComplex, KrivanekCartesian, KrivanekPolar,
+    Aberration, process_aberrations
 )
+from phaser.utils.num import get_backend_module, BackendName, Sampling, to_numpy, fft2, ifft2
+from phaser.utils.optics import make_focused_probe, fresnel_propagator
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
@@ -113,7 +113,7 @@ def test_parse_aberrations():
         {'n': 4, 'm': 1, 'val': 1+1.j},      # krivanek complex
         {'n': 1, 'm': 0, 're': 5.0},         # krivanek cartesian
         {'n': 5, 'm': 0, 'mag': 5.0},        # krivanek polar
-    ], AberrationList)
+    ], list[Aberration])
 
     assert result == [
         {'c3': complex(5.0)},
@@ -124,7 +124,7 @@ def test_parse_aberrations():
         KrivanekPolar(5, 0, mag=5.0, angle=0.0),
     ]
 
-    assert list(_normalize_aberrations(result)) == [
+    assert list(process_aberrations(result)) == [
         KrivanekComplex.make_unchecked(3, 0, val=complex(5.0)),
         KrivanekComplex.make_unchecked(2, 1, val=15.0-6.0j),
         KrivanekComplex.make_unchecked(1, 2, val=pytest.approx(5.0j)),

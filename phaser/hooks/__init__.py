@@ -6,9 +6,8 @@ from numpy.typing import NDArray, DTypeLike
 import pane.annotations as annotations
 from typing_extensions import NotRequired
 
-from ..types import Dataclass, Slices
+from ..types import Dataclass, Slices, Aberration
 from .hook import Hook
-from ..utils.optics import Aberration
 
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling

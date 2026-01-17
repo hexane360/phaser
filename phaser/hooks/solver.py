@@ -5,16 +5,17 @@ import numpy
 from numpy.typing import NDArray
 
 from phaser.types import Dataclass, ReconsVar
-from phaser.utils.num import Float
 from . import Hook
 
-StateT = t.TypeVar('StateT')
-
 if t.TYPE_CHECKING:
+    from phaser.utils.num import Float
     from phaser.engines.common.simulation import SimulationState
     from phaser.execute import Observer
     from phaser.plan import ConventionalEnginePlan, GradientEnginePlan  # noqa: F401
     from phaser.state import ReconsState
+
+
+StateT = t.TypeVar('StateT')
 
 
 class HasState(t.Protocol[StateT]):  # type: ignore
@@ -34,7 +35,7 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
         exp_patterns: NDArray[numpy.floating],
         mask: NDArray[numpy.floating], 
         state: StateT,
-    ) -> t.Tuple[Float, StateT]:
+    ) -> t.Tuple['Float', StateT]:
         """
         Return the calculated loss, summed across the detector and averaged across the scan.
 
