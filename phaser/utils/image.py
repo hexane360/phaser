@@ -9,7 +9,7 @@ import numpy
 from numpy.typing import ArrayLike, NDArray
 
 from .num import (
-    Sampling, cast_array_module, get_array_module, get_scipy_module, to_numpy, at, abs2,
+    Sampling, cast_array_module, get_array_module, get_scipy_module, max_supported_float, to_numpy, at, abs2,
     xp_is_jax, xp_is_torch, Float
 )
 
@@ -63,13 +63,13 @@ def remove_linear_ramp(
     """
     Removes a linear 'ramp' from an image or stack of images.
     """
-
     xp = get_array_module(data)
+    float_dtype = max_supported_float(xp)
     output = xp.empty_like(data)
 
     data = xp.array(data)
 
-    (yy, xx) = (arr.flatten() for arr in xp.indices(data.shape[-2:], dtype=float))
+    (yy, xx) = (arr.flatten() for arr in xp.indices(data.shape[-2:], dtype=float_dtype))
     pts = xp.stack((xp.ones_like(xx), xx, yy), axis=-1)
 
     if mask is None:
@@ -78,7 +78,7 @@ def remove_linear_ramp(
         mask = mask.flatten()
 
     for idx in numpy.ndindex(data.shape[:-2]):
-        layer = data[tuple(idx)].astype(numpy.float64)
+        layer = data[tuple(idx)].astype(float_dtype)
         p, residues, rank, singular = xp.linalg.lstsq(pts[mask], layer.flatten()[mask], rcond=None)
         output = at(output, idx).set((layer - (p @ pts.T).reshape(layer.shape)).astype(output.dtype))
 
