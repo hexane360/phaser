@@ -75,6 +75,7 @@ _LOAD_FNS: t.Dict[BackendName, t.Callable[[], ModuleType]] = {
 class _BackendLoader:
     def __init__(self):
         self.inner: t.Dict[BackendName, t.Optional[ModuleType]] = {}
+        self.cbs: t.Dict[BackendName, t.List[t.Callable[[], t.Any]]] = {}
 
     def _normalize(self, backend: BackendName) -> BackendName:
         name = t.cast(BackendName, backend.lower())
@@ -87,8 +88,20 @@ class _BackendLoader:
     def _load(self, name: BackendName):
         try:
             self.inner[name] = _LOAD_FNS[name]()
+            for cb in self.cbs.pop(name, ()):
+                cb()
         except ImportError:
             self.inner[name] = None
+
+    def _schedule_on_load(self, backend: BackendName, fn: t.Callable[[], t.Any]):
+        name = self._normalize(backend)
+        if self.inner.get(name):
+            # already loaded, run immediately
+            fn()
+        else:
+            # otherwise schedule for when (if) we load
+            cbs = self.cbs.setdefault(name, list())
+            cbs.append(fn)
 
     def get(self, name: BackendName):
         name = self._normalize(name)

@@ -11,6 +11,7 @@ Leaf: t.TypeAlias = t.Any
 Tree: t.TypeAlias = t.Any
 field = dataclasses.field
 
+
 class TreeSpec(t.Protocol):
     @property
     def num_leaves(self) -> int:
@@ -252,7 +253,7 @@ def leaves_with_path(
 
 
 def zeros_like(
-    tree: Tree, dtype: DTypeLike = None,
+    tree: Tree, dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
@@ -261,7 +262,7 @@ def zeros_like(
 
 
 def ones_like(
-    tree: Tree, dtype: DTypeLike = None,
+    tree: Tree, dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
@@ -271,7 +272,7 @@ def ones_like(
 
 def full_like(
     tree: Tree, fill_value: ArrayLike,
-    dtype: DTypeLike = None,
+    dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
@@ -421,24 +422,24 @@ def _register_dataclass(cls: type, static_fields: t.Sequence[str], drop_fields: 
         trees = list(getattr(x, name) for name in data_fields)
         return trees, hashed
 
-    try:
+    def _register_jax():
         from jax.tree_util import register_pytree_with_keys, GetAttrKey
-    except ImportError:
-        pass
-    else:
+
         flatten_with_keys = make_flatten_with_keys(GetAttrKey)
         register_pytree_with_keys(cls, flatten_with_keys, unflatten, flatten)
 
-    try:
+    def _register_torch():
         from torch.utils._pytree import register_pytree_node, GetAttrKey
-    except ImportError:
-        pass
-    else:
+
         flatten_with_keys = make_flatten_with_keys(GetAttrKey)
         register_pytree_node(
             cls, flatten, lambda trees, meta: unflatten(meta, trees),
             flatten_with_keys_fn=flatten_with_keys,  # type: ignore
         )
+
+    from phaser.utils.num import _BACKEND_LOADER
+    _BACKEND_LOADER._schedule_on_load('jax', _register_jax)
+    _BACKEND_LOADER._schedule_on_load('torch', _register_torch)
 
 
 __all__ = [
