@@ -89,7 +89,7 @@ export function Job({i, state}: {i: number, state: JobState}) {
             <div style={{gridColumn: 4}}>{engine_progress}</div>
             <div style={{gridColumn: 5}}>{total_progress}</div>
             <Group style={{gridColumn: -1}} justify='center'>
-                <Button color="yellow" component='a' href={state.links.dashboard}>Watch</Button>
+                <Button color="yellow" component='a' href={state.links.dashboard}  target="_blank" rel="noopener noreferrer">Watch</Button>
                 <Button color="red" onClick={(e) => cancel_job(state, e)}>Cancel</Button>
             </Group>
         </div>

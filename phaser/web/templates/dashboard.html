@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Phaser frontend{% endblock %}
+{% block title %}Phaser frontend - {{ title }}{% endblock %}
 
 {% block head %}
   <script type="text/javascript" src="{{ url_for('static', filename='bundle-dashboard.js') }}" defer></script>

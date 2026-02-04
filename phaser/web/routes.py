@@ -101,10 +101,10 @@ async def start_job():
 @app.get("/job/<string:job_id>")
 async def job_dashboard(job_id: JobID):
     if job_id == "fake":
-        return await render_template("dashboard.html")
+        return await render_template("dashboard.html", title="Fake Job")
     if job_id not in server.jobs:
         abort(404)
-    return await render_template("dashboard.html")
+    return await render_template("dashboard.html",  title=job_id)
 
 @app.post("/job/<string:job_id>/cancel")
 async def cancel_job(job_id: JobID):
