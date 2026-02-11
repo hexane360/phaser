@@ -17,8 +17,8 @@
 
 .section {
     transition: max-height 0.3s ease-out;
-    max-height: none;
-    overflow: visible;
+    max-height: 75em;
+    overflow: auto;
     margin: 15px 15px;
 }
 
