@@ -387,9 +387,12 @@ class _ReconsVarsConverter(Converter[t.FrozenSet[ReconsVar]]):
 
 
 __all__ = [
-    'BackendName', 'Dataclass', 'Slices', 'Flag',
+    'cast_length', 'BackendName', 'ReconsVar', 'ReconsVars',
+    'EmptyDict', 'EarlyTermination', 'Dataclass',
+    'SliceList', 'SliceStep', 'SliceTotal', 'Slices',
     'ComplexCartesian', 'ComplexPolar',
-    'Krivanek', 'KrivanekComplex', 'KrivanekCartesian',
-    'KrivanekPolar', 'KnownAberration', 'Aberration',
-    'process_aberrations', 'process_flag', 'flag_any_true',
+    'Krivanek', 'KrivanekComplex', 'KrivanekCartesian', 'KrivanekPolar',
+    'KnownAberration', 'Aberration', 'process_aberrations',
+    'SimpleFlag', 'process_flag', 'process_schedule', 'flag_any_true',
+    'IsVersion', 'Version',
 ]
