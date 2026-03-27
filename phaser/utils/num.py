@@ -587,60 +587,101 @@ def to_real_dtype(dtype: DTypeLike) -> t.Type[numpy.floating]:
 
 
 @t.overload
-def ifft2(a: t.Union[NDArray[numpy.float64], NDArray[numpy.complex128]]) -> NDArray[numpy.complex128]:
+def ifft2(a: t.Union[NDArray[numpy.float64], NDArray[numpy.complex128]], *, shift: bool = True) -> NDArray[numpy.complex128]:
     ...
 
 @t.overload
-def ifft2(a: t.Union[NDArray[numpy.float32], NDArray[numpy.complex64]]) -> NDArray[numpy.complex64]:
+def ifft2(a: t.Union[NDArray[numpy.float32], NDArray[numpy.complex64]], *, shift: bool = True) -> NDArray[numpy.complex64]:
     ...
 
 @t.overload
-def ifft2(a: NDArray[NumT]) -> NDArray[numpy.complexfloating]:
+def ifft2(a: NDArray[numpy.number], *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
 @t.overload
-def ifft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
+def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
-def ifft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
+def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     """
     Perform an inverse FFT on the last two axes of `a`.
-    
-    Follows our convention of centering real space and normalizing intensities.
+
+    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`).
     """
-
     xp = get_array_module(a)
-    if xp_is_torch(xp):
-        return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), dim=(-2, -1))  # type: ignore
-    return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), axes=(-2, -1))
+    if shift:
+        if xp_is_torch(xp):
+            return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), dim=(-2, -1))  # type: ignore
+        return xp.fft.fftshift(xp.fft.ifft2(a, norm='ortho'), axes=(-2, -1))
+    return xp.fft.ifft2(a, norm='ortho')
+
 
 @t.overload
-def fft2(a: t.Union[NDArray[numpy.float64], NDArray[numpy.complex128]]) -> NDArray[numpy.complex128]:
+def fft2(a: t.Union[NDArray[numpy.float64], NDArray[numpy.complex128]], *, shift: bool = True) -> NDArray[numpy.complex128]:
     ...
 
 @t.overload
-def fft2(a: t.Union[NDArray[numpy.float32], NDArray[numpy.complex64]]) -> NDArray[numpy.complex64]:
+def fft2(a: t.Union[NDArray[numpy.float32], NDArray[numpy.complex64]], *, shift: bool = True) -> NDArray[numpy.complex64]:
     ...
 
 @t.overload
-def fft2(a: NDArray[NumT]) -> NDArray[numpy.complexfloating]:
+def fft2(a: NDArray[numpy.number], *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
 @t.overload
-def fft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
+def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
-def fft2(a: ArrayLike) -> NDArray[numpy.complexfloating]:
+def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     """
     Perform a forward FFT on the last two axes of `a`.
 
-    Follows our convention of centering real space and normalizing intensities.
+    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`)..
     """
-
     xp = get_array_module(a)
-    if xp_is_torch(xp):
-        return xp.fft.fft2(xp.fft.ifftshift(a, dim=(-2, -1)), norm='ortho')  # type: ignore
-    return xp.fft.fft2(xp.fft.ifftshift(a, axes=(-2, -1)), norm='ortho')
+    if shift:
+        if xp_is_torch(xp):
+            return xp.fft.fft2(xp.fft.ifftshift(a, dim=(-2, -1)), norm='ortho')  # type: ignore
+        return xp.fft.fft2(xp.fft.ifftshift(a, axes=(-2, -1)), norm='ortho')
+    return xp.fft.fft2(a, norm='ortho')
+
+
+@t.overload
+def fft2shift(a: NDArray[NumT]) -> NDArray[NumT]:
+    ...
+
+@t.overload
+def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
+    ...
+
+def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
+    """
+    FFT-shift the last two axes of `a`.
+    
+    Shifts the zero-frequency component to the center of the image
+    (i.e. this is needed to center realspace after an inverse transform).
+    """
+    xp = get_array_module(a)
+    return xp.fft.fftshift(a, axes=(-2, -1))
+
+
+@t.overload
+def ifft2shift(a: NDArray[NumT]) -> NDArray[NumT]:
+    ...
+
+@t.overload
+def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
+    ...
+
+def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
+    """
+    Inverse FFT-shift the last two axes of `a`.
+
+    Shifts the zero-frequency component to the corner of the image
+    (i.e. this is needed to corner realspace before a forward transform).
+    """
+    xp = get_array_module(a)
+    return xp.fft.ifftshift(a, axes=(-2, -1))
 
 
 def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) -> t.Tuple[NDArray[DTypeT], ...]:
@@ -1037,7 +1078,8 @@ __all__ = [
     'is_cupy', 'is_jax', 'xp_is_cupy', 'xp_is_jax',
     'jit', 'fuse', 'debug_callback',
     'to_complex_dtype', 'to_real_dtype',
-    'fft2', 'ifft2', 'abs2', 'split_array', 'unstack',
+    'fft2', 'ifft2', 'fft2shift', 'ifft2shift',
+    'abs2', 'split_array', 'unstack',
     'at', 'ufunc_outer', 'check_finite',
     'Sampling', 'IndexLike',
 ]

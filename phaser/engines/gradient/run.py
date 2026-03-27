@@ -9,7 +9,8 @@ from typing_extensions import Self
 from phaser.hooks.solver import NoiseModel
 from phaser.utils.num import (
     assert_dtype, get_array_module, cast_array_module, jit, to_numpy,
-    fft2, ifft2, abs2, check_finite, at, Float, to_complex_dtype, to_real_dtype
+    fft2, ifft2, fft2shift, ifft2shift, abs2, at, Float,
+    to_complex_dtype, to_real_dtype,
 )
 import phaser.utils.tree as tree
 from phaser.utils.optics import fourier_shift_filter
@@ -157,10 +158,6 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     observer: Observer = args.get('observer', Observer())
     state = args['state']
     seed = args['seed']
-    patterns = args['data'].patterns
-    pattern_mask = xp.array(args['data'].pattern_mask)
-    assert_dtype(patterns, dtype)
-    assert_dtype(pattern_mask, dtype)
 
     noise_model = props.noise_model(None)
 
@@ -186,13 +183,36 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     )
     start_i = int(state.iter.total_iter)
 
+    # check patterns dtype
+    assert_dtype(args['data'].patterns, dtype)
+    assert_dtype(args['data'].pattern_mask, dtype)
+    # load pattern mask
+    pattern_mask = xp.array(args['data'].pattern_mask)
+
+    # and load/stream patterns
+    if props.buffer_n_groups is None:
+        logging.info("Loading raw data to GPU ('buffer_n_groups' is disabled)...")
+        patterns = xp.array(args['data'].patterns)
+    else:
+        logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
+        patterns = args['data'].patterns
+
+    def iter_patterns(groups: t.Iterable[NDArray[numpy.int_]]) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
+        if props.buffer_n_groups is None:
+            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
+        return stream_patterns(
+            groups, patterns, xp=xp, buf_n=props.buffer_n_groups
+        )
+
     propagators = make_propagators(state, props.bwlim_frac)
 
     # runs rescaling
     rescale_factors = []
-    for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups.iter(state.scan),
-                                                                        patterns, xp=xp, buf_n=props.buffer_n_groups)):
-        group_rescale_factors = dry_run(state, group, propagators, group_patterns, xp=xp, dtype=dtype)
+    for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan))):
+        group_rescale_factors = dry_run(
+            state, group, propagators, group_patterns,
+            xp=xp, dtype=dtype,
+        )
         rescale_factors.append(group_rescale_factors)
 
     rescale_factors = xp.concatenate(rescale_factors, axis=0)
@@ -252,8 +272,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             for (solver, solver_state) in zip(iter_solvers, iter_solver_states)
         ]
 
-        for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups.iter(state.scan, i, iter_shuffle_groups),
-                                                                            patterns, xp=xp, buf_n=props.buffer_n_groups)):
+        for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan, i, iter_shuffle_groups))):
             (state, group_losses, iter_grads, solver_states) = run_group(
                 state, group=group, vars=iter_vars,
                 noise_model=noise_model,
@@ -266,12 +285,15 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 group_patterns=group_patterns, #load_group(group),
                 pattern_mask=pattern_mask,
                 probe_int=probe_int,
-                xp=xp, dtype=dtype
+                xp=xp, dtype=dtype,
+                jit_unroll_slices=props.jit_unroll_slices,
             )
-
             losses = tree.map(xp.add, losses, group_losses)
 
-            check_finite(state.object.data, state.probe.data, context=f"object or probe, group {group_i}")
+            # we only need to check for nan in total_loss
+            if not xp.isfinite(losses['total_loss']):
+                raise ValueError(f"NaN or inf encountered, group {group_i}")
+
             observer.update_group(state, props.send_every_group)
 
         # report losses normalized by # of probe positions
@@ -326,7 +348,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
 
 @partial(
     jit,
-    static_argnames=('vars', 'xp', 'dtype', 'noise_model', 'group_solvers', 'group_constraints', 'regularizers'),
+    static_argnames=('vars', 'xp', 'dtype', 'noise_model', 'group_solvers', 'group_constraints', 'regularizers', 'jit_unroll_slices'),
     donate_argnames=('state', 'iter_grads', 'solver_states'),
 )
 def run_group(
@@ -345,6 +367,7 @@ def run_group(
     probe_int: t.Union[float, numpy.floating],
     xp: t.Any,
     dtype: t.Type[numpy.floating],
+    jit_unroll_slices: t.Union[int, bool],
 ) -> t.Tuple[ReconsState, t.Dict[str, Float], t.Dict[ReconsVar, t.Any], SolverStates]:
     xp = cast_array_module(xp)
 
@@ -352,7 +375,7 @@ def run_group(
         *extract_vars(state, vars, group),
         group=group, props=props, group_patterns=group_patterns, pattern_mask=pattern_mask,
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
-        xp=xp, dtype=dtype
+        xp=xp, dtype=dtype, jit_unroll_slices=jit_unroll_slices
     )
     for k in grad.keys():
         # scale gradients appropriately
@@ -385,7 +408,7 @@ def run_group(
 
 @partial(
     jit,
-    static_argnames=('xp', 'dtype', 'noise_model', 'regularizers'),
+    static_argnames=('xp', 'dtype', 'noise_model', 'regularizers', 'jit_unroll_slices'),
     donate_argnames=('solver_states',),
 )
 def run_model(
@@ -400,6 +423,7 @@ def run_model(
     solver_states: SolverStates,
     xp: t.Any,
     dtype: t.Type[numpy.floating],
+    jit_unroll_slices: t.Union[int, bool],
 ) -> t.Tuple[Float, t.Tuple[SolverStates, t.Dict[str, Float]]]:
     # apply vars to simulation
     sim = insert_vars(vars, sim, group)
@@ -409,23 +433,23 @@ def run_model(
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     xp = get_array_module(sim.probe.data)
     dtype = to_real_dtype(sim.probe.data.dtype)
-    #complex_dtype = to_complex_dtype(dtype)
 
-    probes = sim.probe.data
-    group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:])
-    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
-    probes = ifft2(fft2(probes) * group_subpx_filters)
+    # preshift probe and object
+    probes = ifft2shift(sim.probe.data)
+    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:]))
+    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
+    # (group, mode, y, x)
+    probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
-        # psi: (batch, n_probe, Ny, Nx)
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+            return ifft2(fft2(psi * group_obj[:, slice_i, None], shift=False) * prop[:, None], shift=False)
         return psi * group_obj[:, slice_i, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilts)
-    model_wave = fft2(slice_forwards(t_props, probes, sim_slice))
-    model_intensity = xp.sum(abs2(model_wave), axis=1)
+    model_wave = fft2(slice_forwards(t_props, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
 
+    model_intensity = xp.sum(abs2(model_wave), axis=1)
     (loss, solver_states.noise_model_state) = noise_model.calc_loss(
         model_wave, model_intensity, group_patterns, pattern_mask, solver_states.noise_model_state
     )
@@ -458,19 +482,20 @@ def dry_run(
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
+    group_scan = sim.scan[tuple(group)]
 
-    probes = sim.probe.data
-    group_obj = sim.object.sampling.get_view_at_pos(sim.object.data, sim.scan[tuple(group)], probes.shape[-2:])
-    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(sim.scan[tuple(group)], probes.shape[-2:]))[:, None, ...]
-    probes = ifft2(fft2(probes) * group_subpx_filters)
+    probes = ifft2shift(sim.probe.data)
+    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:]))
+    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
+    probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+            return ifft2(fft2(psi * group_obj[:, slice_i, None], shift=False) * prop[:, None], shift=False)
         return psi * group_obj[:, slice_i, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, sim.tilt[tuple(group)] if sim.tilt is not None else None)
-    model_wave = fft2(slice_forwards(t_props, probes, sim_slice))
+    model_wave = fft2(slice_forwards(t_props, probes, sim_slice), shift=False)
     model_intensity = xp.sum(abs2(model_wave), axis=(1, -2, -1))
     exp_intensity = xp.sum(group_patterns, axis=(-2, -1))
 

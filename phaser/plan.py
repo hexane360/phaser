@@ -57,7 +57,21 @@ class EnginePlan(Dataclass, kw_only=True):
     grouping: t.Optional[int] = None
     compact: bool = False
     shuffle_groups: t.Optional[FlagLike] = None
-    buffer_n_groups: int = 2
+    buffer_n_groups: t.Optional[int] = 2
+    """
+    How many groups of patterns to buffer onto the device simultaneously.
+    Set to 0 to disable buffering, or `None` (`~` in YAML) to preload the
+    entire dataset to the device.
+    """
+
+    jit_unroll_slices: t.Union[int, bool] = 10
+    """
+    Slices to unroll during JIT compilation (JAX backend only).
+    Larger unrolling may be faster, at the expense of increased compilation time.
+
+    `True` or `0` unrolls all slices, `False` or `1` disables unrolling.
+    `10` should be a good default value.
+    """
 
     update_probe: FlagLike = True
     update_object: FlagLike = True

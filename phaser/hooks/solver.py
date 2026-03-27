@@ -162,7 +162,7 @@ class GradientSolver(HasState[StateT], t.Protocol[StateT]):
 
 
 class GradientSolverArgs(t.TypedDict):
-    plan: 'GradientEnginePlan'
+    plan: t.Optional['GradientEnginePlan']
     params: t.Iterable[ReconsVar]
 
 

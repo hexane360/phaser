@@ -243,6 +243,13 @@ class PreparedRecons:
     name: str
     observer: 'ObserverSet'
 
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            self.patterns,
+            self.state.to_xp(xp),
+            self.name, self.observer,
+        )
+
     def to_numpy(self) -> Self:
         return self.__class__(
             self.patterns.to_numpy(), self.state.to_numpy(), self.name, self.observer

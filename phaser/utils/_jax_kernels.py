@@ -54,8 +54,11 @@ def add_cutouts(obj: jax.Array, cutouts: jax.Array, start_idxs: jax.Array) -> ja
 
 @partial(jax.jit, static_argnums=2)
 def get_cutouts(obj: jax.Array, start_idxs: jax.Array, cutout_shape: t.Tuple[int, int]) -> jax.Array:
-    return jax.vmap(jax.vmap(lambda start_idx, obj: jax.lax.dynamic_slice(obj, start_idx, cutout_shape), (None, 0)), (0, None))(
-        to_2d(start_idxs), to_3d(obj)
+    idxs = to_2d(start_idxs)
+    ys = idxs[:, 0:1] + jax.numpy.arange(cutout_shape[0])
+    xs = idxs[:, 1:2] + jax.numpy.arange(cutout_shape[1])
+    return jax.numpy.swapaxes(
+        to_3d(obj)[..., ys[:, :, None], xs[:, None, :]], 0, 1
     ).reshape((*start_idxs.shape[:-1], *obj.shape[:-2], *cutout_shape))
 
 

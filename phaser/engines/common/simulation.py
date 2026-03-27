@@ -265,7 +265,8 @@ def cutout_group(
 def slice_forwards(
     props: t.Optional[NDArray[numpy.complexfloating]],
     state: StateT,
-    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT]
+    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT], *,
+    jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
     if props is None:
         return f(0, None, state)
@@ -278,7 +279,7 @@ def slice_forwards(
             new_state = f(slice_i, props[slice_i], carry)
             return new_state, None
 
-        state, _ = jax.lax.scan(step_fn, state, jax.numpy.arange(n_slices - 1))
+        state, _ = jax.lax.scan(step_fn, state, jax.numpy.arange(n_slices - 1), unroll=jit_unroll_slices)
         return f(n_slices - 1, None, state)
 
     # fallback numpy mode
@@ -290,7 +291,8 @@ def slice_forwards(
 def slice_backwards(
     props: t.Optional[NDArray[numpy.complexfloating]],
     state: StateT,
-    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT]
+    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT],
+    jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
     if props is None:
         return f(0, None, state)
@@ -299,7 +301,10 @@ def slice_backwards(
 
     if is_jax(props):
         import jax
-        state = jax.lax.fori_loop(1, n_slices, lambda i, state: f(n_slices - i, props[n_slices - i - 1], state), state, unroll=False)
+        state = jax.lax.fori_loop(
+            1, n_slices, lambda i, state: f(n_slices - i, props[n_slices - i - 1], state), state,
+            unroll=jit_unroll_slices
+        )
         return f(0, None, state)
 
     for slice_i in range(n_slices - 1, 0, -1):
