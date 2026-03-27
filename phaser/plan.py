@@ -64,7 +64,7 @@ class EnginePlan(Dataclass, kw_only=True):
     entire dataset to the device.
     """
 
-    jit_unroll_slices: t.Union[int, bool] = 10
+    jit_unroll_slices: t.Union[bool, int] = 10
     """
     Slices to unroll during JIT compilation (JAX backend only).
     Larger unrolling may be faster, at the expense of increased compilation time.
@@ -94,6 +94,7 @@ class EnginePlan(Dataclass, kw_only=True):
     (smooths over ~1/smoothing iterations)
     """
 
+    check_every_group: bool = False
     send_every_group: bool = False
 
 

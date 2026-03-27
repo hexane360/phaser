@@ -10,7 +10,7 @@ from phaser.hooks.solver import NoiseModel
 from phaser.utils.num import (
     assert_dtype, get_array_module, cast_array_module, jit, to_numpy,
     fft2, ifft2, fft2shift, ifft2shift, abs2, at, Float,
-    to_complex_dtype, to_real_dtype,
+    to_complex_dtype, to_real_dtype, block_until_ready,
 )
 import phaser.utils.tree as tree
 from phaser.utils.optics import fourier_shift_filter
@@ -187,12 +187,12 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     assert_dtype(args['data'].patterns, dtype)
     assert_dtype(args['data'].pattern_mask, dtype)
     # load pattern mask
-    pattern_mask = xp.array(args['data'].pattern_mask)
+    pattern_mask = xp.asarray(args['data'].pattern_mask)
 
     # and load/stream patterns
     if props.buffer_n_groups is None:
         logging.info("Loading raw data to GPU ('buffer_n_groups' is disabled)...")
-        patterns = xp.array(args['data'].patterns)
+        patterns = xp.asarray(args['data'].patterns)
     else:
         logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
         patterns = args['data'].patterns
@@ -259,7 +259,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         iter_shuffle_groups = shuffle_groups({'state': state, 'niter': props.niter})
 
         # accumulated losses across groups
-        losses: t.Dict[str, float] = {k: 0.0 for k in loss_keys}
+        losses_gpu = {k: t.cast(numpy.floating, xp.array(0.0)) for k in loss_keys}
 
         # update schedules for this iteration
         # this needs to be done outside the JIT context, which makes this kinda hacky
@@ -273,12 +273,16 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         ]
 
         for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan, i, iter_shuffle_groups))):
-            (state, group_losses, iter_grads, solver_states) = run_group(
+            # prevent the loop running ahead of the GPU stream
+            block_until_ready(losses_gpu['total_loss'])
+
+            (state, losses_gpu, iter_grads, solver_states) = run_group(
                 state, group=group, vars=iter_vars,
                 noise_model=noise_model,
                 group_solvers=group_solvers,
                 group_constraints=group_constraints,
                 regularizers=regularizers,
+                losses=losses_gpu,
                 iter_grads=iter_grads,
                 solver_states=solver_states,
                 props=propagators,
@@ -288,16 +292,16 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 xp=xp, dtype=dtype,
                 jit_unroll_slices=props.jit_unroll_slices,
             )
-            losses = tree.map(xp.add, losses, group_losses)
-
-            # we only need to check for nan in total_loss
-            if not xp.isfinite(losses['total_loss']):
+            if props.check_every_group and not numpy.isfinite(float(losses_gpu['total_loss'])):
                 raise ValueError(f"NaN or inf encountered, group {group_i}")
-
             observer.update_group(state, props.send_every_group)
 
+        if not numpy.isfinite(float(losses_gpu['total_loss'])):
+            raise ValueError(f"NaN or inf encountered, iteration {i}")
+
         # report losses normalized by # of probe positions
-        losses = tree.map(lambda v: float(v / groups.n_pos), losses)
+        # this also moves losses to CPU
+        losses: t.Dict[str, float] = tree.map(lambda v: float(v) / groups.n_pos, losses_gpu)
         for (k, v) in losses.items():
             progress[k].iters.append(i + start_i)
             progress[k].values.append(v)
@@ -324,7 +328,6 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 progress['tilt_update_rms'].iters.append(i + start_i)
                 progress['tilt_update_rms'].values.append(tilt_update_rms)
                 logger.info(f"Tilt update: mean {mean_tilt_update} mrad")  # average tilt update, [y, x]
-
 
         for (reg_i, reg) in enumerate(iter_constraints):
             (state, iter_constraint_states[reg_i]) = reg.apply_iter(
@@ -359,6 +362,7 @@ def run_group(
     group_solvers: t.Sequence[GradientSolver[t.Any]],
     group_constraints: t.Sequence[GroupConstraint[t.Any]],
     regularizers: t.Sequence[CostRegularizer[t.Any]],
+    losses: t.Dict[str, numpy.floating],
     iter_grads: t.Dict[ReconsVar, t.Any],
     solver_states: SolverStates,
     props: t.Optional[NDArray[numpy.complexfloating]],
@@ -368,10 +372,10 @@ def run_group(
     xp: t.Any,
     dtype: t.Type[numpy.floating],
     jit_unroll_slices: t.Union[int, bool],
-) -> t.Tuple[ReconsState, t.Dict[str, Float], t.Dict[ReconsVar, t.Any], SolverStates]:
+) -> t.Tuple[ReconsState, t.Dict[str, numpy.floating], t.Dict[ReconsVar, t.Any], SolverStates]:
     xp = cast_array_module(xp)
 
-    (grad, (solver_states, losses)) = tree.grad(run_model, has_aux=True, xp=xp, sign=-1)(
+    (grad, (solver_states, group_losses)) = tree.grad(run_model, has_aux=True, xp=xp, sign=-1)(
         *extract_vars(state, vars, group),
         group=group, props=props, group_patterns=group_patterns, pattern_mask=pattern_mask,
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
@@ -394,7 +398,7 @@ def run_group(
         if len(solver_grads) == 0:
             continue
         (update, solver_states.group_solver_states[sol_i]) = solver.update(
-            state, solver_states.group_solver_states[sol_i], solver_grads, losses['total_loss']
+            state, solver_states.group_solver_states[sol_i], solver_grads, group_losses['total_loss']
         )
         state = apply_update(state, update)
 
@@ -403,6 +407,7 @@ def run_group(
             group, state, solver_states.group_constraint_states[reg_i]
         )
 
+    losses = tree.map(xp.add, losses, group_losses)
     return (state, losses, iter_grads, solver_states)
 
 

@@ -388,7 +388,15 @@ def xp_is_torch(xp: t.Any) -> bool:
     return xp is torch
 
 
+@t.overload
+def block_until_ready(arr: DTypeT) -> DTypeT:
+    ...
+
+@t.overload
 def block_until_ready(arr: NDArray[DTypeT]) -> NDArray[DTypeT]:
+    ...
+
+def block_until_ready(arr: t.Any) -> t.Any:
     if hasattr(arr, 'block_until_ready'):  # jax
         return arr.block_until_ready()  # type: ignore
 

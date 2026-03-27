@@ -75,7 +75,6 @@ def stream_patterns(
 
     while len(buf) > 0:
         (group, group_patterns) = buf.popleft()
-        yield group, block_until_ready(group_patterns)
 
         # attempt to feed queue
         try:
@@ -83,6 +82,8 @@ def stream_patterns(
             buf.append((group, xp.asarray(patterns[tuple(group)])))
         except StopIteration:
             continue
+
+        yield group, block_until_ready(group_patterns)
 
 
 @tree_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))
