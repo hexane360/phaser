@@ -40,13 +40,11 @@ def initialize(sim_size: int = 128) -> t.Tuple[PreparedRecons, ReconsPlan]:
         'dtype': 'float32',
         'raw_data': {
             'type': 'empad',
-            'path': '~/Downloads/si-final4/Si_110_Sn_300kV_conv25_defocus20_tds/Si_110_Sn_300kV_conv25_defocus20_tds_199.70_dstep0.8.json',
+            'path': '~/Downloads/ptyrad_paper/00_data/tBL_WSe2/Panel_g-h_Themis/WSe2.json',
         },
-        'post_load': [
-            {'type': 'poisson', 'scale': 1.0e6},
-        ],
+        'post_load': [],
         'post_init': [],
-        'slices': {'n': 10, 'total_thickness': 200.0},
+        'slices': {'n': 6, 'total_thickness': 60.0},
         'engines': [],
     })
 
@@ -81,7 +79,7 @@ def benchmark_grad(
         'type': 'gradient',
         'buffer_n_groups': 16 if grouping < 256 else 2,
         'jit_unroll_slices': unroll,
-        'probe_modes': 4,
+        'probe_modes': 6,
         'niter': 15,
         'grouping': grouping,
         'noise_model': {'type': 'amplitude', 'eps': 1.0e-1},
@@ -100,6 +98,7 @@ def benchmark_grad(
         'regularizers': [
         ],
         'iter_constraints': [
+            {'type': 'layers', 'sigma': 20.0, 'weight': 0.9},
             {'type': 'clamp_object_amplitude', 'amplitude': 1.0},
         ],
         'group_constraints': [
@@ -109,6 +108,23 @@ def benchmark_grad(
         'update_positions': False,
         'save': False, 'save_images': False,
     }, EngineHook)
+
+    """
+    import h5py
+    from phaser.utils.optics import make_hermetian_modes
+
+    recons.state.probe.data = make_hermetian_modes(
+        numpy.sum(recons.state.probe.data, axis=0), 8
+    )
+    recons.state.write_hdf5("init_state.h5")
+
+    f = h5py.File("raw_data.h5", mode='w')
+    try:
+        f.create_dataset('patterns', data=recons.patterns.patterns)
+        f.create_dataset('pattern_mask', data=recons.patterns.pattern_mask)
+    finally:
+        f.close()
+    """
 
     recons = execute_engine(recons, engine)
 
@@ -128,7 +144,7 @@ if __name__ == '__main__':
 
     backend = 'jax'
 
-    for sim_size, unroll, grouping in itertools.product((128,), (5, False), (8, 4, 16, 32, 64, 128, 256, 512, 1024)):
+    for sim_size, unroll, grouping in itertools.product((128,), (True, False), (4, 8, 16, 32, 64, 128, 256, 512, 1024)):
         if backend == 'jax':
             import jax.version
             backend_version = jax.version.__version__
@@ -147,14 +163,13 @@ if __name__ == '__main__':
                 'backend': backend,
                 'backend_version': backend_version,
                 'sim_size': sim_size,
-                'n_positions': 80*80,
-                'n_slices': 10,
-                'n_modes': 4,
+                'n_positions': 128*128,
+                'n_slices': 6,
+                'n_modes': 6,
                 'grouping': grouping,
                 'device': device_name,
-                'code': 'v5_unroll5' if unroll else 'v5',
+                'code': 'v5_unroll' if unroll else 'v5',
                 'iter_times': iter_times,
             }, sys.stdout)
             sys.stdout.write("\n")
             sys.stdout.flush()
-

@@ -28,7 +28,7 @@ classifiers = [
 
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=2.0,<2.6",  # tested on 2.3
+    "numpy>=2.0,<2.7",  # tested on 2.4
     "scipy>=1.7.0,<1.19", # tested on 1.11, 1.16
     "matplotlib~=3.8",
     "h5py~=3.8",
@@ -55,10 +55,14 @@ cupy12 = [
     "cupy-cuda12x>=12.0.0",
     "pynvml>=11.0.0",
 ]
+cupy13 = [
+    "cupy-cuda13x>=12.0.0",
+    "pynvml>=11.0.0",
+]
 jax = [
     # 0.4.25 is last version supporting cuda 11.8, we need to support it.
-    # tested on 0.4.25, 0.5.x, 0.6.x, and 0.7.0
-    "jax>=0.4.25,<0.8",
+    # tested on 0.4.25, 0.5.x, 0.6.x, 0.7.0, and 0.10.0
+    "jax>=0.4.25,<0.11",
     "optax>=0.2.2",
 ]
 torch = [

@@ -113,6 +113,13 @@ class _BackendLoader:
 
         return None if t.TYPE_CHECKING else self.inner[name]
 
+    def try_get(self, name: BackendName):
+        name = self._normalize(name)
+        if name == 'numpy':
+            return numpy
+
+        return self.inner.get(name)
+
     def __getitem__(self, name: BackendName):
         if (backend := self.get(name)) is not None:
             return backend
@@ -377,13 +384,15 @@ def is_torch(arr: t.Any) -> bool:
 
 
 def xp_is_cupy(xp: t.Any) -> bool:
-    return xp is sys.modules.get('cupy')
+    if (cupy := _BACKEND_LOADER.try_get('cupy')) is None:
+        return False
+    return xp is cupy
 
 def xp_is_jax(xp: t.Any) -> bool:
     return xp is sys.modules.get('jax.numpy')
 
 def xp_is_torch(xp: t.Any) -> bool:
-    if (torch := _BACKEND_LOADER.get('torch')) is None:
+    if (torch := _BACKEND_LOADER.try_get('torch')) is None:
         return False
     return xp is torch
 
@@ -794,7 +803,7 @@ def ufunc_outer(ufunc: numpy.ufunc, x: ArrayLike, y: ArrayLike) -> numpy.ndarray
         from ._jax_kernels import outer
         return outer(ufunc, x, y)
 
-    if not t.TYPE_CHECKING and is_torch(x):
+    if not t.TYPE_CHECKING and (is_torch(x) or is_cupy(x)):
         return ufunc(x[(..., *((None,) * y.ndim))], y[(*((None,) * x.ndim), ...)])
 
     return ufunc.outer(x, y)

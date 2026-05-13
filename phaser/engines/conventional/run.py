@@ -1,7 +1,7 @@
 import logging
 
 from phaser.utils.misc import mask_fraction_of_groups
-from phaser.utils.num import assert_dtype, cast_array_module, to_numpy, to_complex_dtype
+from phaser.utils.num import assert_dtype, cast_array_module, check_finite, to_numpy, to_complex_dtype
 from phaser.observer import Observer
 from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
@@ -35,13 +35,19 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         group_constraints=group_constraints, iter_constraints=iter_constraints,
         xp=xp, dtype=dtype
     )
-    patterns = args['data'].patterns
-    pattern_mask = xp.asarray(args['data'].pattern_mask)
-
-    assert_dtype(patterns, dtype)
-    assert_dtype(pattern_mask, dtype)
+    assert_dtype(args['data'].patterns, dtype)
+    assert_dtype(args['data'].pattern_mask, dtype)
     assert_dtype(sim.state.object.data, cdtype)
     assert_dtype(sim.state.probe.data, cdtype)
+
+    pattern_mask = xp.asarray(args['data'].pattern_mask)
+    # load/stream patterns
+    if props.buffer_n_groups is None:
+        logging.info("Loading raw data to GPU ('buffer_n_groups' is disabled)...")
+        patterns = xp.asarray(args['data'].patterns)
+    else:
+        logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
+        patterns = args['data'].patterns
 
     solver = props.solver(props)
     sim = solver.init(sim)
@@ -100,6 +106,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         )
         assert_dtype(sim.state.object.data, cdtype)
         assert_dtype(sim.state.probe.data, cdtype)
+        check_finite(sim.state.object.data, sim.state.probe.data, context=f"NaN or inf encountered, iteration {i}")
 
         sim = sim.apply_iter_constraints()
 

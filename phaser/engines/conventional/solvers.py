@@ -33,6 +33,17 @@ class LSQMLSolver(ConventionalSolver):
 
         return sim
 
+    def iter_patterns(
+        self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
+    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
+        xp = cast_array_module(xp)
+
+        if self.engine_plan.buffer_n_groups is None:
+            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
+        return stream_patterns(
+            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
+        )
+
     def presolve(
         self,
         sim: SimulationState,
@@ -44,7 +55,7 @@ class LSQMLSolver(ConventionalSolver):
         rescale_factors = []
 
         # precompute obj_mag, probe_mag, and rescale probe intensity
-        for (group, group_patterns) in stream_patterns(groups, patterns, xp=sim.xp, buf_n=self.engine_plan.buffer_n_groups):
+        for (group, group_patterns) in self.iter_patterns(groups, patterns, sim.xp):
             (self.obj_mag, self.probe_mag, group_rescale_factors) = lsqml_dry_run(
                 sim, group, group_patterns, props=propagators, pattern_mask=pattern_mask,
                 obj_mag=self.obj_mag, probe_mag=self.probe_mag
@@ -89,8 +100,7 @@ class LSQMLSolver(ConventionalSolver):
         pos_update = xp.zeros_like(sim.state.scan, dtype=sim.dtype)
         iter_errors = []
 
-        for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups, patterns, xp=xp,
-                                                                            buf_n=self.engine_plan.buffer_n_groups)):
+        for (group_i, (group, group_patterns)) in enumerate(self.iter_patterns(groups, patterns, xp)):
             group_calc_error = calc_error and calc_error_mask[group_i]
 
             (sim, new_obj_mag, new_probe_mag, errors, group_pos_update) = lsqml_run(
@@ -102,13 +112,13 @@ class LSQMLSolver(ConventionalSolver):
                 update_probe=update_probe,
                 update_position=update_positions,
                 calc_error=group_calc_error,
+                jit_unroll_slices=self.engine_plan.jit_unroll_slices,
                 illum_reg_object=illum_reg_object,
                 illum_reg_probe=illum_reg_probe,
                 gamma=gamma,
             )
-            check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
-            #assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-            #assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+            if self.engine_plan.check_every_group:
+                check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
 
             sim = sim.apply_group_constraints(group)
 
@@ -171,7 +181,7 @@ def lsqml_dry_run(
 @partial(
     jit,
     donate_argnames=('sim', 'new_obj_mag', 'new_probe_mag'),
-    static_argnames=('update_object', 'update_probe', 'update_position', 'calc_error'),
+    static_argnames=('update_object', 'update_probe', 'update_position', 'calc_error', 'jit_unroll_slices'),
 )
 def lsqml_run(
     sim: SimulationState,
@@ -189,6 +199,7 @@ def lsqml_run(
     update_probe: bool = True,
     update_position: bool = True,
     calc_error: bool = True,
+    jit_unroll_slices: t.Union[int, bool] = False,
     illum_reg_object: float,
     illum_reg_probe: float,
     gamma: float,
@@ -223,7 +234,7 @@ def lsqml_run(
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
-    (group_probe_mag, psi) = slice_forwards(props, (group_probe_mag, psi), sim_slice)
+    (group_probe_mag, psi) = slice_forwards(props, (group_probe_mag, psi), sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     new_obj_mag += group_obj_mag
     new_probe_mag += group_probe_mag
@@ -270,7 +281,7 @@ def lsqml_run(
 
         return (sim, chi)
 
-    (sim, chi) = slice_backwards(props, (sim, chi), update_slice)
+    (sim, chi) = slice_backwards(props, (sim, chi), update_slice, jit_unroll_slices=jit_unroll_slices)
 
     if update_position:
         def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
@@ -303,6 +314,17 @@ class EPIESolver(ConventionalSolver):
         self.logger = logging.getLogger(__name__)
         return sim
 
+    def iter_patterns(
+        self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
+    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
+        xp = cast_array_module(xp)
+
+        if self.engine_plan.buffer_n_groups is None:
+            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
+        return stream_patterns(
+            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
+        )
+
     def presolve(
         self,
         sim: SimulationState,
@@ -312,8 +334,7 @@ class EPIESolver(ConventionalSolver):
         propagators: t.Optional[NDArray[numpy.complexfloating]],
     ) -> SimulationState:
         rescale_factors = []
-        for (group, group_patterns) in stream_patterns(groups, patterns, xp=sim.xp,
-                                                       buf_n=self.engine_plan.buffer_n_groups):
+        for (group, group_patterns) in self.iter_patterns(groups, patterns, sim.xp):
             group_rescale_factors = epie_dry_run(
                 sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators
             )
@@ -351,8 +372,7 @@ class EPIESolver(ConventionalSolver):
         beta_object = process_schedule(self.plan.beta_object)({'state': sim.state, 'niter': self.engine_plan.niter})
         beta_probe = process_schedule(self.plan.beta_probe)({'state': sim.state, 'niter': self.engine_plan.niter})
 
-        for (group_i, (group, group_patterns)) in enumerate(stream_patterns(groups, patterns, xp=xp,
-                                                                            buf_n=self.engine_plan.buffer_n_groups)):
+        for (group_i, (group, group_patterns)) in enumerate(self.iter_patterns(groups, patterns, xp)):
             group_calc_error = calc_error and calc_error_mask[group_i]
 
             (sim, errors, group_pos_update) = epie_run(
@@ -363,10 +383,10 @@ class EPIESolver(ConventionalSolver):
                 beta_probe=beta_probe,
                 update_object=update_object,
                 update_probe=update_probe,
+                jit_unroll_slices=self.engine_plan.jit_unroll_slices,
             )
-            check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
-            #assert sim.state.object.data.dtype == to_complex_dtype(sim.dtype)
-            #assert sim.state.probe.data.dtype == to_complex_dtype(sim.dtype)
+            if self.engine_plan.check_every_group:
+                check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")
 
             sim = sim.apply_group_constraints(group)
 
@@ -412,7 +432,11 @@ def epie_dry_run(
     return exp_intensity / model_intensity
 
 
-@partial(jit, donate_argnames=('sim',), static_argnames=('update_object', 'update_probe', 'update_position', 'calc_error'))
+@partial(
+    jit,
+    donate_argnames=('sim',),
+    static_argnames=('update_object', 'update_probe', 'update_position', 'calc_error', 'jit_unroll_slices')
+)
 def epie_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
@@ -425,6 +449,7 @@ def epie_run(
     update_probe: bool = True,
     update_position: bool = True,
     calc_error: bool = True,
+    jit_unroll_slices: t.Union[int, bool] = False,
 ) -> t.Tuple[SimulationState, t.Optional[NDArray[numpy.floating]], t.Optional[NDArray[numpy.floating]]]:
     xp = cast_array_module(sim.xp)
     obj_grid = sim.state.object.sampling
@@ -444,7 +469,7 @@ def epie_run(
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
-    psi = slice_forwards(props, psi, sim_slice)
+    psi = slice_forwards(props, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     model_wave = fft2(psi[-1] * group_obj[:, -1, None])
     # sum over incoherent modes
@@ -484,7 +509,7 @@ def epie_run(
 
         return (sim, chi)
 
-    (sim, chi) = slice_backwards(props, (sim, chi), update_slice)
+    (sim, chi) = slice_backwards(props, (sim, chi), update_slice, jit_unroll_slices=jit_unroll_slices)
 
     if update_position:
         def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:

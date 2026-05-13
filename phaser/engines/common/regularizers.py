@@ -41,7 +41,7 @@ class ClampObjectAmplitude:
         return (sim, None)
 
 
-@partial(jit, donate_argnames=('obj',), cupy_fuse=True)
+@partial(jit, donate_argnames=('obj',), cupy_fuse=False)
 def clamp_amplitude(
     obj: NDArray[numpy.complexfloating],
     min: t.Union[float, numpy.floating, None],

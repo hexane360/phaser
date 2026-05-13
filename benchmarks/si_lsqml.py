@@ -10,7 +10,7 @@ import numpy
 import pane
 import pynvml
 
-from phaser.utils.num import get_backend_devices, get_backend_module, Sampling, set_default_device
+from phaser.utils.num import get_backend_devices, get_backend_module, Sampling, set_default_device, to_device
 from phaser.plan import ReconsPlan, EngineHook, BackendName
 from phaser.state import PreparedRecons
 from phaser.execute import execute_engine, initialize_reconstruction
@@ -75,7 +75,7 @@ def benchmark_grad(
     devices = get_backend_devices(xp)
     print(f"Available devices: {list(devices)}", file=sys.stderr)
     print(f"Using device '{devices[0]}'", file=sys.stderr)
-    set_default_device(devices[0], xp)
+    set_default_device(to_device(devices[0], xp), xp)
 
     engine = pane.convert({
         'type': 'gradient',
@@ -84,7 +84,7 @@ def benchmark_grad(
         'probe_modes': 4,
         'niter': 15,
         'grouping': grouping,
-        'noise_model': {'type': 'amplitude', 'eps': 1.0e-1},
+        'noise_model': {'type': 'amplitude', 'eps': 1.0e-4},
         'solvers': {
             'object': {
                 'type': 'adam',
@@ -119,6 +119,61 @@ def benchmark_grad(
     return iter_times
 
 
+def benchmark_lsqml(
+    grouping: int, sim_size: int, backend: BackendName,
+    unroll: t.Union[int, bool] = 10,
+) -> t.List[float]:
+    (recons, plan) = initialize(sim_size)
+    xp = get_backend_module(backend)
+    recons = recons.to_xp(xp)
+
+    devices = get_backend_devices(xp)
+    print(f"Available devices: {list(devices)}", file=sys.stderr)
+    print(f"Using device '{devices[0]}'", file=sys.stderr)
+    set_default_device(to_device(devices[0], xp), xp)
+
+    engine = pane.convert({
+        'type': 'conventional',
+        'buffer_n_groups': 16 if grouping < 256 else 2,
+        'jit_unroll_slices': unroll,
+        'probe_modes': 4,
+        'niter': 15,
+        'grouping': grouping,
+        'noise_model': {'type': 'amplitude', 'eps': 1.0e-1},
+        'solver': {
+            'type': 'lsqml',
+            'beta_probe': 0.1,
+            'beta_object': 0.1,
+            'gamma': 1.0e-4,
+            'illum_reg_object': 1.0e-2,
+            'illum_reg_probe': 1.0e-2,
+        },
+        'position_solver': {
+            'type': 'momentum',
+            'momentum': 0.90,
+            'step_size': 8.0e-2,
+            'max_step_size': 0.2,
+        },
+        'iter_constraints': [
+            {'type': 'clamp_object_amplitude', 'amplitude': 1.0},
+        ],
+        'group_constraints': [
+        ],
+        'update_probe': True,
+        'update_object': True,
+        'update_positions': False,
+        'save': False, 'save_images': False,
+    }, EngineHook)
+
+    recons = execute_engine(recons, engine)
+
+    iter_times: t.List[float] = numpy.diff(recons.state.progress['time'].values).tolist()[N_WARMUP:]
+
+    print(f"Iter times: {iter_times}", file=sys.stderr)
+    print(f"Mean time: {sum(iter_times) / len(iter_times):.3f} s", file=sys.stderr)
+    return iter_times
+
+
 if __name__ == '__main__':
     pynvml.nvmlInit()
     import jax
@@ -126,35 +181,34 @@ if __name__ == '__main__':
     device_name = jax.devices()[0].device_kind
     print(f"device: {device_name}", file=sys.stderr)
 
-    backend = 'jax'
+    for backend in ('jax', 'cupy'):
+        for sim_size, unroll, grouping in itertools.product((128, 192), (5,), (8, 4, 16, 32, 64, 128, 256, 512, 1024)):
+            if backend == 'jax':
+                import jax.version
+                backend_version = jax.version.__version__
+            else:
+                import cupy
+                backend_version = cupy.__version__
 
-    for sim_size, unroll, grouping in itertools.product((128,), (5, False), (8, 4, 16, 32, 64, 128, 256, 512, 1024)):
-        if backend == 'jax':
-            import jax.version
-            backend_version = jax.version.__version__
-        else:
-            raise NotImplementedError()
-
-        print(f"\nRunning grad, sim_size={sim_size} backend={backend!r} grouping={grouping}...", file=sys.stderr)
-        print_memory_usage(file=sys.stderr)
-        try:
-            iter_times = benchmark_grad(grouping, sim_size, backend, unroll=unroll)
-        except Exception as e:
-            print(f"Failed to run, error:\n{e}", file=sys.stderr)
-        else:
-            json.dump({
-                'engine': 'grad',
-                'backend': backend,
-                'backend_version': backend_version,
-                'sim_size': sim_size,
-                'n_positions': 80*80,
-                'n_slices': 10,
-                'n_modes': 4,
-                'grouping': grouping,
-                'device': device_name,
-                'code': 'v5_unroll5' if unroll else 'v5',
-                'iter_times': iter_times,
-            }, sys.stdout)
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-
+            print(f"\nRunning lsqml, sim_size={sim_size} backend={backend!r} grouping={grouping}...", file=sys.stderr)
+            print_memory_usage(file=sys.stderr)
+            try:
+                iter_times = benchmark_lsqml(grouping, sim_size, backend, unroll=unroll)
+            except Exception as e:
+                print(f"Failed to run, error:\n{e}", file=sys.stderr)
+            else:
+                json.dump({
+                    'engine': 'lsqml',
+                    'backend': backend,
+                    'backend_version': backend_version,
+                    'sim_size': sim_size,
+                    'n_positions': 80*80,
+                    'n_slices': 10,
+                    'n_modes': 4,
+                    'grouping': grouping,
+                    'device': device_name,
+                    'code': 'v5_unroll5',
+                    'iter_times': iter_times,
+                }, sys.stdout)
+                sys.stdout.write("\n")
+                sys.stdout.flush()
