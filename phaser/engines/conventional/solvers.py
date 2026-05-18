@@ -5,7 +5,7 @@ import typing as t
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import cast_array_module, at, abs2, fft2, ifft2, jit, check_finite, to_complex_dtype, to_numpy
+from phaser.utils.num import cast_array_module, at, abs2, fft2, ifft2, jit, check_finite, to_complex_dtype, to_numpy, xp_is_jax
 from phaser.hooks.solver import ConventionalSolver
 from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
@@ -16,9 +16,9 @@ from phaser.engines.common.simulation import (
 
 
 class LSQMLSolver(ConventionalSolver):
-    def __init__(self, plan: ConventionalEnginePlan, props: LSQMLSolverPlan):
+    def __init__(self, engine_plan: ConventionalEnginePlan, props: LSQMLSolverPlan):
         self.plan: LSQMLSolverPlan = props
-        self.engine_plan: ConventionalEnginePlan = plan
+        self.engine_plan: ConventionalEnginePlan = engine_plan
 
     @classmethod
     def name(cls) -> str:
@@ -30,6 +30,11 @@ class LSQMLSolver(ConventionalSolver):
 
         self.obj_mag: NDArray[numpy.floating] = xp.zeros(sim.state.probe.data.shape[-2:], dtype=sim.dtype)
         self.probe_mag: NDArray[numpy.floating] = xp.zeros_like(sim.state.object.data, dtype=sim.dtype)
+
+        if self.engine_plan.jit_unroll_slices and xp_is_jax(xp):
+            self.logger.warning(f"'jit_unroll_slices' set to '{self.engine_plan.jit_unroll_slices!r}'. "
+                                "This can result in slow compilation, use with care.")
+        self.jit_unroll_slices = False if self.engine_plan.jit_unroll_slices is None else self.engine_plan.jit_unroll_slices
 
         return sim
 
@@ -112,7 +117,7 @@ class LSQMLSolver(ConventionalSolver):
                 update_probe=update_probe,
                 update_position=update_positions,
                 calc_error=group_calc_error,
-                jit_unroll_slices=self.engine_plan.jit_unroll_slices,
+                jit_unroll_slices=self.jit_unroll_slices,
                 illum_reg_object=illum_reg_object,
                 illum_reg_probe=illum_reg_probe,
                 gamma=gamma,
@@ -312,6 +317,12 @@ class EPIESolver(ConventionalSolver):
 
     def init(self, sim: SimulationState) -> SimulationState:
         self.logger = logging.getLogger(__name__)
+
+        if self.engine_plan.jit_unroll_slices and xp_is_jax(sim.xp):
+            self.logger.warning(f"'jit_unroll_slices' set to '{self.engine_plan.jit_unroll_slices!r}'. "
+                                "This can result in slow compilation, use with care.")
+        self.jit_unroll_slices = False if self.engine_plan.jit_unroll_slices is None else self.engine_plan.jit_unroll_slices
+
         return sim
 
     def iter_patterns(
@@ -383,7 +394,7 @@ class EPIESolver(ConventionalSolver):
                 beta_probe=beta_probe,
                 update_object=update_object,
                 update_probe=update_probe,
-                jit_unroll_slices=self.engine_plan.jit_unroll_slices,
+                jit_unroll_slices=self.jit_unroll_slices,
             )
             if self.engine_plan.check_every_group:
                 check_finite(sim.state.object.data, sim.state.probe.data, context=f"object or probe, group {group_i}")

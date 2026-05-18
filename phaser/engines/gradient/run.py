@@ -158,6 +158,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     observer: Observer = args.get('observer', Observer())
     state = args['state']
     seed = args['seed']
+    # default to 10 slices
+    jit_unroll_slices = 10 if props.jit_unroll_slices is None else props.jit_unroll_slices
 
     noise_model = props.noise_model(None)
 
@@ -290,7 +292,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 pattern_mask=pattern_mask,
                 probe_int=probe_int,
                 xp=xp, dtype=dtype,
-                jit_unroll_slices=props.jit_unroll_slices,
+                jit_unroll_slices=jit_unroll_slices,
             )
             if props.check_every_group and not numpy.isfinite(float(losses_gpu['total_loss'])):
                 raise ValueError(f"NaN or inf encountered, group {group_i}")

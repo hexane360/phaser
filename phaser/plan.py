@@ -64,13 +64,13 @@ class EnginePlan(Dataclass, kw_only=True):
     entire dataset to the device.
     """
 
-    jit_unroll_slices: t.Union[bool, int] = 10
+    jit_unroll_slices: t.Union[None, bool, int] = None
     """
     Slices to unroll during JIT compilation (JAX backend only).
     Larger unrolling may be faster, at the expense of increased compilation time.
 
     `True` or `0` unrolls all slices, `False` or `1` disables unrolling.
-    `10` should be a good default value.
+    Defaults vary by engine (currently `10` for the gradient descent engine).
     """
 
     update_probe: FlagLike = True
