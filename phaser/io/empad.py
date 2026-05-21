@@ -205,7 +205,8 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
 
 def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] = None, *,
-            memmap: bool = False, flips: t.Optional[t.Tuple[bool, bool, bool]] = None) -> NDArray[numpy.float32]:
+            memmap: bool = False, flips: t.Optional[t.Tuple[bool, bool, bool]] = None,
+            empad_version: int = 1) -> NDArray[numpy.float32]:
     """
     Load a raw EMPAD dataset into memory.
 
@@ -220,10 +221,15 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
      - `memmap`: If specified, memmap the file as opposed to loading it eagerly.
      - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
        Defaults to `(True, False, False)` (appears to be the most common orientation).
+     - `empad_version`: Version of empad dataset. Defaults to v1.
 
     Returns a numpy array (or `numpy.memmap`)
     """
     path = Path(path)
+
+    if empad_version not in (1, 2):
+        raise ValueError(f"Unsupported empad file version '{empad_version}'."
+                         " Currently, '1' and '2' are supported.")
 
     if scan_shape is None:
         match = re.search(r"x(\d+)_y(\d+)", path.name)
@@ -239,31 +245,38 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
     else:
         a = numpy.fromfile(path, dtype=numpy.float32)
 
-    if not a.size % (130*128) == 0:
-        raise ValueError(f"File not divisible by 130x128 (size={a.size}).")
-    a.shape = (-1, 130, 128)
+    n_pad = 2 if empad_version == 1 else 0
+    if not flips:
+        # typical orientation on v1 and v2
+        flips = (True, False, False) if empad_version == 1 else (False, False, False)
+
+    if not a.size % ((128 + n_pad)*128) == 0:
+        raise ValueError(f"File not divisible by {128 + n_pad}x128 (size={a.size}).")
+    a = a.reshape(-1, 128 + n_pad, 128)
 
     if a.shape[0] != n_x * n_y:
         raise ValueError(f"Got {a.shape[0]} probes, expected {n_x}x{n_y} = {n_x * n_y}.")
-    a.shape = (n_y, n_x, *a.shape[1:])
+    a = a.reshape(n_y, n_x, *a.shape[1:])
 
-    a = a[..., :128, :]  # crop junk rows
-    return apply_flips(a, flips or (True, False, False))  # defaults to typical EMPAD orientation
+    if n_pad:
+        a = a[..., :128, :]  # crop junk rows
+
+    return apply_flips(a, flips)
 
 
 @t.overload
 def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path], folder: None = None, name: None = None,
-            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None, empad_version: int = 1):
     ...
 
 @t.overload
 def save_4d(arr: NDArray[numpy.float32], *, path: None = None, folder: t.Union[str, Path], name: t.Optional[str] = None,
-            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None, empad_version: int = 1):
     ...
 
 def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = None,
             folder: t.Union[str, Path, None] = None, name: t.Optional[str] = None,
-            flips: t.Optional[t.Tuple[bool, bool, bool]] = None):
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None, empad_version: int = 1):
     """
     Save a raw EMPAD dataset.
 
@@ -282,6 +295,9 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
      - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
        Defaults to `(True, False, False)` (appears to be the most common orientation).
     """
+    if empad_version not in (1, 2):
+        raise ValueError(f"Unsupported empad file version '{empad_version}'."
+                         " Currently, '1' and '2' are supported.")
 
     try:
         assert len(arr.shape) == 4
@@ -300,11 +316,16 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
     else:
         raise ValueError("Must specify either 'path' or 'folder'")
 
+    n_pad = 2 if empad_version == 1 else 0
+    if not flips:
+        # typical orientation on v1 and v2
+        flips = (True, False, False) if empad_version == 1 else (False, False, False)
+
     out_shape = list(arr.shape)
-    out_shape[2] = 130  # dead rows
+    out_shape[2] = 128 + n_pad  # dead rows
 
     out = numpy.zeros(out_shape, dtype=numpy.float32)
-    out[..., :128, :] = apply_flips(to_numpy(arr.astype(numpy.float32)), flips or (True, False, False))
+    out[..., :128, :] = apply_flips(to_numpy(arr.astype(numpy.float32)), flips)
 
     with open(path, 'wb') as f:
         out.tofile(f)

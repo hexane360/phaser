@@ -23,9 +23,6 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         assert meta.path is not None
         path = meta.path / meta.raw_filename
 
-        if meta.empad_version is not None and meta.empad_version > 1:
-            raise ValueError("EMPAD v2 import not currently supported (open a Github issue!)")
-
         voltage = props.kv * 1e3 if props.kv is not None else meta.voltage
         diff_step = props.diff_step or meta.diff_step
         # [x, y] -> [y, x]
@@ -33,6 +30,7 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         adu = props.adu or meta.adu
         needs_scale = not meta.is_simulated()
         det_flips = props.det_flips or meta.det_flips
+        empad_version = props.empad_version or meta.empad_version
 
         probe_hook = {
             'type': 'focused',
@@ -50,7 +48,7 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         }
 
         #TODO: add tilt to metafile
-        tilt_hook= None
+        tilt_hook = None
     else:
         voltage = props.kv * 1e3 if props.kv is not None else None
         diff_step = props.diff_step
@@ -59,6 +57,7 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         adu = None
         needs_scale = False
         det_flips = props.det_flips
+        empad_version = props.empad_version
 
     if voltage is None:
         raise ValueError("'kv'/'voltage' must be specified by metadata or passed to 'raw_data'")
@@ -70,8 +69,15 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
     if not path.exists():
         raise ValueError(f"Couldn't find raw data at path {path}")
 
+    if not empad_version:
+        logging.warning("Assuming empad v1. Specify 'empad_version' in metadata or hook to supress this warning.")
+        empad_version = 1
+
     logging.info(f"Loading with detector flips: {list(map(int, det_flips or (True, False, False)))} [y, x, transpose]")
-    patterns = numpy.fft.ifftshift(load_4d(path, scan_shape, memmap=True, flips=det_flips), axes=(-1, -2))
+    patterns = numpy.fft.ifftshift(
+        load_4d(path, scan_shape, memmap=True, flips=det_flips, empad_version=empad_version),
+        axes=(-1, -2)
+    )
 
     if needs_scale:
         if adu is None:

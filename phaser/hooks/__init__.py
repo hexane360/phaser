@@ -30,6 +30,7 @@ class RawData(t.TypedDict):
 class LoadEmpadProps(Dataclass):
     path: Path
 
+    empad_version: t.Optional[int] = None
     diff_step: t.Optional[float] = None
     kv: t.Optional[float] = None
     adu: t.Optional[float] = None
