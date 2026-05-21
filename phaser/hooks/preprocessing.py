@@ -10,7 +10,7 @@ from phaser.utils.num import get_array_module, cast_array_module, to_numpy, Samp
 from phaser.utils.misc import create_rng, create_sparse_groupings
 from phaser.utils.image import affine_transform
 from phaser.state import Patterns, ReconsState
-from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps, OffsetProps, BinProps
+from . import RawData, PostInitArgs, PoissonProps, ScaleProps, DropNanProps, CropDataProps, OffsetProps, BinProps, SetDetectorMaskProps
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ def crop_data(raw_data: RawData, props: CropDataProps) -> RawData:
 
     return raw_data
 
-
 def scale_patterns(raw_data: RawData, props: ScaleProps) -> RawData:
     raw_data['patterns'] *= props.scale
     return raw_data
@@ -54,6 +53,42 @@ def bin_patterns(raw_data: RawData, props: BinProps) -> RawData:
     print(patterns.shape)  # (120, 45, 128, 128)
     
     raw_data['patterns'] = patterns
+    return raw_data
+
+def set_detector_mask(raw_data: RawData, props: SetDetectorMaskProps):
+    logger = logging.getLogger(__name__)
+    dtype = raw_data['mask'].dtype
+    path = props.path
+    ext = path.suffix.lower()
+
+    # TODO: generalize this into a utility, maybe combine with load_manual
+
+    if ext in ('.npy', '.npz'):
+        logger.info("Loading mask as npy/npz...")
+        mask = numpy.load(path)
+    elif ext in ('.tif', '.tiff'):
+        logger.info("Loading mask as TIFF...")
+        import tifffile
+        mask = numpy.asarray(tifffile.imread(path))
+    else:
+        raise ValueError(f"Unsupported extension '{path.suffix}' for mask."
+                         " Currently supported: .npy, .npz, .tif, .tiff")
+
+    if not numpy.issubdtype(mask.dtype, numpy.number) and not numpy.issubdtype(mask.dtype, numpy.bool_):
+        raise ValueError(f"Error loading mask: Expected numeric data, got dtype {mask.dtype} instead")
+    if numpy.iscomplexobj(mask):
+        raise ValueError(f"Error loading mask: Expected real-valued data, got dtype {mask.dtype} instead")
+
+    expected_shape = raw_data['patterns'].shape[-2:]
+    if mask.shape != expected_shape:
+        raise ValueError(f"Error loading mask, expected shape {expected_shape} but got shape {mask.shape}")
+
+    mask = mask.astype(dtype)
+    if props.invert:
+        mask = 1.0 - mask
+
+    raw_data['mask'] = mask
+    logger.info("Successfully applied mask")
     return raw_data
 
 

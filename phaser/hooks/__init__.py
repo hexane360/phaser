@@ -180,12 +180,13 @@ class PostInitArgs(t.TypedDict):
 class ScaleProps(Dataclass):
     scale: float
 
+
 class OffsetProps(Dataclass):
     offset: float
 
+
 class BinProps(Dataclass):
     bin: int
-
 
 
 class CropDataProps(Dataclass):
@@ -208,6 +209,13 @@ class DiffractionAlignProps(Dataclass):
     ...
 
 
+class SetDetectorMaskProps(Dataclass):
+    path: Path
+    """Path to detector mask"""
+    invert: bool = False
+    """Whether to invert detector mask"""
+
+
 class PostLoadHook(Hook[RawData, RawData]):
     known = {
         'crop_data': ('phaser.hooks.preprocessing:crop_data', CropDataProps),
@@ -215,6 +223,7 @@ class PostLoadHook(Hook[RawData, RawData]):
         'scale': ('phaser.hooks.preprocessing:scale_patterns', ScaleProps),
         'offset': ('phaser.hooks.preprocessing:offset_patterns', OffsetProps),
         'bin': ('phaser.hooks.preprocessing:bin_patterns', BinProps),
+        'set_mask': ('phaser.hooks.preprocessing:set_detector_mask', SetDetectorMaskProps),
     }
 
 

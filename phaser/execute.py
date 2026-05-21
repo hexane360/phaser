@@ -386,6 +386,12 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
     if isinstance(engine, GradientEnginePlan) and not (xp_is_jax(xp) or xp_is_torch(xp)):
         raise ValueError("The gradient descent engine requires the 'jax' or 'torch' backend.")
 
+    # check mask
+    if numpy.any(patterns.pattern_mask > 1):
+        logging.warning("Some mask values are greater than 1. This may cause problems.")
+    if numpy.mean(patterns.pattern_mask) < 0.2:
+        logging.warning("Most pixels are masked. Is your mask inverted?")
+
     state = state.to_xp(xp)
 
     if engine.sim_shape is not None and engine.sim_shape != state.probe.data.shape[-2:]:
