@@ -148,7 +148,7 @@ def convolve1d(
     # convolve
     arr = jax.lax.conv_general_dilated(
         arr.reshape(-1, 1, arr.shape[-1]),
-        to_3d(jnp.flip(weights)),
+        to_3d(jnp.flip(weights)).astype(arr.dtype),
         window_strides=(1,), padding='VALID',
         dimension_numbers=('NCW', 'OIW', 'NCW'),
     )

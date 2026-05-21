@@ -433,7 +433,7 @@ def convolve1d(
     r = len(weights) // 2
 
     # torch's conv1d is actually a correlation
-    weights = weights.flip(0)
+    weights = weights.flip(0).to(arr.dtype)
 
     # TODO: this will fail for some pads where weights is large, investigate further
     arr = F.pad(arr, (len(weights) - r - 1, r), mode=pad_mode, value=cval)
