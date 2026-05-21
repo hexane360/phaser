@@ -6,6 +6,8 @@ from numpy.typing import ArrayLike
 import jax  # pyright: ignore[reportMissingImports]
 import jax.numpy as jnp    # pyright: ignore[reportMissingImports]
 
+from phaser.utils.image import _InterpBoundaryMode
+
 
 Device: t.TypeAlias = t.Any
 
@@ -14,7 +16,7 @@ def to_nd(arr: jax.Array, n: int) -> jax.Array:
     if arr.ndim > n:
         arr = arr.reshape(-1, *arr.shape[arr.ndim - n + 1:])
     elif arr.ndim < n:
-        arr = jax.lax.expand_dims(arr, [0] * (n - arr.ndim))
+        arr = jax.lax.expand_dims(arr, tuple(range((n - arr.ndim))))
 
     return arr
 
@@ -113,6 +115,46 @@ def affine_transform(
     return jax.vmap(
         lambda a: jax.scipy.ndimage.map_coordinates(a, tuple(coords), order=order, mode=jax_mode, cval=cval),
     )(to_nd(input, n_axes + 1)).reshape((*input.shape[:-n_axes], *output_shape))
+
+
+# convert scipy boundary mode to numpy.pad mode
+_INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
+    'reflect': 'symmetric',
+    'mirror': 'reflect',
+    'nearest': 'edge',
+    'grid-mirror': 'reflect',
+    'grid-wrap': 'wrap',
+    'grid-constant': 'constant',
+}
+
+
+def convolve1d(
+    arr: jnp.ndarray, weights: jnp.ndarray, axis: int = -1, *,
+    mode: _InterpBoundaryMode, cval: float = 0.
+) -> jnp.ndarray:
+    r = len(weights) // 2
+    pad_mode = _INTERP_TO_PAD.get(mode, mode)
+    pad_kwargs = {'constant_values': cval} if pad_mode == 'constant' else {}
+
+    # transpose, pad
+    arr = jnp.moveaxis(arr, axis, -1)
+    out_shape_t = arr.shape
+    arr = jnp.pad(
+        arr,
+        ((0, 0),) * (arr.ndim-1) + ((len(weights) - r - 1, r),),
+        mode=pad_mode, **pad_kwargs
+    )
+
+    # convolve
+    arr = jax.lax.conv_general_dilated(
+        arr.reshape(-1, 1, arr.shape[-1]),
+        to_3d(jnp.flip(weights)),
+        window_strides=(1,), padding='VALID',
+        dimension_numbers=('NCW', 'OIW', 'NCW'),
+    )
+
+    # unflatten, untranspose
+    return jnp.moveaxis(arr.reshape(out_shape_t), -1, axis)
 
 
 def get_devices() -> t.Tuple[Device, ...]:

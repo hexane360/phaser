@@ -278,17 +278,6 @@ def square_pixel_transfer(shape: t.Tuple[int, int], *, xp: t.Any = None) -> NDAr
     return xp.sinc(ky) * xp.sinc(kx)
 
 
-# convert scipy boundary mode to numpy.pad mode
-_INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
-    'reflect': 'symmetric',
-    'mirror': 'reflect',
-    'nearest': 'edge',
-    'grid-mirror': 'reflect',
-    'grid-wrap': 'wrap',
-    'grid-constant': 'constant',
-}
-
-
 def _canonicalize_axis(axis: int, num_dims: int) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = axis.__index__()
@@ -312,34 +301,23 @@ def convolve1d(
     axis = _canonicalize_axis(axis, arr.ndim)
 
     if xp_is_torch(xp):
-        from ._torch_kernels import _convolve1d, _MockTensor
+        from ._torch_kernels import convolve1d, _MockTensor
 
-        return t.cast(NDArray[NumT], _convolve1d(
+        return t.cast(NDArray[NumT], convolve1d(
             t.cast(_MockTensor, arr),
             t.cast(_MockTensor, weights),
             axis=axis, mode=mode, cval=cval
         ))
 
-    scipy = get_scipy_module(arr, weights)
-
     if xp_is_jax(xp):
-        r = len(weights) // 2
-        pad_mode = _INTERP_TO_PAD.get(mode, mode)
-        pad_kwargs = {'constant_values': cval} if pad_mode == 'constant' else {}
+        from ._jax_kernels import convolve1d
 
-        pad = tuple(
-            (len(weights) - r - 1, r) if i == axis else (0, 0)
-            for i in range(arr.ndim)
-        )
-        weights = weights[tuple(
-            slice(None) if i == axis else None
-            for i in range(arr.ndim)
-        )]
-        # TODO: use jax.lax.conv_general_dilated directly
-        return scipy.signal.convolve(
-            xp.pad(arr, pad, mode=pad_mode, **pad_kwargs),  # type: ignore
-            weights, mode='valid', method='direct'
-        ).astype(arr.dtype)
+        return t.cast(NDArray[NumT], convolve1d(
+            arr, weights, axis,  # type: ignore
+            mode=mode, cval=cval
+        ))
+
+    scipy = get_scipy_module(arr, weights)
 
     return scipy.ndimage.convolve1d(
         arr, weights, axis, mode=mode, cval=cval

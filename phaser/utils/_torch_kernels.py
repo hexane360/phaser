@@ -416,7 +416,7 @@ _INTERP_TO_TORCH_PAD: t.Dict[_InterpBoundaryMode, str] = {
 }
 
 
-def _convolve1d(
+def convolve1d(
     arr: torch.Tensor, weights: torch.Tensor, axis: int, *,
     mode: _InterpBoundaryMode, cval: float = 0.
 ) -> torch.Tensor:
