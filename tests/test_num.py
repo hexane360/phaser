@@ -1,5 +1,7 @@
+import typing as t
 
 import numpy
+from numpy.typing import ArrayLike
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 import pytest
 
@@ -12,6 +14,7 @@ from phaser.utils.num import (
     fft2, ifft2, abs2,
     to_numpy, as_array,
     ufunc_outer,
+    pad, _PadMode
 )
 
 
@@ -224,3 +227,83 @@ def test_ufunc_outer(backend: BackendName):
     expected = numpy.multiply.outer(xs, ys)
     actual = to_numpy(ufunc_outer(xp.multiply, xp.array(xs), xp.array(ys)))
     assert_array_equal(expected, actual)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize(('mode', 'pad_width', 'expected'), [
+    ('constant', 0,       [1, 2, 3, 4, 5]),
+    ('constant', 2,       [3, 3, 1, 2, 3, 4, 5, 3, 3]),
+    ('constant', (2, 1),  [3, 3, 1, 2, 3, 4, 5, 3]),
+    ('constant', (0, 3),  [1, 2, 3, 4, 5, 3, 3, 3]),
+    ('constant', (3, 0),  [3, 3, 3, 1, 2, 3, 4, 5]),
+    ('edge', 2,           [1, 1, 1, 2, 3, 4, 5, 5, 5]),
+    ('edge', (2, 1),      [1, 1, 1, 2, 3, 4, 5, 5]),
+    ('edge', (0, 3),      [1, 2, 3, 4, 5, 5, 5, 5]),
+    ('edge', (3, 0),      [1, 1, 1, 1, 2, 3, 4, 5]),
+    ('edge', 6,           [1, 1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5]),
+    ('reflect', 2,        [3, 2, 1, 2, 3, 4, 5, 4, 3]),
+    ('reflect', (2, 1),   [3, 2, 1, 2, 3, 4, 5, 4]),
+    ('reflect', (1, 3),   [2, 1, 2, 3, 4, 5, 4, 3, 2]),
+    ('reflect', (0, 3),   [1, 2, 3, 4, 5, 4, 3, 2]),
+    ('reflect', 6,        [3, 4, 5, 4, 3, 2, 1, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3]),
+    ('symmetric', 2,      [2, 1, 1, 2, 3, 4, 5, 5, 4]),
+    ('symmetric', (2, 1), [2, 1, 1, 2, 3, 4, 5, 5]),
+    ('symmetric', (1, 3), [1, 1, 2, 3, 4, 5, 5, 4, 3]),
+    ('symmetric', (0, 3), [1, 2, 3, 4, 5, 5, 4, 3]),
+    ('symmetric', 6,      [5, 5, 4, 3, 2, 1, 1, 2, 3, 4, 5, 5, 4, 3, 2, 1, 1]),
+    ('wrap', 2,           [4, 5, 1, 2, 3, 4, 5, 1, 2]),
+    ('wrap', (2, 1),      [4, 5, 1, 2, 3, 4, 5, 1]),
+    ('wrap', (1, 3),      [5, 1, 2, 3, 4, 5, 1, 2, 3]),
+    ('wrap', (0, 3),      [1, 2, 3, 4, 5, 1, 2, 3]),
+    ('wrap', 6,           [5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1]),
+])
+def test_pad_1d(
+    mode: _PadMode,
+    pad_width: t.Union[int, t.Tuple[int, int], t.Tuple[t.Tuple[int, int]]],
+    expected: ArrayLike,
+    backend: BackendName,
+):
+    xp = get_backend_module(backend)
+    in_arr = xp.array([1, 2, 3, 4, 5])
+
+    assert_array_equal(
+        to_numpy(pad(in_arr, pad_width, mode=mode, cval=3)),
+        numpy.array(expected),
+    )
+
+
+@with_backends('jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ('constant', 'edge', 'reflect', 'symmetric', 'wrap'))
+@pytest.mark.parametrize(('shape', 'pad_width'), [
+    ((4, 6), 2),
+    ((4, 6), (2, 3)),
+    ((4, 6), ((1, 2), (3, 1))),
+    ((4, 6), ((0, 3), (2, 0))),
+    ((3, 3), 4),
+    ((3, 5), ((4, 4), (6, 6))),
+    ((2, 4, 6), 2),
+    ((2, 4, 6), ((1, 1), (2, 3), (0, 2))),
+    ((2, 3, 4), 5),
+    ((2, 3, 4, 5), 2),
+    ((2, 3, 4, 5), ((1, 2), (0, 3), (2, 1), (1, 1))),
+    ((5,), 3),
+    ((1, 4), 2),
+    ((1, 5), ((0, 0), (2, 2))),
+])
+def test_pad_nd(
+    mode: _PadMode,
+    shape: t.Sequence[int],
+    pad_width: t.Union[int, t.Tuple[int, int], t.Tuple[t.Tuple[int, int]]],
+    backend: BackendName,
+):
+    xp = get_backend_module(backend)
+
+    kwargs = {'constant_values': 3} if mode == 'constant' else {}
+
+    rng = numpy.random.default_rng()
+    in_arr = rng.integers(1024, size=shape)
+
+    assert_array_equal(
+        to_numpy(pad(xp.array(in_arr), pad_width, mode=mode, cval=3)),
+        numpy.pad(in_arr, pad_width, mode=mode, **kwargs)  # type: ignore
+    )

@@ -754,7 +754,7 @@ def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
     return x.real**2 + x.imag**2  # type: ignore
 
 
-_PadMode: t.TypeAlias = t.Literal['constant', 'edge', 'reflect', 'wrap']
+_PadMode: t.TypeAlias = t.Literal['constant', 'edge', 'reflect', 'wrap', 'symmetric']
 
 
 @t.overload
@@ -778,11 +778,12 @@ def pad(
     xp = get_array_module(arr)
 
     if xp_is_torch(xp):
-        pass
-        #from ._torch_kernels import pad
-        #return pad(arr, pad_width, mode=mode, cval=cval)  # type: ignore
+        from ._torch_kernels import pad
+        return pad(arr, pad_width, mode=mode, cval=cval)  # type: ignore
 
-    return xp.pad(arr, pad_width, mode=mode, constant_values=cval)
+    if mode == 'constant':
+        return xp.pad(arr, pad_width, mode=mode, constant_values=cval)
+    return xp.pad(arr, pad_width, mode=mode)
 
 
 
