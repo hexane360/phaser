@@ -468,13 +468,14 @@ def _map_coordinates_constant(
     return result.type(arr.dtype)
 
 
-_INTERP_TO_TORCH_PAD: t.Dict[_InterpBoundaryMode, str] = {
-    'nearest': 'replicate',
-    'wrap': 'circular',
-    'grid-wrap': 'circular',
-    'constant': 'constant',
-    'grid-constant': 'constant',
+# convert scipy boundary mode to numpy.pad mode
+_INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
+    'reflect': 'symmetric',
     'mirror': 'reflect',
+    'nearest': 'edge',
+    'grid-mirror': 'reflect',
+    'grid-wrap': 'wrap',
+    'grid-constant': 'constant',
 }
 
 
@@ -482,28 +483,26 @@ def convolve1d(
     arr: torch.Tensor, weights: torch.Tensor, axis: int, *,
     mode: _InterpBoundaryMode, cval: float = 0.
 ) -> torch.Tensor:
-    pad_mode = _INTERP_TO_TORCH_PAD.get(mode)
-    if pad_mode is None:
-        raise ValueError(f"Pad mode '{mode}' not implemented for torch backend")
-
-    # reorder to last axis
-    reorder = axis != arr.ndim - 1
-    if reorder:
-        arr = torch.moveaxis(arr, axis, -1)
-    leading_shape = arr.shape[:-1]
-    arr = arr.reshape((-1, arr.shape[-1]))
     r = len(weights) // 2
+    pad_mode = t.cast(_PadMode, _INTERP_TO_PAD.get(mode, mode))
 
-    # torch's conv1d is actually a correlation
-    weights = weights.flip(0).to(arr.dtype)
+    # reorder to last axis, pad
+    arr = torch.moveaxis(arr, axis, -1)
+    out_shape_t = arr.shape
+    # pad
+    arr = pad(
+        arr,
+        ((0, 0),) * (arr.ndim-1) + ((len(weights) - r - 1, r),),
+        mode=pad_mode, cval=cval
+    )
 
-    # TODO: this will fail for some pads where weights is large, investigate further
-    arr = F.pad(arr, (len(weights) - r - 1, r), mode=pad_mode, value=cval)
+    # convolve
     arr = F.conv1d(
-        arr[:, None, :], weights[None, None, :]
-    )[:, 0].reshape((*leading_shape, -1))
+        arr.reshape((-1, 1, arr.shape[-1])),
+        weights.flip(0).to(arr.dtype)[None, None, :]
+    ).reshape(out_shape_t)
 
-    return torch.moveaxis(arr, -1, axis) if reorder else arr
+    return torch.moveaxis(arr, -1, axis)
 
 
 def get_devices() -> t.Tuple[torch.device, ...]:

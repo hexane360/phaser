@@ -88,12 +88,10 @@ def test_resample(
     ([1+1.j, 2+2.j, 3+3.j], [1.0, 2.0], 0),
     ([[[1, 2], [3, 4]], [[2, 3], [4, 5]], [[3, 4], [5, 6]]], [1, 2, 3], 1),
     ([1, 2, 3, 4, 5], [2], 0),
-
-    # TODO these fail on torch
     # kernel longer than array
-    #([1, 2, 3], [1, 2, 3, 4, 5, 6, 7], 0),
+    ([1, 2, 3], [1, 2, 3, 4, 5, 6, 7], 0),
     # length-1 along conv axis
-    #([[[1, 2], [3, 4]]], [1, 2, 3], 0),
+    ([[[1, 2], [3, 4]]], [1, 2, 3], 0),
 ])
 @pytest.mark.parametrize(('mode', 'cval'), [
     ('constant', 1.0), ('nearest', 0.0), ('mirror', 0.0),
@@ -103,9 +101,6 @@ def test_convolve1d(
     arr, weights, axis, mode, cval,
     backend: BackendName,
 ):
-    if mode == 'reflect' and backend == 'torch':
-        pytest.xfail("'reflect' not supported on torch")
-
     arr = numpy.asarray(arr)
     weights = numpy.asarray(weights)
 

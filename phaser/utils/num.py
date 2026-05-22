@@ -786,7 +786,6 @@ def pad(
     return xp.pad(arr, pad_width, mode=mode)
 
 
-
 @t.overload
 def ufunc_outer(ufunc: numpy.ufunc, x: NDArray[DTypeT], y: ArrayLike) -> NDArray[DTypeT]:
     ...
