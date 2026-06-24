@@ -25,7 +25,8 @@ class DetectorConfiguration(pane.PaneBase, frozen=False, kw_only=True, allow_ext
 
 class CameraProcessingParameters(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
     readout_area: t.Tuple[float, float, float, float]
-    processing: t.List[str]
+    processing: t.Optional[t.List[str]]
+    flip_l_r: t.Optional[bool]
 
 
 class Properties(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):

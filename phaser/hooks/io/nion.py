@@ -36,6 +36,7 @@ def load_nion(args: None, props: LoadNionProps) -> RawData:
     scan_shape = tuple(map(int, scan_shape))
     spatial_calibration = nion_metadata.spatial_calibrations[0]
     camera_processing = nion_metadata.properties.camera_processing_parameters.processing
+    flip_l_r = nion_metadata.properties.camera_processing_parameters.flip_l_r
 
     spatial_units = spatial_calibration.units
 
@@ -75,10 +76,13 @@ def load_nion(args: None, props: LoadNionProps) -> RawData:
 
     flips: t.List[bool] = [False, False, False]
 
-    for process_step in camera_processing:
-        match process_step:
-            case "flip_l_r":
-                flips[1] = True
+    if camera_processing is not None:
+        for process_step in camera_processing:
+            match process_step:
+                case "flip_l_r":
+                    flips[1] = True
+    elif flip_l_r is not None:
+        flips[1] = flip_l_r
 
     logger.info(f"Loading with flips: {flips}")
 
