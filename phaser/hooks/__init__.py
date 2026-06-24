@@ -47,6 +47,8 @@ class LoadNionProps(Dataclass):
     path: Path
 
     diff_step: float
+    det_flips: t.Optional[t.Tuple[bool, bool, bool]] = None
+
     detector_rotation_offset: t.Optional[float] = None
 
 class LoadManualProps(Dataclass, kw_only=True):

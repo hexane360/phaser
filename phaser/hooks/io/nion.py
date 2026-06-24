@@ -74,15 +74,18 @@ def load_nion(args: None, props: LoadNionProps) -> RawData:
     if not path.exists():
         raise ValueError(f"Couldn't find nion data at path {path}")
 
-    flips: t.List[bool] = [False, False, False]
+    if props.det_flips is not None:
+        flips = list(props.det_flips)
+    else:
+        flips: t.List[bool] = [False, False, False]
 
-    if camera_processing is not None:
-        for process_step in camera_processing:
-            match process_step:
-                case "flip_l_r":
-                    flips[1] = True
-    elif flip_l_r is not None:
-        flips[1] = flip_l_r
+        if camera_processing is not None:
+            for process_step in camera_processing:
+                match process_step:
+                    case "flip_l_r":
+                        flips[1] = True
+        elif flip_l_r is not None:
+            flips[1] = flip_l_r
 
     logger.info(f"Loading with flips: {flips}")
 
