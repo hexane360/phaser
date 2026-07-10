@@ -65,7 +65,7 @@ def default_console() -> Console:
     }))
     logging.basicConfig(
         level=logging.INFO, format="%(message)s", datefmt="[%X]",
-        handlers=[RichHandler(logging.INFO, console=console)]
+        handlers=[RichHandler(logging.INFO, console=console, enable_link_path=False)]
     )
     return console
 
@@ -193,6 +193,7 @@ def make_params(config: ProcessEmpadConfig) -> t.Sequence[t.Tuple[str, Parameter
 def process_dir(path: t.Union[str, Path], config: ProcessEmpadConfig,
                 params: t.Sequence[t.Tuple[str, Parameter]],
                 console: Console, prompt: bool = True):
+    n_proc = 0
     path = Path(path)
 
     for raw_file in path.rglob('**/*.xml'):
@@ -234,8 +235,10 @@ def process_dir(path: t.Union[str, Path], config: ProcessEmpadConfig,
 
         metadata.write_json(output_path, indent=4)
         console.print(f"Wrote metadata to '{output_path}'.")
+        n_proc += 1
 
-    console.print("Processed all files.")
+    if n_proc:
+        console.print(f"Processed {n_proc} file(s).")
 
 
 @click.command()
