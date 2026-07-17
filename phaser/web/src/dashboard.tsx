@@ -6,14 +6,16 @@ import { atom, PrimitiveAtom, useAtom, useAtomValue, Provider, useStore } from '
 import '@mantine/core/styles.css';
 import { AppShell, Container, createTheme, MantineProvider } from '@mantine/core';
 import { np_fut, np } from './wasm-array';
-import { IArrayInterchange } from 'wasm-array';
+import { IArrayInterchange, NArray } from 'wasm-array';
 
+import '@hexane/plotlib/styles.css';
 import './styles.css';
-import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeData, ObjectData, ProgressData, PartialReconsData } from './types';
+import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeMeta, ObjectSampling, ProgressData, PartialReconsData } from './types';
 import { Section } from './components';
 import { ProbePlot, ObjectPlot, ProgressPlot } from './plots';
 import Header from './header';
 import websocket from './websocket';
+import { isClose } from './utils';
 
 function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
     const [logs, setLogs] = useAtom(state);
@@ -50,8 +52,12 @@ function App(props: {}) {
     const store = useStore();
 
     const statusState: PrimitiveAtom<JobStatus | null> = atom(null as JobStatus | null);
-    const probeState: PrimitiveAtom<ProbeData | null> = atom(null as ProbeData | null);
-    const objectState: PrimitiveAtom<ObjectData | null> = atom(null as ObjectData | null);
+    // split so that consumers can subscribe to shape/sampling (which changes rarely)
+    // separately from the raw array data (which changes every update)
+    const probeMetaState: PrimitiveAtom<ProbeMeta | null> = atom(null as ProbeMeta | null);
+    const probeDataState: PrimitiveAtom<NArray | null> = atom(null as NArray | null);
+    const objectMetaState: PrimitiveAtom<ObjectSampling | null> = atom(null as ObjectSampling | null);
+    const objectDataState: PrimitiveAtom<NArray | null> = atom(null as NArray | null);
     const progressState: PrimitiveAtom<Record<string, ProgressData>> = atom({});
     const logsState: PrimitiveAtom<Array<LogRecord>> = atom([] as Array<LogRecord>);
 
@@ -62,11 +68,16 @@ function App(props: {}) {
 
         if (state.probe) {
             const probe = state.probe;
-            store.set(probeState, (_: any) => probe);
+            store.set(probeDataState, (_: any) => probe.data);
+            store.set(probeMetaState, (prev) => {
+                const meta: ProbeMeta = { sampling: probe.sampling, nprobes: probe.data.shape[0] };
+                return probeMetaEqual(prev, meta) ? prev! : meta;
+            });
         }
         if (state.object) {
             const object = state.object;
-            store.set(objectState, (_: any) => object);
+            store.set(objectDataState, (_: any) => object.data);
+            store.set(objectMetaState, (prev) => samplingEqual(prev, object.sampling) ? prev : object.sampling);
         }
         if (state.progress) {
             const progress = state.progress;
@@ -113,8 +124,8 @@ function App(props: {}) {
             <AppShell.Header><Header serverStatus={status}/></AppShell.Header>
             <AppShell.Main><Container size="lg">
                 <Section name="Progress"><ProgressPlot state={progressState}/></Section>
-                <Section name="Probe"><ProbePlot state={probeState}/></Section>
-                <Section name="Object"><ObjectPlot state={objectState}/></Section>
+                <Section name="Probe"><ProbePlot metaState={probeMetaState} dataState={probeDataState}/></Section>
+                <Section name="Object"><ObjectPlot metaState={objectMetaState} dataState={objectDataState}/></Section>
                 <Section name="Logs"><Logs state={logsState}/></Section>
             </Container></AppShell.Main>
             {/*<StatusBar state={statusState}/>*/}
@@ -145,6 +156,19 @@ async function getLogs(before?: number): Promise<LogsData> {
         throw new Error(`Failed to fetch logs: ${response.status} ${response.statusText}`);
     }
     return await response.json() as LogsData;
+}
+
+function probeMetaEqual(a: ProbeMeta | null, b: ProbeMeta): boolean {
+    return a !== null && a.nprobes === b.nprobes &&
+        isClose(a.sampling.shape, b.sampling.shape) && isClose(a.sampling.extent, b.sampling.extent)
+            && isClose(a.sampling.sampling, b.sampling.sampling);
+}
+
+function samplingEqual(a: ObjectSampling | null, b: ObjectSampling): boolean {
+    return a !== null &&
+        isClose(a.shape, b.shape) && isClose(a.sampling, b.sampling) && isClose(a.corner, b.corner)
+            && (a.region_min === null && b.region_min === null || a.region_min !== null && b.region_min !== null && isClose(a.region_min, b.region_min))
+            && (a.region_max === null && b.region_max === null || a.region_max !== null && b.region_max !== null && isClose(a.region_max, b.region_max))
 }
 
 async function decodeState(state: any): Promise<any> {

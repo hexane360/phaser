@@ -1,154 +1,184 @@
 import React, { useMemo } from 'react';
-import { useAtomValue, PrimitiveAtom } from 'jotai';
+import { atom, useAtomValue, PrimitiveAtom } from 'jotai';
+import { interpolateMagma } from 'd3-scale-chromatic';
 
+import * as plotlib from '@hexane/plotlib';
+import type { ScaleSpec } from '@hexane/plotlib';
+import type { NumericScale, ColorLike } from '@hexane/plotlib/scale';
+import { NArray } from 'wasm-array';
 import { np } from './wasm-array';
-import { ProbeData, ObjectData, ProgressData } from './types';
+
+import { ProbeMeta, ObjectSampling, ProgressData } from './types';
 import { PlotScale, LogPlotScale } from './plotting/scale';
-import { Figure, PlotList, Plot, AxisSpec, ColorScale, PlotImage, PlotLine, makeId, styles } from './plotting/plot';
-import { Colorbar } from './plotting/colorbar';
-import { HBox } from './components';
-import Scalebar from './plotting/scalebar';
-import { useElementSize } from '@mantine/hooks';
+import { Figure, Plot, AxisSpec, PlotLine, makeId, styles } from './plotting/plot';
 
-
-export function ObjectPlot({state}: {state: PrimitiveAtom<ObjectData | null>}) {
-    let object = useAtomValue(state);
-    if (!object || !np) return <div></div>;
-    return <ObjectPlotSub object={object} />;
-}
-
-function ObjectPlotSub({object}: {object: ObjectData}) {
-    let object_data = object.data;
-
-    let phase = np!.angle(object_data);
+function objectPhase(data: NArray): NArray {
+    let phase = np!.angle(data);
     while (phase.shape.length > 2) {
         phase = np!.nansum(phase, [0]);
     }
+    return phase;
+}
 
-    const [ny, nx] = phase.shape.values();
+function croppedPhase(phase: NArray, sampling: ObjectSampling): NArray {
+    if (!sampling.region_min || !sampling.region_max) return phase;
 
-    let phase_cropped;
-    if (object.sampling.region_min && object.sampling.region_max) {
-        // y position = y index * sampling + corner
-        // y index = (y position - corner) / sampling
-        const [y_min, y_max, x_min, x_max] = [
-            Math.ceil((object.sampling.region_min[0] - object.sampling.corner[0]) / object.sampling.sampling[0]),
-            Math.floor((object.sampling.region_max[0] - object.sampling.corner[0]) / object.sampling.sampling[0]),
-            Math.ceil((object.sampling.region_min[1] - object.sampling.corner[1]) / object.sampling.sampling[1]),
-            Math.floor((object.sampling.region_max[1] - object.sampling.corner[1]) / object.sampling.sampling[1]),
-        ];
-
-        phase_cropped = phase.slice(new np!.Slice(y_min, y_max), new np!.Slice(x_min, x_max));
-    } else {
-        phase_cropped = phase;
-    }
-
-    const [vmin, vmax]: [number, number] = [
-        np!.nanmin(phase_cropped).toNestedArray() as number,
-        np!.nanmax(phase_cropped).toNestedArray() as number
+    // y position = y index * sampling + corner
+    // y index = (y position - corner) / sampling
+    const [y_min, y_max, x_min, x_max] = [
+        Math.ceil((sampling.region_min[0] - sampling.corner[0]) / sampling.sampling[0]),
+        Math.floor((sampling.region_max[0] - sampling.corner[0]) / sampling.sampling[0]),
+        Math.ceil((sampling.region_min[1] - sampling.corner[1]) / sampling.sampling[1]),
+        Math.floor((sampling.region_max[1] - sampling.corner[1]) / sampling.sampling[1]),
     ];
+
+    return phase.slice(new np!.Slice(y_min, y_max), new np!.Slice(x_min, x_max));
+}
+
+interface ObjectPlotProps {
+    metaState: PrimitiveAtom<ObjectSampling | null>
+    dataState: PrimitiveAtom<NArray | null>
+}
+
+export function ObjectPlot({metaState, dataState}: ObjectPlotProps) {
+    const hasObject = useAtomValue(metaState) !== null;
+    if (!hasObject || !np) return <div></div>;
+    return <ObjectPlotSub metaState={metaState} dataState={dataState} />;
+}
+
+// `metaState` only changes when the object's shape/sampling does (rare), so this only
+// re-renders (as a React tree) on those occasions. The per-tick array data instead flows
+// through `dataState` straight into atoms passed to `PlotImage`, which subscribes to them
+// directly and redraws its canvas without forcing `Figure`/`Plot` (and the whole layout/
+// interaction machinery underneath them) to re-render every update.
+function ObjectPlotSub({metaState, dataState}: ObjectPlotProps) {
+    const sampling = useAtomValue(metaState)!;
+
+    const [ny, nx] = sampling.shape;
+    const xmin = sampling.corner[1], xmax = sampling.corner[1] + nx * sampling.sampling[1];
+    const ymin = sampling.corner[0], ymax = sampling.corner[0] + ny * sampling.sampling[0];
 
     const aspect = nx / ny;
     const size = 500.0;
     // keep area constant
-    const [x_size, y_size] = [Math.ceil(size * Math.sqrt(aspect)), Math.ceil(size / Math.sqrt(aspect))];
+    const [xSize, ySize] = [Math.ceil(size * Math.sqrt(aspect)), Math.ceil(size / Math.sqrt(aspect))];
 
-    const xmin = object.sampling.corner[1],
-          xmax = object.sampling.corner[1] + nx * object.sampling.sampling[1];
+    const phaseAtom = useMemo(() => atom((get) => {
+        const data = get(dataState);
+        return data ? objectPhase(data) : null;
+    }), [dataState]);
 
-    const ymin = object.sampling.corner[0],
-          ymax = object.sampling.corner[0] + ny * object.sampling.sampling[0];
+    const drawFnAtom = useMemo(() => atom((get) => {
+        const phase = get(phaseAtom);
+        return (_ctx: CanvasRenderingContext2D, imageData: ImageData, scale: NumericScale<ColorLike>) => {
+            if (!phase || !np) return;
+            const [vmin, vmax] = scale.domain as [number, number];
+            imageData.data.set(
+                np.expr`(${phase} - ${vmin}) / (${vmax} - ${vmin})`.apply_cmap('magma')
+            );
+        };
+    }), [phaseAtom]);
 
-    const axes: Map<string, AxisSpec> = useMemo(() => new Map([
-        ["x", {
-            scale: new PlotScale([xmin, xmax], [0.0, x_size]),
-            label: "X",
-            show: false,
-        }],
-        ["y", {
-            scale: new PlotScale([ymin, ymax], [0.0, y_size]),
-            label: "Y",
-            show: false,
-        }],
-    ]), [xmin, xmax, ymin, ymax, x_size, y_size]);
+    const autoscaleFnAtom = useMemo(() => atom((get) => {
+        const phase = get(phaseAtom);
+        return () => {
+            if (!phase || !np) return { vmin: null, vmax: null };
+            const cropped = croppedPhase(phase, sampling);
+            return {
+                vmin: np.nanmin(cropped).toNestedArray() as number,
+                vmax: np.nanmax(cropped).toNestedArray() as number,
+            };
+        };
+    }), [phaseAtom, sampling]);
 
-    const scales: Map<string, ColorScale> = new Map([
-        ["phase", {
-            cmap: 'magma',
-            range: [vmin, vmax],
-            label: "Object Phase",
-        }]
-    ]);
+    const scales: Map<string, ScaleSpec> = useMemo(() => new Map([
+        ["x", { scale: plotlib.linear([xmin, xmax], undefined, { show: false }), size: `${xSize}px` }],
+        ["y", { scale: plotlib.linear([ymin, ymax], undefined, { show: false }), size: `${ySize}px` }],
+        ["phase", { scale: plotlib.linear([0, 1], interpolateMagma, { label: "Object Phase" }) }],
+    ] satisfies [string, ScaleSpec][]), [xmin, xmax, ymin, ymax, xSize, ySize]);
 
-    return <Figure axes={axes} scales={scales}>
-        <HBox>
-            <Plot xaxis="x" yaxis="y"><PlotImage data={phase} scale="phase"/><Scalebar unitScale={1e-10}/></Plot>
-            <Colorbar scale="phase"/>
-        </HBox>
-    </Figure>;
+    return <plotlib.Figure scales={scales}>
+        <plotlib.Plot xaxis="x" yaxis="y" colorbar="phase" fixedAspect={true}>
+            <plotlib.Plot.Clip>
+                <plotlib.PlotImage draw_fn={drawFnAtom} autoscale_fn={autoscaleFnAtom} width={nx} height={ny} scale="phase"/>
+            </plotlib.Plot.Clip>
+            <plotlib.Scalebar unitScale={1e-10}/>
+        </plotlib.Plot>
+    </plotlib.Figure>;
 }
 
 interface ProbePlotProps {
-    state: PrimitiveAtom<ProbeData | null>
+    metaState: PrimitiveAtom<ProbeMeta | null>
+    dataState: PrimitiveAtom<NArray | null>
 }
 
-export function ProbePlot(props: ProbePlotProps) {
-    const probes = useAtomValue(props.state);
-    if (!probes || !np) return <div></div>;
-    return <ProbePlotSub probes={probes} />
+export function ProbePlot({metaState, dataState}: ProbePlotProps) {
+    const hasProbe = useAtomValue(metaState) !== null;
+    if (!hasProbe || !np) return <div></div>;
+    return <ProbePlotSub metaState={metaState} dataState={dataState} />;
 }
 
-function ProbePlotSub({probes}: {probes: ProbeData}) {
-    let probes_data = probes.data;
+// see the equivalent comment on `ObjectPlot`/`ObjectPlotSub`: `metaState` only changes
+// rarely, `dataState` carries the per-tick array data straight into `PlotImage` atoms.
+function ProbePlotSub({metaState, dataState}: ProbePlotProps) {
+    const {sampling, nprobes: n_plots} = useAtomValue(metaState)!;
+    const [ny, nx] = sampling.shape;
 
-    const { ref, width = 1 } = useElementSize<HTMLDivElement>();
+    const intensitiesAtom = useMemo(() => atom((get) => {
+        const data = get(dataState);
+        return data ? np!.abs2(data) : null;
+    }), [dataState]);
 
-    const [nprobes, ny, nx] = probes_data.shape.values();
+    // computed once per tick and shared by every probe mode's draw_fn below
+    const intensitySlicesAtom = useMemo(() => atom((get) => {
+        const intensities = get(intensitiesAtom);
+        return intensities ? np!.split(intensities) : null;
+    }), [intensitiesAtom]);
 
-    const intensities = np!.abs2(probes_data);
-    const [vmin, vmax]: [number, number] = [
-        np!.nanmin(intensities).toNestedArray() as number,
-        np!.nanmax(intensities).toNestedArray() as number
-    ];
+    const autoscaleFnAtom = useMemo(() => atom((get) => {
+        const intensities = get(intensitiesAtom);
+        return () => {
+            if (!intensities || !np) return { vmin: null, vmax: null };
+            return {
+                vmin: np.nanmin(intensities).toNestedArray() as number,
+                vmax: np.nanmax(intensities).toNestedArray() as number,
+            };
+        };
+    }), [intensitiesAtom]);
 
-    const axes: Map<string, AxisSpec> = useMemo(() => new Map([
-        ["x", {
-            scale: new PlotScale([0, nx], [0.0, 180.0]),
-            label: "X",
-            show: false,
-        }],
-        ["y", {
-            scale: new PlotScale([0, ny], [0.0, 180.0]),
-            label: "Y",
-            show: false,
-        }],
-    ]), [nx, ny]);
+    const drawFnAtoms = useMemo(() => Array.from({length: n_plots}, (_, i) => atom((get) => {
+        const slices = get(intensitySlicesAtom);
+        return (_ctx: CanvasRenderingContext2D, imageData: ImageData, scale: NumericScale<ColorLike>) => {
+            if (!slices || !np) return;
+            const [vmin, vmax] = scale.domain as [number, number];
+            imageData.data.set(
+                np.expr`(${slices[i]} - ${vmin}) / (${vmax} - ${vmin})`.apply_cmap('magma')
+            );
+        };
+    })), [intensitySlicesAtom, n_plots]);
 
-    const scales: Map<string, ColorScale> = new Map([
-        ["intensity", {
-            cmap: 'magma',
-            range: [vmin, vmax],
-            label: "Probe Intensity",
-        }]
-    ]);
+    const scales: Map<string, ScaleSpec> = useMemo(() => new Map([
+        ["x", { scale: plotlib.linear([0, nx * sampling.sampling[1]], undefined, { show: false }), size: '180px' }],
+        ["y", { scale: plotlib.linear([0, ny * sampling.sampling[0]], undefined, { show: false }), size: '180px' }],
+        ["intensity", { scale: plotlib.linear([0, 1], interpolateMagma, { label: "Probe Intensity" }) }],
+    ] satisfies [string, ScaleSpec][]), [nx, ny]);
 
-    const n_plots = intensities.shape[0];
-
-    const plots = np!.split(intensities).map((intensity, i) => {
-        const scalebar = i + 1 == n_plots ? <Scalebar unitScale={1e-10}/> : null;
-        return <Plot key={i}><PlotImage data={intensity} scale="intensity"/>{scalebar}</Plot>;
-    });
-
-    const listWidth = width - 200; // subtract colorbar width
-
-    return <Figure axes={axes} scales={scales}>
-        <HBox ref={ref as React.RefObject<HTMLDivElement>}>
-            <PlotList xaxis="x" yaxis="y" maxWidth={listWidth}>
-                {plots}
-            </PlotList>
-            <Colorbar scale="intensity" length={100}/>
-        </HBox>
-    </Figure>;
+    return <plotlib.Figure scales={scales} width="100%">
+        <plotlib.layout.CenteredX>
+            <plotlib.layout.Decorated right={<plotlib.Colorbar scale="intensity" shrink={0.8}/>}>
+                <plotlib.layout.FlexBox wrap columnGap="12pt" rowGap="12pt">
+                    {drawFnAtoms.map((drawFnAtom, i) => (
+                        <plotlib.Plot key={i} xaxis="x" yaxis="y" fixedAspect={true}>
+                            <plotlib.Plot.Clip>
+                                <plotlib.PlotImage draw_fn={drawFnAtom} autoscale_fn={autoscaleFnAtom} width={nx} height={ny} scale="intensity"/>
+                            </plotlib.Plot.Clip>
+                            {i === n_plots - 1 && <plotlib.Scalebar unitScale={1e-10}/>}
+                        </plotlib.Plot>
+                    ))}
+                </plotlib.layout.FlexBox>
+            </plotlib.layout.Decorated>
+        </plotlib.layout.CenteredX>
+    </plotlib.Figure>;
 }
 
 export function ProgressPlot({state}: {state: PrimitiveAtom<Record<string, ProgressData>>}) {

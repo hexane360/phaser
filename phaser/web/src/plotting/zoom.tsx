@@ -34,7 +34,7 @@ export function Zoomer({children: children}: {children?: React.ReactNode}) {
     const fig = React.useContext(FigureContext)!;
     const plot = React.useContext(PlotContext)!;
 
-    const child = React.Children.only(children) as React.ReactElement;
+    const child = React.Children.only(children) as React.ReactElement<React.SVGProps<SVGSVGElement>>;
     const childRef = React.useRef<(HTMLElement & SVGSVGElement) | null>(null);
     const managerRef = React.useRef<ZoomManager | null>(null);
 

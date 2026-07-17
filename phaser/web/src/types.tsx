@@ -146,6 +146,12 @@ export interface ProbeData {
     data: NArray;
 };
 
+// client-side view of a probe's rarely-changing shape (as opposed to its per-tick array data)
+export interface ProbeMeta {
+    sampling: Sampling;
+    nprobes: number;
+}
+
 export interface ObjectData {
     sampling: ObjectSampling;
     data: NArray;
