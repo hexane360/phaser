@@ -4,11 +4,12 @@ import { createRoot } from 'react-dom/client';
 import { atom, PrimitiveAtom, useAtom, useAtomValue, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
+import '@hexane/plotlib/styles.css';
 import { AppShell, Container, createTheme, MantineProvider } from '@mantine/core';
+import * as plotlib from '@hexane/plotlib';
 import { np_fut, np } from './wasm-array';
 import { IArrayInterchange, NArray } from 'wasm-array';
 
-import '@hexane/plotlib/styles.css';
 import './styles.css';
 import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeMeta, ObjectSampling, ProgressData, PartialReconsData } from './types';
 import { Section } from './components';
@@ -141,7 +142,9 @@ const root = createRoot(document.getElementById('app')!);
 root.render(
     <StrictMode>
         <MantineProvider theme={theme}>
-            <App/>
+            <plotlib.ThemeProvider>
+                <App/>
+            </plotlib.ThemeProvider>
         </MantineProvider>
     </StrictMode>
 );

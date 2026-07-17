@@ -9,8 +9,7 @@ import { NArray } from 'wasm-array';
 import { np } from './wasm-array';
 
 import { ProbeMeta, ObjectSampling, ProgressData } from './types';
-import { PlotScale, LogPlotScale } from './plotting/scale';
-import { Figure, Plot, AxisSpec, PlotLine, makeId, styles } from './plotting/plot';
+import { useComputedColorScheme } from '@mantine/core';
 
 function objectPhase(data: NArray): NArray {
     let phase = np!.angle(data);
@@ -97,7 +96,7 @@ function ObjectPlotSub({metaState, dataState}: ObjectPlotProps) {
         ["phase", { scale: plotlib.linear([0, 1], interpolateMagma, { label: "Object Phase" }) }],
     ] satisfies [string, ScaleSpec][]), [xmin, xmax, ymin, ymax, xSize, ySize]);
 
-    return <plotlib.Figure scales={scales}>
+    return <plotlib.Figure scales={scales} colorScheme={useComputedColorScheme('light')}>
         <plotlib.Plot xaxis="x" yaxis="y" colorbar="phase" fixedAspect={true}>
             <plotlib.Plot.Clip>
                 <plotlib.PlotImage draw_fn={drawFnAtom} autoscale_fn={autoscaleFnAtom} width={nx} height={ny} scale="phase"/>
@@ -163,7 +162,7 @@ function ProbePlotSub({metaState, dataState}: ProbePlotProps) {
         ["intensity", { scale: plotlib.linear([0, 1], interpolateMagma, { label: "Probe Intensity" }) }],
     ] satisfies [string, ScaleSpec][]), [nx, ny]);
 
-    return <plotlib.Figure scales={scales} width="100%">
+    return <plotlib.Figure scales={scales} width="100%" colorScheme={useComputedColorScheme('light')}>
         <plotlib.layout.CenteredX>
             <plotlib.layout.Decorated right={<plotlib.Colorbar scale="intensity" shrink={0.8}/>}>
                 <plotlib.layout.FlexBox wrap columnGap="12pt" rowGap="12pt">
@@ -188,8 +187,14 @@ export function ProgressPlot({state}: {state: PrimitiveAtom<Record<string, Progr
     return <ProgressPlotSub progress={progress.total_loss} />;
 }
 
+// pads a [hi, lo] domain by `frac` on each side in log-space (hi upward, lo downward)
+function padLogDomain([hi, lo]: [number, number], frac: number): [number, number] {
+    const ratio = Math.pow(Math.max(hi / lo, 1.05), frac);
+    return [hi * ratio, lo / ratio];
+}
+
 function ProgressPlotSub({progress}: {progress: ProgressData}) {
-    const markerId = React.useMemo(() => makeId("marker"), []);
+    const markerId = React.useId();
     const markerRef = `url(#${markerId})`;
 
     const xs = progress.iters;
@@ -204,27 +209,28 @@ function ProgressPlotSub({progress}: {progress: ProgressData}) {
         [y_min, y_max] = [1.0, 1.0e5]
     }
 
-    const axes: Map<string, AxisSpec> = useMemo(() => new Map([
-        ["iter", {
-            scale: new PlotScale([0, x_max], [0.0, 500.0]),
-            label: "Iteration",
-            show: true,
-        }],
+    // scales are recomputed (and `Figure` re-rendered) every tick here: `iter`'s domain
+    // grows with each new datapoint and `error`'s autoscales to the current loss range,
+    // so there's no rarely-changing "meta" to split out like there was for Object/Probe.
+    const scales: Map<string, ScaleSpec> = useMemo(() => new Map([
+        ["iter", { scale: plotlib.linear([0, x_max], undefined, { label: "Iteration" }), size: '500px' }],
         ["error", {
-            scale: (new LogPlotScale([y_max, y_min], [0.0, 300.0])).pad_frac(0.1),
-            label: "Error",
-            labelOffset: 110,
-            show: true,
-            tickFormat: ".2e",
+            scale: plotlib.log(padLogDomain([y_max, y_min], 0.1), undefined, 10, {
+                label: "Error", labelOffset: 110, tickFormat: ".2e",
+            }),
+            size: '300px', zoomExtent: [0.7, Infinity],
         }],
-    ]), [x_max, y_max, y_min]);
+    ] satisfies [string, ScaleSpec][]), [x_max, y_max, y_min]);
 
-    return <Figure axes={axes}>
-        <Plot xaxis="iter" yaxis="error">
-            <marker id={markerId} viewBox="0 0 10 10" refX="5" refY="5" className={styles["plot-marker"]}>
-                <circle cx={5} cy={5} r={4}/>
-            </marker>
-            <PlotLine xs={xs} ys={ys} markerStart={markerRef} markerMid={markerRef} markerEnd={markerRef}/>
-        </Plot>
-    </Figure>;
+    return <plotlib.Figure scales={scales} colorScheme={useComputedColorScheme('light')}>
+        <plotlib.Plot xaxis="iter" yaxis="error">
+            <plotlib.Plot.Clip>
+                <marker id={markerId} viewBox="0 0 10 10" refX="5" refY="5" style={{fill: 'var(--mantine-color-bright, black)', stroke: 'none'}}>
+                    <circle cx={5} cy={5} r={4}/>
+                </marker>
+                <plotlib.PlotLine xs={xs} ys={ys} markerStart={markerRef} markerMid={markerRef} markerEnd={markerRef} label="Total loss"/>
+            </plotlib.Plot.Clip>
+            <plotlib.PlotLegend location='upper right'/>
+        </plotlib.Plot>
+    </plotlib.Figure>;
 }

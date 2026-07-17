@@ -98,7 +98,8 @@ phaser = "phaser.cli:cli"
 include = ["phaser*"]
 
 [tool.setuptools.package-data]
-"phaser.web.dist" = ["*"]
+"phaser.web.static" = ["*"]
+"phaser.web.static.dist" = ["*"]
 "phaser.web.templates" = ["*"]
 
 [tool.pytest.ini_options]
