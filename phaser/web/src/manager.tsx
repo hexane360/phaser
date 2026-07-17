@@ -9,7 +9,7 @@ import { useDisclosure } from '@mantine/hooks';
 import ky from 'ky';
 import TimeAgo from 'react-timeago';
 
-import '../static/styles.css';
+import './styles.css';
 import { JobState, WorkerState, ManagerMessage } from './types';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section } from './components';

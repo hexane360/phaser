@@ -7,10 +7,12 @@ module.exports = {
   entry: {
     manager: './src/manager.tsx',
     dashboard: './src/dashboard.tsx',
+    //"manager-widget": './src/manager-widget.tsx',
+    //"dashboard-widget": './src/dashboard-widget.tsx',
   },
   output: {
-    filename: "bundle-[name].js",
-    path: path.resolve(__dirname, "dist"),
+    filename: "[name].js",
+    path: path.resolve(__dirname, "static", "dist"),
   },
   module: {
     rules: [

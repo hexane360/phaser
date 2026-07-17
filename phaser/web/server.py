@@ -453,7 +453,7 @@ class Server:
         self.app: Quart = Quart(
             __name__,
             static_url_path="/static",
-            static_folder="dist",
+            static_folder="static",
         )
         self.app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5
         self.app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512 MiB

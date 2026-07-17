@@ -8,7 +8,7 @@ import { AppShell, Container, createTheme, MantineProvider } from '@mantine/core
 import { np_fut, np } from './wasm-array';
 import { IArrayInterchange } from 'wasm-array';
 
-import '../static/styles.css';
+import './styles.css';
 import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeData, ObjectData, ProgressData, PartialReconsData } from './types';
 import { Section } from './components';
 import { ProbePlot, ObjectPlot, ProgressPlot } from './plots';
