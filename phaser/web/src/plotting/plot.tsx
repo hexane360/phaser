@@ -9,7 +9,7 @@ import { useElementSize } from '@mantine/hooks';
 import { Transform1D, Transform2D } from './transform';
 import { PlotScale, Pair, isClose } from './scale';
 import { Zoomer } from "./zoom";
-import * as styles from "./plots.module.css";
+import styles from "./plots.module.css";
 export { styles };
 
 export interface AxisSpec {

@@ -30,10 +30,11 @@ module.exports = {
               options: {
                 importLoaders: 1,
                 modules: {
+                  namedExport: false,
+                  exportLocalsConvention: "as-is",
                   auto: /\.module\.css$/i,
                   localIdentName: '[name]__[local]',
                 },
-                //sourceMap: false,
               }
             },
             "postcss-loader",

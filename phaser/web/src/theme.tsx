@@ -1,8 +1,6 @@
 import { AppShell, AppShellStylesNames, createTheme, Tabs, TabsStylesNames } from "@mantine/core"
-import * as tabs_classes from './Tabs.module.css'
-import * as appshell_classes from './AppShell.module.css'
-
-console.log(`tabs_classes: ${JSON.stringify(tabs_classes)}`);
+import tabs_classes from './Tabs.module.css'
+import appshell_classes from './AppShell.module.css'
 
 export const makeTheme = () => createTheme({
     //fontFamily: 'Open Sans, sans-serif',
