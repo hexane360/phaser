@@ -2,6 +2,7 @@ from __future__ import annotations
 import abc
 import asyncio
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import logging
 from pathlib import Path
@@ -15,6 +16,7 @@ import time
 import weakref
 import typing as t
 
+import pane
 from quart import Quart, url_for, request
 from typing_extensions import Self
 
@@ -23,9 +25,10 @@ from .types import (
     # worker - server communication
     WorkerMessage, JobResponse, SignalResponse, OkResponse, ServerResponse, Signal,
     # server - client communication
-    WorkerStatus, WorkerState, WorkerUpdate, WorkersUpdate, LogRecord,
-    JobStatus, JobState, JobStatusChange, JobUpdate, LogUpdate, JobStopped, JobMessage, JobsUpdate,
+    WorkerStatus, WorkerState, LogRecord,
+    JobStatus, JobState, canonical_topic,
 )
+from .pubsub import Broker
 
 T = t.TypeVar('T')
 
@@ -39,25 +42,7 @@ async def raise_on_shutdown():
     raise Shutdown()
 
 
-class Subscribable(t.Generic[T]):
-    def __init__(self):
-        self.subscribers: set[asyncio.Queue[T]] = set()
-
-    async def subscribe(self) -> t.AsyncIterator[T]:
-        connection: asyncio.Queue[T] = asyncio.Queue()
-        self.subscribers.add(connection)
-        try:
-            while True:
-                yield await connection.get()
-        finally:  # called when future is cancelled
-            self.subscribers.remove(connection)
-
-    async def message_subscribers(self, msg: T):
-        for subscriber in self.subscribers:
-            await subscriber.put(msg)
-
-
-class Worker(Subscribable[WorkerUpdate], abc.ABC):
+class Worker(abc.ABC):
     def __init__(self, worker_id: WorkerID):
         super().__init__()
         self.status: WorkerStatus = 'queued'
@@ -106,7 +91,7 @@ class Worker(Subscribable[WorkerUpdate], abc.ABC):
 
     async def set_status(self, status: WorkerStatus):
         self.status = status
-        await self.message_subscribers(WorkerUpdate(self.id, status))
+        await server.workers.notify_changed({'worker_id': self.id, 'status': status})
 
         if status == 'stopped':
             if self.current_job and (job := self.current_job()):
@@ -203,28 +188,25 @@ class ManualWorker(Worker):
         return 'manual'
 
 
-class Workers(Subscribable[WorkersUpdate]):
+class Workers:
     def __init__(self):
-        super().__init__()
         self.inner: t.Dict[WorkerID, Worker] = {}
         self._futs: t.List[asyncio.Task[None]] = []
+        self.broker: Broker = Broker()
+        """Broker for the manager-level `"workers"` topic."""
 
     def state(self) -> t.List[WorkerState]:
         return [worker.state() for worker in self.inner.values()]
 
-    async def _subscribe_to_worker(self, worker: Worker):
-        async for msg in worker.subscribe():
-            if msg.msg == 'status_change':
-                await self.message_subscribers(
-                    WorkersUpdate(msg, self.state())
-                )
+    async def notify_changed(self, cause: t.Optional[t.Any] = None):
+        # 'state' is a synthetic dep: the `workers` view ignores the cache and reads
+        # `server.workers` directly, so all that matters here is bumping its generation.
+        self.broker.cache.update_raw({'state': None})
+        await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def add(self, worker: Worker):
         self.inner[worker.id] = worker
-
-        event = WorkerUpdate(worker.id, worker.status)
-        await self.message_subscribers(WorkersUpdate(event, self.state()))
-        self._futs.append(asyncio.create_task(self._subscribe_to_worker(worker)))
+        await self.notify_changed({'worker_id': worker.id, 'status': worker.status})
 
     def schedule_for_removal(self, worker_id: WorkerID, delay: float = 30.0):
         if worker_id not in self:
@@ -244,9 +226,7 @@ class Workers(Subscribable[WorkersUpdate]):
             return
 
         await worker.finalize()
-        await self.message_subscribers(
-            WorkersUpdate(None, self.state())
-        )
+        await self.notify_changed({'worker_id': worker_id, 'status': 'removed'})
 
     def __contains__(self, item: WorkerID) -> bool:
         return self.inner.__contains__(item)
@@ -269,16 +249,17 @@ class Workers(Subscribable[WorkersUpdate]):
         await asyncio.gather(*(worker.finalize() for worker in self.inner.values()))
 
 
-class Job(Subscribable[JobMessage]):
+class Job:
     def __init__(self, id: JobID, plan: str, name: t.Optional[str] = None):
-        super().__init__()
         self.id: JobID = id
         self.plan: str = plan
         self.job_name: t.Optional[str] = name
         """Name of job"""
         self.status: JobStatus = 'queued'
-        self.cache: t.Dict[str, t.Any] = {}
-        """Cache of job state"""
+        self.broker: Broker = Broker()
+        """Pub/sub broker for this job's views (`status`, `progress`, `obj_phase_sum`, ...).
+        `broker.cache.raw` is the wire-form (still-encoded) view of the latest worker
+        state -- the single source of truth `Job.state()` also reads from."""
         self.logs: t.List[LogRecord] = []
         """Cache of recorded messages"""
         self.start_time: t.Optional[datetime.datetime] = None
@@ -322,13 +303,13 @@ class Job(Subscribable[JobMessage]):
             await server.jobs.add(job)
         return jobs
 
-    async def set_status(self, status: JobStatus):
+    async def set_status(self, status: JobStatus, cause: t.Optional[t.Any] = None):
         if self.status == status:
             return
         self.status = status
-        await self.message_subscribers(
-            JobStatusChange(status, self.id)
-        )
+        self.broker.cache.update_raw({'status': status})
+        await self.broker.publish_dirty(frozenset({'status'}), cause=cause)
+        await server.jobs.notify_changed({'job_id': self.id, 'status': status})
 
     async def cancel(self):
         if self.status == 'queued':
@@ -346,12 +327,17 @@ class Job(Subscribable[JobMessage]):
             await self.set_status('stopped')
         await server.jobs.remove(self.id)
 
-    def state(self, full: bool = False) -> JobState:
-        state = self.cache if full else {k: v for (k, v) in self.cache.items() if k == 'iter'}
+    def _total_iter(self) -> t.Optional[int]:
+        iter_raw = self.broker.cache.raw.get('iter')
+        return iter_raw.get('total_iter') if isinstance(iter_raw, dict) else None
+
+    def state(self) -> JobState:
+        raw = self.broker.cache.raw
+        state = {k: v for (k, v) in raw.items() if k == 'iter'}
         links = {
             'dashboard': url_for('job_dashboard', job_id=self.id),
-            'cancel': url_for('cancel_job', job_id=self.id), 
-            'delete': url_for('delete_job', job_id=self.id), 
+            'cancel': url_for('cancel_job', job_id=self.id),
+            'delete': url_for('delete_job', job_id=self.id),
             'logs': url_for('job_logs', job_id=self.id),
         }
         return JobState.make_unchecked(
@@ -363,55 +349,45 @@ class Job(Subscribable[JobMessage]):
             if self.status in ('queued', 'starting'):
                 await self.set_status('running')
 
-            self.cache.update(msg.state)
-            await self.message_subscribers(
-                JobUpdate.make_unchecked(msg.state, msg.job_id)
-            )
+            old_total_iter = self._total_iter()
+            changed = frozenset(msg.state.keys())
+            self.broker.cache.update_raw(msg.state)
+            await self.broker.publish_dirty(changed)
+
+            if self._total_iter() != old_total_iter:
+                await server.jobs.notify_changed({'job_id': self.id})
         elif msg.msg == 'log':
             record = msg.into_record(len(self.logs))
             self.logs.append(record)
-            await self.message_subscribers(
-                LogUpdate.make_unchecked([record])
-            )
+            key = canonical_topic({'job': self.id, 'view': 'logs'})
+            self.broker.publish_value(key, [pane.into_data(record)])
         elif msg.msg == 'job_result':
-            self.status = 'stopped'
-            await self.message_subscribers(
-                JobStopped(msg.result, msg.error)
-            )
+            await self.set_status('stopped', cause={'result': msg.result, 'error': msg.error})
 
     async def finalize(self):
         if self.status != 'stopped':
             logging.error(f"Job {self.id} finalized before completion")
 
 
-class Jobs(Subscribable[JobsUpdate]):
+class Jobs:
     def __init__(self):
-        super().__init__()
         self.inner: t.Dict[JobID, Job] = {}
-        self._futs: t.List[asyncio.Task[None]] = []
+        self.broker: Broker = Broker()
+        """Broker for the manager-level `"jobs"` topic."""
 
     def state(self) -> t.List[JobState]:
         return [job.state() for job in self.inner.values()]
 
-    async def _subscribe_to_job(self, job: Job):
-        total_iter = job.cache.get('iter', {}).get('total_iter', None)
-        async for msg in job.subscribe():
-            # update if status changed or iteration # changed
-            if (new_total_iter := job.cache.get('iter', {}).get('total_iter', None)) != total_iter or msg.msg in ('status_change', 'job_stopped'):
-                total_iter = new_total_iter
-                await self.message_subscribers(
-                    JobsUpdate.make_unchecked(msg, self.state())
-                )
+    async def notify_changed(self, cause: t.Optional[t.Any] = None):
+        # 'state' is a synthetic dep: the `jobs` view ignores the cache and reads
+        # `server.jobs` directly, so all that matters here is bumping its generation.
+        self.broker.cache.update_raw({'state': None})
+        await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def add(self, job: Job):
         self.inner[job.id] = job
-        self._futs.append(asyncio.create_task(self._subscribe_to_job(job)))
         server.job_queue.append(job)
-
-        event = JobStatusChange(job.status, job.id)
-        await self.message_subscribers(
-            JobsUpdate.make_unchecked(event, self.state())
-        )
+        await self.notify_changed({'job_id': job.id, 'status': job.status})
 
     async def remove(self, job_id: JobID):
         try:
@@ -420,9 +396,8 @@ class Jobs(Subscribable[JobsUpdate]):
             return
 
         await job.finalize()
-        await self.message_subscribers(
-            JobsUpdate(None, self.state())
-        )
+        job.broker.close(f"job '{job_id}' removed")
+        await self.notify_changed({'job_id': job_id, 'status': 'removed'})
 
     def __contains__(self, item: JobID) -> bool:
         return self.inner.__contains__(item)
@@ -440,8 +415,6 @@ class Jobs(Subscribable[JobsUpdate]):
         return self.inner.values()
 
     async def finalize(self):
-        for fut in self._futs:
-            fut.cancel()
         await asyncio.gather(*(job.finalize() for job in self.inner.values()))
 
 
@@ -466,6 +439,8 @@ class Server:
                     await asyncio.gather(self.jobs.finalize(), self.workers.finalize(), self.slurm_manager.finalize(), *self.futs)
             except TimeoutError:
                 logging.warning("Cleanup didn't finish in time")
+            finally:
+                self.compute_pool.shutdown(wait=False, cancel_futures=True)
 
     def get_worker_url(self, worker_id: WorkerID) -> str:
         assert self.host is not None
@@ -523,6 +498,8 @@ class Server:
             verbosity: int = 0,
             serving_cb: t.Optional[t.Callable[[], t.Any]] = None,
     ):
+        self.compute_pool: ThreadPoolExecutor = ThreadPoolExecutor()
+        """Shared threadpool for pub/sub view compute + array decode (`phaser/web/pubsub.py`)."""
         self.workers: Workers = Workers()
         self.jobs: Jobs = Jobs()
         self.job_queue: deque[Job] = deque()
@@ -554,6 +531,9 @@ class Server:
         loop = asyncio.new_event_loop()
         loop.set_debug(verbosity > 1)
         asyncio.set_event_loop(loop)
+        # route pub/sub view compute (`phaser/web/pubsub.py`, via `quart.utils.run_sync`)
+        # onto our shared threadpool instead of asyncio's own default executor.
+        loop.set_default_executor(self.compute_pool)
 
         if threading.current_thread() is threading.main_thread():
             self._set_signals(loop)

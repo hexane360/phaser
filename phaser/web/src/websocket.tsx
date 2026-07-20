@@ -1,10 +1,9 @@
-import { atom, PrimitiveAtom, useStore, createStore } from 'jotai';
-import React from 'react';
+import { PrimitiveAtom, createStore } from 'jotai';
 
 type Store = ReturnType<typeof createStore>;
 
 
-class WebsocketConnection {
+export class WebsocketConnection {
     socket: WebSocket | null = null;
 
     public constructor(
@@ -13,6 +12,10 @@ class WebsocketConnection {
         public readonly lastSeen: PrimitiveAtom<Date | null>,
         public readonly status: PrimitiveAtom<string>,
         public readonly onMessage: ((_: MessageEvent<any>) => void) | null,
+        // called after the socket opens (including on reconnect) -- lets a caller (e.g.
+        // `PubSubConnection`) replay state that only makes sense once connected, such as
+        // re-sending active subscriptions.
+        public readonly onOpen: (() => void) | null = null,
     ) { }
 
     connect() {
@@ -35,9 +38,22 @@ class WebsocketConnection {
         }
     }
 
+    send(data: unknown) {
+        // Only transmit on an OPEN socket. Sends attempted while CONNECTING (e.g. a
+        // component subscribing on mount, before `onopen`) would throw an
+        // InvalidStateError DOMException; those are safely dropped here because `_open`
+        // replays all active subscriptions via `onOpen` once the socket is usable.
+        if (this.socket?.readyState === WebSocket.OPEN) {
+            this.socket.send(JSON.stringify(data));
+        }
+    }
+
     private _open(event: Event) {
         this.store.set(this.status, 'Connected');
         this.store.set(this.lastSeen, new Date(event.timeStamp));
+        if (this.onOpen) {
+            this.onOpen();
+        }
     }
 
     private _error(event: Event) {
@@ -55,38 +71,4 @@ class WebsocketConnection {
             this.onMessage(event);
         }
     }
-}
-
-interface WebsocketProps {
-    address: string;
-    onMessage: (_: MessageEvent<any>) => void;
-}
-
-interface WebsocketReturn {
-    status: PrimitiveAtom<string>;
-    lastSeen: PrimitiveAtom<Date | null>;
-}
-
-export default function websocket(props: WebsocketProps): WebsocketReturn {
-    // TODO does this need to be inside a useEffect?
-    const store = useStore();
-
-    const status = atom('status');
-    const lastSeen = atom<Date | null>(null);
-
-    React.useEffect(() => {
-        console.log("Making connection");
-        const conn = new WebsocketConnection(
-            props.address, store, lastSeen, status, props.onMessage
-        );
-        conn.connect();
-
-        return () => {
-            conn.disconnect();
-        }
-    }, [store, props.address, props.onMessage])
-
-    return {
-        status, lastSeen
-    };
 }

@@ -1,5 +1,50 @@
 import { DecodedArray } from './array';
 
+// pub/sub wire protocol (browser <-> server). Mirrors `phaser/web/types.py`.
+
+export type TopicKey = string | number;
+export type Topic = string | Record<string, TopicKey>;
+
+// Canonical JSON key for a `Topic`: sorted keys, no whitespace. Must agree with the
+// Python `canonical_topic` implementation in `phaser/web/types.py`.
+export function canonicalTopic(topic: Topic): string {
+    if (typeof topic === 'string') return JSON.stringify(topic);
+    const sorted: Record<string, TopicKey> = {};
+    for (const k of Object.keys(topic).sort()) sorted[k] = topic[k];
+    return JSON.stringify(sorted);
+}
+
+export interface SubscribeMessage {
+    topics: Array<Topic>;
+    msg: "sub";
+}
+
+export interface UnsubscribeMessage {
+    topics: Array<Topic>;
+    msg: "unsub";
+}
+
+export type ClientMessage = SubscribeMessage | UnsubscribeMessage;
+
+export interface TopicUpdate {
+    topic: Topic;
+    data: any;
+    cause?: any;
+}
+
+export interface UpdatesMessage {
+    updates: Array<TopicUpdate>;
+    msg: "update";
+}
+
+export interface ErrorMessage {
+    topic: Topic;
+    reason: string;
+    msg: "error";
+}
+
+export type ServerMessage = UpdatesMessage | ErrorMessage;
+
 export type WorkerStatus = "queued" | "starting" | "idle" | "running" | "stopping" | "stopped" | "unknown";
 export type JobStatus = "queued" | "starting" | "running" | "stopping" | "stopped";
 export type Result = "finished" | "errored" | "cancelled" | "interrupted";
@@ -15,13 +60,6 @@ export interface WorkerState {
     backends: Array<[string, string]> | null;
 }
 
-export interface WorkerUpdate {
-    worker_id: string;
-    status: WorkerStatus;
-
-    msg: "status_change";
-}
-
 export interface JobState {
     job_id: string;
     status: JobStatus;
@@ -30,63 +68,6 @@ export interface JobState {
     start_time: string | null;
     state: PartialReconsData;
 };
-
-export interface JobStatusChange {
-    status: JobStatus;
-    job_id: string;
-
-    msg: "status_change";
-}
-
-export interface JobUpdate {
-    state: PartialReconsData;
-    job_id: string;
-
-    msg: "job_update";
-}
-
-export interface LogUpdate {
-    new_logs: Array<LogRecord>;
-    msg: "log";
-}
-
-export interface JobStopped {
-    result: Result;
-    error: string | null;
-
-    msg: "job_stopped";
-}
-
-export type JobMessage = JobStatusChange | JobUpdate | LogUpdate | JobStopped;
-
-export interface DashboardConnected {
-    state: JobState;
-    msg: "connected";
-}
-
-export type DashboardMessage = JobMessage | DashboardConnected;
-
-export interface JobsUpdate {
-    event: JobMessage | null;
-    state: Array<JobState>;
-
-    msg: "jobs_update";
-}
-
-export interface WorkersUpdate {
-    event: WorkerUpdate | null;
-    state: Array<WorkerState>;
-
-    msg: "workers_update";
-}
-
-export interface ManagerConnected {
-    workers: Array<WorkerState>;
-    jobs: Array<JobState>;
-    msg: "connected";
-}
-
-export type ManagerMessage = JobsUpdate | WorkersUpdate | ManagerConnected;
 
 export interface LogRecord {
     i: number;
@@ -157,6 +138,21 @@ export interface ObjectData {
     data: DecodedArray;
     thicknesses: DecodedArray;
 };
+
+// payload of the `obj_phase_sum` view: the object phase, already projected (angle +
+// nansum over slices) server-side -- see `phaser/web/views.py::project_phase`.
+export interface ObjPhaseSumData {
+    sampling: ObjectSampling;
+    data: DecodedArray; // real-valued, 2D
+}
+
+// payload of the `obj` view (a single slice, selected by the `slice` param). Wired but
+// unused in v1 (no slice slider yet) -- see `phaser/web/views.py::slice_view`.
+export interface ObjSliceData {
+    sampling: ObjectSampling;
+    data: DecodedArray;
+    thickness: number | null;
+}
 
 export interface ProgressData {
     iters: [number];

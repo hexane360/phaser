@@ -7,10 +7,10 @@ from quart import Quart, render_template, request, Response, abort, websocket
 
 import pane
 
-from .types import JobID, ValidationError, WorkerID, WorkerMessage
-from .types import ManagerConnected, DashboardConnected, OkResponse
+from .types import JobID, ValidationError, WorkerID, WorkerMessage, UpdateMessage
+from .types import ClientMessage, TopicUpdate, UpdatesMessage, ErrorMessage, OkResponse
+from .pubsub import Session
 from .server import server, Job, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown
-from .util import merge_streams
 
 
 def serialize(obj: t.Any, ty: t.Any = None) -> bytes:
@@ -124,7 +124,7 @@ async def delete_job(job_id: JobID):
         abort(404)
 
     if job.status not in ('queued', 'stopped'):
-        abort(Response(f"Cannot delete a running job", 400))
+        abort(Response("Cannot delete a running job", 400))
     await job.delete()
 
     return json_response(OkResponse())
@@ -172,50 +172,49 @@ async def reload_worker(worker_id: WorkerID):
     return json_response(OkResponse())
 
 @app.websocket("/listen")
-async def manager_websocket():
+async def listen():
+    """Unified pub/sub endpoint, replacing the old per-manager/-dashboard websockets.
+    An optional `?job=<id>` scopes the session: `default_topic={"job": id}` is merged
+    into every dict topic the client subscribes to (default fills missing keys, an
+    explicit client key wins). The dashboard opens `/listen?job=<id>` and subs
+    abbreviated `{view: ...}` topics; the manager opens `/listen` and subs `"jobs"` /
+    `"workers"`."""
+    if (job_id := websocket.args.get('job')):
+        try:
+            _ = server.jobs[job_id]
+        except KeyError:
+            abort(Response("Invalid job ID", 400))
     await websocket.accept()
 
-    await websocket.send(serialize(ManagerConnected(
-        server.workers.state(), server.jobs.state()
-    )))
-
-    async def send():
-        async for msg in merge_streams(
-            server.workers.subscribe(),
-            server.jobs.subscribe(),
-        ):
-            await websocket.send(serialize(msg))
+    session = Session(default_topic={"job": job_id} if job_id else None)
 
     async def recv():
         while True:
             data = await websocket.receive_json()
+            msg = pane.convert(data, ClientMessage)  # type: ignore
+            if msg.msg == 'sub':
+                for topic in msg.topics:
+                    await session.subscribe(topic)
+            elif msg.msg == 'unsub':
+                for topic in msg.topics:
+                    session.unsubscribe(topic)
+
+    async def send():
+        while True:
+            items = await session.mailbox.drain()
+            updates = [item for item in items if isinstance(item, TopicUpdate)]
+            errors = [item for item in items if isinstance(item, ErrorMessage)]
+            if updates:
+                await websocket.send(serialize(UpdatesMessage(updates)))
+            for error in errors:
+                await websocket.send(serialize(error))
 
     try:
         await asyncio.gather(send(), recv(), raise_on_shutdown())
     except Shutdown:
         pass
-
-@app.websocket("/job/<string:job_id>/listen")
-async def dashboard_websocket(job_id: JobID):
-    try:
-        job = server.jobs[job_id]
-    except KeyError:
-        abort(404)
-
-    await websocket.accept()
-
-    await websocket.send(serialize(DashboardConnected(
-        job.state(full=True)
-    )))
-
-    async def send():
-        async for msg in job.subscribe():
-            await websocket.send(serialize(msg))
-
-    try:
-        await asyncio.gather(send(), raise_on_shutdown())
-    except Shutdown:
-        pass
+    finally:
+        session.close()
 
 @app.post("/worker/<string:worker_id>/update")
 async def worker_update(worker_id: WorkerID):
@@ -224,5 +223,12 @@ async def worker_update(worker_id: WorkerID):
     except KeyError:
         abort(404)
 
-    msg: WorkerMessage = pane.convert(await request.json, WorkerMessage)  # type: ignore
+    data = await request.json
+    if data.get('msg') == 'job_update':
+        # Bypass `ReconsStateConverter`'s eager `decode_obj`: keep `state` in wire-form
+        # (still base64-encoded) so array fields are only ever decoded lazily, by
+        # `Cache.array()`, for views that are actually subscribed (see pubsub.py).
+        msg: WorkerMessage = UpdateMessage.make_unchecked(data['state'], data['job_id'])
+    else:
+        msg = pane.convert(data, WorkerMessage)  # type: ignore
     return json_response(await worker.handle_message(msg))

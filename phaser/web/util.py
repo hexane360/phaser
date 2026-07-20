@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import dataclasses
 import typing as t
@@ -12,23 +11,6 @@ T = t.TypeVar('T')
 class _array_dummy():
     def __init__(self, array_interface: t.Any):
         self.__array_interface__ = array_interface
-
-
-async def merge_streams(
-    *its: t.AsyncIterable[T]
-) -> t.AsyncIterator[T]:
-    # TODO: better error handling here
-    queue = asyncio.Queue(1)
-
-    async def task(it: t.AsyncIterable[T]):
-        async for item in it:
-            await queue.put(item)
-
-    async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(task(it)) for it in its]
-
-        while not all(task.done() for task in tasks):
-            yield await queue.get()
 
 
 def encode_obj(obj: t.Any, to_numpy: bool = True) -> t.Any:

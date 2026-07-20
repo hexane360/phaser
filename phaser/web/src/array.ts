@@ -52,6 +52,33 @@ export function decodeInterchange(obj: ArrayInterchange): DecodedArray {
     }
 }
 
+// Recursively walks a decoded-JSON value, replacing any `{_ty: "numpy", ...}` interchange
+// object with its `decodeInterchange` result. Used to decode pub/sub `TopicUpdate.data`
+// payloads (and, previously, whole `job_update` state blobs) into plain JS objects with
+// typed-array leaves.
+export function decodeState(state: any): any {
+    if (typeof state !== 'object' || state === null) {
+        return state;
+    }
+
+    if (state instanceof Array) {
+        return state.map(decodeState);
+    }
+
+    if (state._ty !== undefined) {
+        if (state._ty === 'numpy') {
+            return decodeInterchange(state as ArrayInterchange);
+        }
+        throw new Error(`Unknown custom type '${state._ty}'`);
+    }
+
+    let out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(state)) {
+        out[k] = (typeof v === 'object' && v !== null) ? decodeState(v) : v;
+    }
+    return out;
+}
+
 // Fused `angle` + `nansum` over every leading axis, collapsing an (..., y, x)
 // complex array down to a single real (y, x) phase image in one pass --
 // avoids materializing a full-size intermediate array for multi-slice objects.

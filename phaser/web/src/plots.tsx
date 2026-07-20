@@ -5,7 +5,7 @@ import { interpolateMagma } from 'd3-scale-chromatic';
 import * as plotlib from '@hexane/plotlib';
 import type { ScaleSpec } from '@hexane/plotlib';
 import type { NumericScale, ColorLike } from '@hexane/plotlib/scale';
-import { DecodedArray, CropBounds, objectPhaseProjected, abs2, splitAxis0, minmaxNaN, applyMagmaInto } from './array';
+import { DecodedArray, CropBounds, abs2, splitAxis0, minmaxNaN, applyMagmaInto } from './array';
 
 import { ProbeMeta, ObjectSampling, ProgressData } from './types';
 import { useComputedColorScheme } from '@mantine/core';
@@ -52,10 +52,10 @@ function ObjectPlotSub({metaState, dataState}: ObjectPlotProps) {
 
     const cropBounds = useMemo(() => cropBoundsForAutoscale(sampling, nx), [sampling, nx]);
 
-    const phaseAtom = useMemo(() => atom((get) => {
-        const data = get(dataState);
-        return data ? objectPhaseProjected(data) : null;
-    }), [dataState]);
+    // `obj_phase_sum` arrives already projected to a real (y, x) phase image server-side
+    // (see `phaser/web/views.py`'s `project_phase`), so `dataState` *is* the phase image --
+    // no client-side `objectPhaseProjected` pass anymore.
+    const phaseAtom = useMemo(() => atom((get) => get(dataState)), [dataState]);
 
     const drawFnAtom = useMemo(() => atom((get) => {
         const phase = get(phaseAtom);

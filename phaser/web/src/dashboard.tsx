@@ -1,23 +1,25 @@
 
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { atom, PrimitiveAtom, useAtom, useAtomValue, Provider, useStore } from 'jotai';
+import { atom, PrimitiveAtom, useAtom, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
 import '@hexane/plotlib/styles.css';
 import { AppShell, Container, createTheme, MantineProvider } from '@mantine/core';
 import * as plotlib from '@hexane/plotlib';
-import { decodeInterchange, ArrayInterchange, DecodedArray } from './array';
+import { DecodedArray } from './array';
 
 import './styles.css';
-import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeMeta, ObjectSampling, ProgressData, PartialReconsData } from './types';
+import { LogRecord, LogsData, ProbeData, ProbeMeta, ObjectSampling, ObjPhaseSumData, ProgressData } from './types';
 import { Section } from './components';
 import { ProbePlot, ObjectPlot, ProgressPlot } from './plots';
 import Header from './header';
-import websocket from './websocket';
+import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
 import { isClose } from './utils';
 
 function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
+    const conn = usePubSubConnection();
+    const store = useStore();
     const [logs, setLogs] = useAtom(state);
     const ref = React.useRef<HTMLDivElement | null>(null);
 
@@ -32,6 +34,20 @@ function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
     React.useEffect(() => {
         getLogs().then(handleNewLogs);
     }, []);
+
+    // live tail: the REST fetch above supplies history, this appends new records as they
+    // arrive. `logs` is a non-retained, append-conflated view (see `phaser/web/views.py`),
+    // so every message here is new records to append, never a full replacement.
+    React.useEffect(() => {
+        if (!conn) return;
+        return conn.subscribe({view: 'logs'}, (msg) => {
+            if ('error' in msg) {
+                console.error(`logs subscription error: ${msg.error}`);
+                return;
+            }
+            store.set(state, (logs) => [...logs, ...(msg.data as Array<LogRecord>)]);
+        });
+    }, [conn, store, state]);
 
     const handleScroll = (event: React.UIEvent) => {
         const first = (logs[0]) ? logs[0].i : undefined;
@@ -48,87 +64,101 @@ function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
     </div>
 }
 
-function App(props: {}) {
+// Subscribes to `obj_phase_sum`, splitting it into a rarely-changing `sampling` atom and a
+// per-tick `data` atom -- see the comment on `ObjectPlotSub` in `plots.tsx` for why this
+// meta/data split matters. Mirrors the pre-pub/sub `App.updateState`'s object handling.
+function useObjectPhaseAtoms(): {metaState: PrimitiveAtom<ObjectSampling | null>, dataState: PrimitiveAtom<DecodedArray | null>} {
+    const conn = usePubSubConnection();
     const store = useStore();
+    const [metaState] = React.useState(() => atom(null as ObjectSampling | null));
+    const [dataState] = React.useState(() => atom(null as DecodedArray | null));
 
-    const statusState: PrimitiveAtom<JobStatus | null> = atom(null as JobStatus | null);
-    // split so that consumers can subscribe to shape/sampling (which changes rarely)
-    // separately from the raw array data (which changes every update)
-    const probeMetaState: PrimitiveAtom<ProbeMeta | null> = atom(null as ProbeMeta | null);
-    const probeDataState: PrimitiveAtom<DecodedArray | null> = atom(null as DecodedArray | null);
-    const objectMetaState: PrimitiveAtom<ObjectSampling | null> = atom(null as ObjectSampling | null);
-    const objectDataState: PrimitiveAtom<DecodedArray | null> = atom(null as DecodedArray | null);
-    const progressState: PrimitiveAtom<Record<string, ProgressData>> = atom({});
-    const logsState: PrimitiveAtom<Array<LogRecord>> = atom([] as Array<LogRecord>);
+    React.useEffect(() => {
+        if (!conn) return;
+        return conn.subscribe({view: 'obj_phase_sum'}, (msg) => {
+            if ('error' in msg) {
+                console.error(`obj_phase_sum subscription error: ${msg.error}`);
+                return;
+            }
+            const phase = msg.data as ObjPhaseSumData;
+            store.set(dataState, (_) => phase.data);
+            store.set(metaState, (prev) => samplingEqual(prev, phase.sampling) ? prev : phase.sampling);
+        });
+    }, [conn, store, metaState, dataState]);
 
-    function updateState(raw_state: Record<string, any>) {
-        const state = decodeState(raw_state) as PartialReconsData;
-        console.log(`state: ${JSON.stringify(state)}`);
+    return {metaState, dataState};
+}
 
-        if (state.probe) {
-            const probe = state.probe;
-            store.set(probeDataState, (_: any) => probe.data);
-            store.set(probeMetaState, (prev) => {
+// Subscribes to `probes`, splitting it the same way as `useObjectPhaseAtoms` above.
+function useProbeAtoms(): {metaState: PrimitiveAtom<ProbeMeta | null>, dataState: PrimitiveAtom<DecodedArray | null>} {
+    const conn = usePubSubConnection();
+    const store = useStore();
+    const [metaState] = React.useState(() => atom(null as ProbeMeta | null));
+    const [dataState] = React.useState(() => atom(null as DecodedArray | null));
+
+    React.useEffect(() => {
+        if (!conn) return;
+        return conn.subscribe({view: 'probes'}, (msg) => {
+            if ('error' in msg) {
+                console.error(`probes subscription error: ${msg.error}`);
+                return;
+            }
+            const probe = msg.data as ProbeData;
+            store.set(dataState, (_) => probe.data);
+            store.set(metaState, (prev) => {
                 const meta: ProbeMeta = { sampling: probe.sampling, nprobes: probe.data.shape[0] };
                 return probeMetaEqual(prev, meta) ? prev! : meta;
             });
-        }
-        if (state.object) {
-            const object = state.object;
-            store.set(objectDataState, (_: any) => object.data);
-            store.set(objectMetaState, (prev) => samplingEqual(prev, object.sampling) ? prev : object.sampling);
-        }
-        if (state.progress) {
-            const progress = state.progress;
-            store.set(progressState, (_: any) => progress);
-        }
-    }
+        });
+    }, [conn, store, metaState, dataState]);
 
-    function onMessage(event: MessageEvent<any>) {
-        let text: string;
-        if (event.data instanceof ArrayBuffer) {
-            let utf8decoder = new TextDecoder();
-            text = utf8decoder.decode(event.data);
-        } else {
-            text = event.data;
-        }
+    return {metaState, dataState};
+}
 
-        //console.log(`Socket event: ${text}`)
-        let data: DashboardMessage = JSON.parse(text);
+function Dashboard(props: {}) {
+    const conn = usePubSubConnection();
+    const [fallbackStatus] = React.useState(() => atom('status'));
 
-        if (data.msg === 'job_update') {
-            updateState(data.state);
-        } else if (data.msg == 'log') {
-            store.set(logsState, (logs) => [...logs, ...data.new_logs]);
-        } else if (data.msg === 'status_change') {
-            store.set(statusState, (_: any) => data.status);
-        } else if (data.msg === 'job_stopped') {
-            store.set(statusState, (_: any) => 'stopped');
-        } else if (data.msg === 'connected') {
-            store.set(statusState, (_: any) => data.state.status);
-            updateState(data.state.state);
-        } else {
-            console.warn(`Unknown message type: ${data}`);
-        }
-    };
+    const progressState = usePublishedAtom<Record<string, ProgressData>>({view: 'progress'});
+    const {metaState: probeMetaState, dataState: probeDataState} = useProbeAtoms();
+    const {metaState: objectMetaState, dataState: objectDataState} = useObjectPhaseAtoms();
+    const [logsState] = React.useState(() => atom([] as Array<LogRecord>));
 
+    return <AppShell header={{ height: 80 }} padding="md">
+        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus}/></AppShell.Header>
+        <AppShell.Main><Container size="lg">
+            <Section name="Progress"><ProgressPlot state={progressState as PrimitiveAtom<Record<string, ProgressData>>}/></Section>
+            <Section name="Probe"><ProbePlot metaState={probeMetaState} dataState={probeDataState}/></Section>
+            <Section name="Object"><ObjectPlot metaState={objectMetaState} dataState={objectDataState}/></Section>
+            <Section name="Logs"><Logs state={logsState}/></Section>
+        </Container></AppShell.Main>
+        {/*<StatusBar state={statusState}/>*/}
+    </AppShell>
+}
+
+function App(props: {}) {
+    const store = useStore();
+
+    // job id from the URL path (`.../job/<id>`) -- no `job` threaded through the
+    // component tree beyond this: the `?job=<id>` scoping happens once, at the websocket
+    // URL, and every descendant subscribes with abbreviated `{view: ...}` topics that the
+    // server fills in against this connection's default topic.
+    //
+    // `/listen` lives at the app root, not nested under `/job/<id>`, so (unlike the old
+    // per-job `<pathname>/listen` endpoint) we can't just append to `pathname` -- instead
+    // strip the trailing `job/<id>` segments to recover any `root_path`/SCRIPT_NAME mount
+    // prefix (e.g. `/prefix/job/abc` -> `/prefix`), same as today's deployments expect.
+    const pathParts = window.location.pathname.split('/');
+    const jobId = pathParts.pop()!;
+    pathParts.pop();  // 'job'
+    const prefix = pathParts.join('/');
     const protocol = window.location.protocol == 'https:' ? "wss:" : "ws:";
-    const { status, lastSeen } = websocket({
-        address: `${protocol}//${window.location.host}${window.location.pathname}/listen`,
-        onMessage,
-    });
+    const address = `${protocol}//${window.location.host}${prefix}/listen?job=${encodeURIComponent(jobId)}`;
 
     return <Provider store={store}>
-        <AppShell header={{ height: 80 }} padding="md">
-            <AppShell.Header><Header serverStatus={status}/></AppShell.Header>
-            <AppShell.Main><Container size="lg">
-                <Section name="Progress"><ProgressPlot state={progressState}/></Section>
-                <Section name="Probe"><ProbePlot metaState={probeMetaState} dataState={probeDataState}/></Section>
-                <Section name="Object"><ObjectPlot metaState={objectMetaState} dataState={objectDataState}/></Section>
-                <Section name="Logs"><Logs state={logsState}/></Section>
-            </Container></AppShell.Main>
-            {/*<StatusBar state={statusState}/>*/}
-        </AppShell>
+        <PubSubProvider address={address}>
+            <Dashboard/>
+        </PubSubProvider>
     </Provider>
 }
 
@@ -171,27 +201,3 @@ function samplingEqual(a: ObjectSampling | null, b: ObjectSampling): boolean {
             && (a.region_min === null && b.region_min === null || a.region_min !== null && b.region_min !== null && isClose(a.region_min, b.region_min))
             && (a.region_max === null && b.region_max === null || a.region_max !== null && b.region_max !== null && isClose(a.region_max, b.region_max))
 }
-
-function decodeState(state: any): any {
-    if (typeof state !== 'object' || state === null) {
-        return state;
-    }
-
-    if (state instanceof Array) {
-        return state.map(decodeState);
-    }
-
-    if (state._ty !== undefined) {
-        if (state._ty === 'numpy') {
-            return decodeInterchange(state as ArrayInterchange);
-        }
-        throw new Error(`Unknown custom type '${state._ty}'`);
-    }
-
-    let out: Record<string, any> = {};
-    for (const [k, v] of Object.entries(state)) {
-        out[k] = (typeof v === 'object' && v !== null) ? decodeState(v) : v;
-    }
-    return out;
-}
-

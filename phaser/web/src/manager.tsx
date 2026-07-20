@@ -10,11 +10,11 @@ import ky from 'ky';
 import TimeAgo from 'react-timeago';
 
 import './styles.css';
-import { JobState, WorkerState, ManagerMessage } from './types';
+import { JobState, WorkerState } from './types';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section } from './components';
 import Header from './header';
-import websocket from './websocket';
+import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
 import { handleRequest } from './requests';
 
 
@@ -51,8 +51,8 @@ export function Worker({i, state}: {i: number, state: WorkerState}) {
     </>
 }
 
-export function Workers({workers}: {workers: PrimitiveAtom<Array<WorkerState>>}) {
-    const workers_val = useAtomValue(workers);
+export function Workers({workers}: {workers: PrimitiveAtom<Array<WorkerState> | null>}) {
+    const workers_val = useAtomValue(workers) ?? [];
 
     if (!workers_val.length) {
         return <Title order={4}>No workers have been started</Title>
@@ -100,8 +100,8 @@ export function Job({i, state}: {i: number, state: JobState}) {
     </>
 }
 
-export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState>>}) {
-    const jobs_val = useAtomValue(jobs);
+export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState> | null>}) {
+    const jobs_val = useAtomValue(jobs) ?? [];
 
     if (!jobs_val.length) {
         return <Title order={4}>No jobs are running</Title>
@@ -210,50 +210,34 @@ export function StartJobs(props: {}) {
     </Box>;
 }
 
+function Manager(props: {}) {
+    const conn = usePubSubConnection();
+    const [fallbackStatus] = React.useState(() => atom('status'));
+
+    const jobs = usePublishedAtom<Array<JobState>>('jobs');
+    const workers = usePublishedAtom<Array<WorkerState>>('workers');
+
+    return <AppShell header={{ height: 80 }} padding="md">
+        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus}/></AppShell.Header>
+        <AppShell.Main><Container size="lg">
+            <Section name="Start workers"><StartWorkers/></Section>
+            <Section name="Workers"><Workers workers={workers}/></Section>
+            <Section name="Start reconstructions"><StartJobs/></Section>
+            <Section name="Jobs"><Jobs jobs={jobs}/></Section>
+        </Container></AppShell.Main>
+    </AppShell>;
+}
+
 export function App(props: {}) {
     const store = useStore();
 
-    const jobs: PrimitiveAtom<Array<JobState>> = atom([] as Array<JobState>);
-    const workers: PrimitiveAtom<Array<WorkerState>> = atom([] as Array<WorkerState>);
-
-    const onMessage = function(event: MessageEvent<any>) {
-        let text: string;
-        if (event.data instanceof ArrayBuffer) {
-            let utf8decoder = new TextDecoder();
-            text = utf8decoder.decode(event.data);
-        } else {
-            text = event.data;
-        }
-
-        console.log(`Socket event: ${text}`)
-        let data: ManagerMessage = JSON.parse(text);
-
-        if (data.msg === "jobs_update") {
-            store.set(jobs, (prev) => data.state);
-        } else if (data.msg === "workers_update") {
-            store.set(workers, (prev) => data.state);
-        } else if (data.msg === "connected") {
-            store.set(workers, (prev) => data.workers);
-            store.set(jobs, (prev) => data.jobs);
-        }
-    }
-
     const protocol = window.location.protocol == 'https:' ? "wss:" : "ws:";
-    const { status, lastSeen } = websocket({
-        address: `${protocol}//${window.location.host}${window.location.pathname}/listen`,
-        onMessage,
-    });
+    const address = `${protocol}//${window.location.host}${window.location.pathname}listen`;
 
     return <Provider store={store}>
-        <AppShell header={{ height: 80 }} padding="md">
-            <AppShell.Header><Header serverStatus={status}/></AppShell.Header>
-            <AppShell.Main><Container size="lg">
-                <Section name="Start workers"><StartWorkers/></Section>
-                <Section name="Workers"><Workers workers={workers}/></Section>
-                <Section name="Start reconstructions"><StartJobs/></Section>
-                <Section name="Jobs"><Jobs jobs={jobs}/></Section>
-            </Container></AppShell.Main>
-        </AppShell>
+        <PubSubProvider address={address}>
+            <Manager/>
+        </PubSubProvider>
     </Provider>;
 }
 

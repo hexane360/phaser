@@ -1,4 +1,5 @@
 import datetime
+import json
 import logging
 import typing as t
 
@@ -56,6 +57,62 @@ class SignalException(Exception):
         self.signal: Signal = signal
         self.urgent: bool = urgent
 
+# pub/sub wire protocol (browser <-> server)
+
+TopicKey: t.TypeAlias = t.Union[str, int, float]
+Topic: t.TypeAlias = t.Union[str, t.Dict[str, TopicKey]]
+"""
+A subscribable topic: either a bare string (`"jobs"`, `"workers"`) or a flat dict of
+string/number values (e.g. `{"job": <id>, "view": "status"}`). Both ends key topics by
+their canonical JSON form (`canonical_topic`), so the *structured* form travels on the
+wire while the canonical string is used as an internal map key.
+"""
+
+
+def canonical_topic(topic: Topic) -> str:
+    """Canonical JSON key for a `Topic`: sorted keys, no whitespace. Must agree with the
+    TS `canonicalTopic` implementation in `src/types.tsx`."""
+    return json.dumps(topic, sort_keys=True, separators=(',', ':'))
+
+
+class SubscribeMessage(pane.PaneBase):
+    """Client -> server: subscribe to one or more topics."""
+    topics: t.List[Topic]
+    msg: t.Literal['sub'] = 'sub'
+
+class UnsubscribeMessage(pane.PaneBase):
+    """Client -> server: unsubscribe from one or more topics."""
+    topics: t.List[Topic]
+    msg: t.Literal['unsub'] = 'unsub'
+
+ClientMessage: t.TypeAlias = t.Annotated[t.Union[
+    SubscribeMessage, UnsubscribeMessage,
+], Tagged('msg')]
+
+class TopicUpdate(pane.PaneBase):
+    """One topic's new value. `data` is already wire-encoded by the view that produced
+    it (e.g. via `encode_obj`), so this is *not* re-encoded by `serialize()`."""
+    topic: Topic
+    data: t.Any
+    cause: t.Optional[t.Any] = None
+
+class UpdatesMessage(pane.PaneBase):
+    """Server -> client: a batch of topic updates, sent at most once per broker tick per
+    session (all topics dirtied by one worker/manager update, conflated per-session)."""
+    updates: t.List[TopicUpdate]
+    msg: t.Literal['update'] = 'update'
+
+class ErrorMessage(pane.PaneBase):
+    """Server -> client: a subscription error (unknown job/view/params, or the job was
+    removed while subscribed)."""
+    topic: Topic
+    reason: str
+    msg: t.Literal['error'] = 'error'
+
+ServerMessage: t.TypeAlias = t.Annotated[t.Union[
+    UpdatesMessage, ErrorMessage,
+], Tagged('msg')]
+
 # server -> client messages
 
 class WorkerState(pane.PaneBase):
@@ -67,12 +124,6 @@ class WorkerState(pane.PaneBase):
     start_time: t.Optional[datetime.datetime] = None
     hostname: t.Optional[str] = None
     backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
-
-class WorkerUpdate(pane.PaneBase):
-    worker_id: WorkerID
-    status: WorkerStatus
-
-    msg: t.Literal['status_change'] = 'status_change'
 
 class JobState(pane.PaneBase):
     job_id: JobID
@@ -95,63 +146,6 @@ class LogRecord(pane.PaneBase):
     line_number: int
     func_name: t.Optional[str] = None
     stack_info: t.Optional[str] = None
-
-class JobStatusChange(pane.PaneBase):
-    status: JobStatus
-    job_id: JobID
-
-    msg: t.Literal['status_change'] = 'status_change'
-
-class JobUpdate(pane.PaneBase):
-    state: t.Dict[str, t.Any] = pane.field(converter=ReconsStateConverter())
-    job_id: JobID
-
-    msg: t.Literal['job_update'] = 'job_update'
-
-class LogUpdate(pane.PaneBase):
-    new_logs: t.List[LogRecord]
-
-    msg: t.Literal['log'] = 'log'
-
-class JobStopped(pane.PaneBase):
-    result: Result
-    error: t.Optional[str] = None
-
-    msg: t.Literal['job_stopped'] = 'job_stopped'
-
-JobMessage: t.TypeAlias = t.Annotated[t.Union[
-    JobStatusChange, JobUpdate, LogUpdate, JobStopped
-], Tagged('msg')]
-
-class DashboardConnected(pane.PaneBase):
-    state: JobState
-    msg: t.Literal['connected'] = 'connected'
-
-DashboardMessage: t.TypeAlias = t.Annotated[t.Union[
-    JobStatusChange, JobUpdate, JobStopped, DashboardConnected
-], Tagged('msg')]
-
-class WorkersUpdate(pane.PaneBase):
-    event: t.Optional[WorkerUpdate]
-    state: t.List[WorkerState]
-
-    msg: t.Literal['workers_update'] = 'workers_update'
-
-class JobsUpdate(pane.PaneBase):
-    event: t.Optional[JobMessage]
-    state: t.List[JobState]
-
-    msg: t.Literal['jobs_update'] = 'jobs_update'
-
-class ManagerConnected(pane.PaneBase):
-    workers: t.List[WorkerState]
-    jobs: t.List[JobState]
-
-    msg: t.Literal['connected'] = 'connected'
-
-ManagerMessage: t.TypeAlias = t.Annotated[t.Union[
-    JobsUpdate, WorkersUpdate, ManagerConnected
-], Tagged('msg')]
 
 # worker -> server messages
 
