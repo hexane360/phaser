@@ -5,43 +5,31 @@ import { interpolateMagma } from 'd3-scale-chromatic';
 import * as plotlib from '@hexane/plotlib';
 import type { ScaleSpec } from '@hexane/plotlib';
 import type { NumericScale, ColorLike } from '@hexane/plotlib/scale';
-import { NArray } from 'wasm-array';
-import { np } from './wasm-array';
+import { DecodedArray, CropBounds, objectPhaseProjected, abs2, splitAxis0, minmaxNaN, applyMagmaInto } from './array';
 
 import { ProbeMeta, ObjectSampling, ProgressData } from './types';
 import { useComputedColorScheme } from '@mantine/core';
 
-function objectPhase(data: NArray): NArray {
-    let phase = np!.angle(data);
-    while (phase.shape.length > 2) {
-        phase = np!.nansum(phase, [0]);
-    }
-    return phase;
-}
-
-function croppedPhase(phase: NArray, sampling: ObjectSampling): NArray {
-    if (!sampling.region_min || !sampling.region_max) return phase;
-
-    // y position = y index * sampling + corner
-    // y index = (y position - corner) / sampling
-    const [y_min, y_max, x_min, x_max] = [
-        Math.ceil((sampling.region_min[0] - sampling.corner[0]) / sampling.sampling[0]),
-        Math.floor((sampling.region_max[0] - sampling.corner[0]) / sampling.sampling[0]),
-        Math.ceil((sampling.region_min[1] - sampling.corner[1]) / sampling.sampling[1]),
-        Math.floor((sampling.region_max[1] - sampling.corner[1]) / sampling.sampling[1]),
-    ];
-
-    return phase.slice(new np!.Slice(y_min, y_max), new np!.Slice(x_min, x_max));
+// y position = y index * sampling + corner; y index = (y position - corner) / sampling
+function cropBoundsForAutoscale(sampling: ObjectSampling, nx: number): CropBounds | undefined {
+    if (!sampling.region_min || !sampling.region_max) return undefined;
+    return {
+        nx,
+        yMin: Math.ceil((sampling.region_min[0] - sampling.corner[0]) / sampling.sampling[0]),
+        yMax: Math.floor((sampling.region_max[0] - sampling.corner[0]) / sampling.sampling[0]),
+        xMin: Math.ceil((sampling.region_min[1] - sampling.corner[1]) / sampling.sampling[1]),
+        xMax: Math.floor((sampling.region_max[1] - sampling.corner[1]) / sampling.sampling[1]),
+    };
 }
 
 interface ObjectPlotProps {
     metaState: PrimitiveAtom<ObjectSampling | null>
-    dataState: PrimitiveAtom<NArray | null>
+    dataState: PrimitiveAtom<DecodedArray | null>
 }
 
 export function ObjectPlot({metaState, dataState}: ObjectPlotProps) {
     const hasObject = useAtomValue(metaState) !== null;
-    if (!hasObject || !np) return <div></div>;
+    if (!hasObject) return <div></div>;
     return <ObjectPlotSub metaState={metaState} dataState={dataState} />;
 }
 
@@ -62,33 +50,30 @@ function ObjectPlotSub({metaState, dataState}: ObjectPlotProps) {
     // keep area constant
     const [xSize, ySize] = [Math.ceil(size * Math.sqrt(aspect)), Math.ceil(size / Math.sqrt(aspect))];
 
+    const cropBounds = useMemo(() => cropBoundsForAutoscale(sampling, nx), [sampling, nx]);
+
     const phaseAtom = useMemo(() => atom((get) => {
         const data = get(dataState);
-        return data ? objectPhase(data) : null;
+        return data ? objectPhaseProjected(data) : null;
     }), [dataState]);
 
     const drawFnAtom = useMemo(() => atom((get) => {
         const phase = get(phaseAtom);
         return (_ctx: CanvasRenderingContext2D, imageData: ImageData, scale: NumericScale<ColorLike>) => {
-            if (!phase || !np) return;
+            if (!phase) return;
             const [vmin, vmax] = scale.domain as [number, number];
-            imageData.data.set(
-                np.expr`(${phase} - ${vmin}) / (${vmax} - ${vmin})`.apply_cmap('magma')
-            );
+            applyMagmaInto(imageData, phase.data, vmin, vmax);
         };
     }), [phaseAtom]);
 
     const autoscaleFnAtom = useMemo(() => atom((get) => {
         const phase = get(phaseAtom);
         return () => {
-            if (!phase || !np) return { vmin: null, vmax: null };
-            const cropped = croppedPhase(phase, sampling);
-            return {
-                vmin: np.nanmin(cropped).toNestedArray() as number,
-                vmax: np.nanmax(cropped).toNestedArray() as number,
-            };
+            if (!phase) return { vmin: null, vmax: null };
+            const [vmin, vmax] = minmaxNaN(phase.data, cropBounds);
+            return { vmin, vmax };
         };
-    }), [phaseAtom, sampling]);
+    }), [phaseAtom, cropBounds]);
 
     const scales: Map<string, ScaleSpec> = useMemo(() => new Map([
         ["x", { scale: plotlib.linear([xmin, xmax], undefined, { show: false }), size: `${xSize}px` }],
@@ -108,12 +93,12 @@ function ObjectPlotSub({metaState, dataState}: ObjectPlotProps) {
 
 interface ProbePlotProps {
     metaState: PrimitiveAtom<ProbeMeta | null>
-    dataState: PrimitiveAtom<NArray | null>
+    dataState: PrimitiveAtom<DecodedArray | null>
 }
 
 export function ProbePlot({metaState, dataState}: ProbePlotProps) {
     const hasProbe = useAtomValue(metaState) !== null;
-    if (!hasProbe || !np) return <div></div>;
+    if (!hasProbe) return <div></div>;
     return <ProbePlotSub metaState={metaState} dataState={dataState} />;
 }
 
@@ -125,34 +110,30 @@ function ProbePlotSub({metaState, dataState}: ProbePlotProps) {
 
     const intensitiesAtom = useMemo(() => atom((get) => {
         const data = get(dataState);
-        return data ? np!.abs2(data) : null;
+        return data ? abs2(data) : null;
     }), [dataState]);
 
     // computed once per tick and shared by every probe mode's draw_fn below
     const intensitySlicesAtom = useMemo(() => atom((get) => {
         const intensities = get(intensitiesAtom);
-        return intensities ? np!.split(intensities) : null;
+        return intensities ? splitAxis0(intensities) : null;
     }), [intensitiesAtom]);
 
     const autoscaleFnAtom = useMemo(() => atom((get) => {
         const intensities = get(intensitiesAtom);
         return () => {
-            if (!intensities || !np) return { vmin: null, vmax: null };
-            return {
-                vmin: np.nanmin(intensities).toNestedArray() as number,
-                vmax: np.nanmax(intensities).toNestedArray() as number,
-            };
+            if (!intensities) return { vmin: null, vmax: null };
+            const [vmin, vmax] = minmaxNaN(intensities.data);
+            return { vmin, vmax };
         };
     }), [intensitiesAtom]);
 
     const drawFnAtoms = useMemo(() => Array.from({length: n_plots}, (_, i) => atom((get) => {
         const slices = get(intensitySlicesAtom);
         return (_ctx: CanvasRenderingContext2D, imageData: ImageData, scale: NumericScale<ColorLike>) => {
-            if (!slices || !np) return;
+            if (!slices) return;
             const [vmin, vmax] = scale.domain as [number, number];
-            imageData.data.set(
-                np.expr`(${slices[i]} - ${vmin}) / (${vmax} - ${vmin})`.apply_cmap('magma')
-            );
+            applyMagmaInto(imageData, slices[i].data, vmin, vmax);
         };
     })), [intensitySlicesAtom, n_plots]);
 
@@ -182,7 +163,7 @@ function ProbePlotSub({metaState, dataState}: ProbePlotProps) {
 
 export function ProgressPlot({state}: {state: PrimitiveAtom<Record<string, ProgressData>>}) {
     const progress = useAtomValue(state);
-    if (!progress || !np || !progress.total_loss) return <div></div>;
+    if (!progress || !progress.total_loss) return <div></div>;
 
     return <ProgressPlotSub progress={progress.total_loss} />;
 }

@@ -1,4 +1,4 @@
-import { NArray } from 'wasm-array';
+import { DecodedArray } from './array';
 
 export type WorkerStatus = "queued" | "starting" | "idle" | "running" | "stopping" | "stopped" | "unknown";
 export type JobStatus = "queued" | "starting" | "running" | "stopping" | "stopped";
@@ -113,7 +113,7 @@ export interface ReconsData {
     iter: IterData;
     probe: ProbeData;
     object: ObjectData;
-    scan: NArray;
+    scan: DecodedArray;
     progress: Record<string, ProgressData>;
 }
 
@@ -143,7 +143,7 @@ export interface ObjectSampling {
 
 export interface ProbeData {
     sampling: Sampling;
-    data: NArray;
+    data: DecodedArray;
 };
 
 // client-side view of a probe's rarely-changing shape (as opposed to its per-tick array data)
@@ -154,8 +154,8 @@ export interface ProbeMeta {
 
 export interface ObjectData {
     sampling: ObjectSampling;
-    data: NArray;
-    thicknesses: NArray;
+    data: DecodedArray;
+    thicknesses: DecodedArray;
 };
 
 export interface ProgressData {

@@ -60,7 +60,4 @@ module.exports = {
     extensions: ['.ts', '.js', '.tsx', '.jsx'],
   },
   plugins: [],
-  experiments: {
-    asyncWebAssembly: true
-  },
 };

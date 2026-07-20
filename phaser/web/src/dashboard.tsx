@@ -7,8 +7,7 @@ import '@mantine/core/styles.css';
 import '@hexane/plotlib/styles.css';
 import { AppShell, Container, createTheme, MantineProvider } from '@mantine/core';
 import * as plotlib from '@hexane/plotlib';
-import { np_fut, np } from './wasm-array';
-import { IArrayInterchange, NArray } from 'wasm-array';
+import { decodeInterchange, ArrayInterchange, DecodedArray } from './array';
 
 import './styles.css';
 import { JobStatus, DashboardMessage, LogRecord, LogsData, ProbeMeta, ObjectSampling, ProgressData, PartialReconsData } from './types';
@@ -56,15 +55,14 @@ function App(props: {}) {
     // split so that consumers can subscribe to shape/sampling (which changes rarely)
     // separately from the raw array data (which changes every update)
     const probeMetaState: PrimitiveAtom<ProbeMeta | null> = atom(null as ProbeMeta | null);
-    const probeDataState: PrimitiveAtom<NArray | null> = atom(null as NArray | null);
+    const probeDataState: PrimitiveAtom<DecodedArray | null> = atom(null as DecodedArray | null);
     const objectMetaState: PrimitiveAtom<ObjectSampling | null> = atom(null as ObjectSampling | null);
-    const objectDataState: PrimitiveAtom<NArray | null> = atom(null as NArray | null);
+    const objectDataState: PrimitiveAtom<DecodedArray | null> = atom(null as DecodedArray | null);
     const progressState: PrimitiveAtom<Record<string, ProgressData>> = atom({});
     const logsState: PrimitiveAtom<Array<LogRecord>> = atom([] as Array<LogRecord>);
 
-    async function updateState(raw_state: Record<string, any>) {
-        await np_fut;
-        const state = (await decodeState(raw_state)) as PartialReconsData;
+    function updateState(raw_state: Record<string, any>) {
+        const state = decodeState(raw_state) as PartialReconsData;
         console.log(`state: ${JSON.stringify(state)}`);
 
         if (state.probe) {
@@ -174,29 +172,25 @@ function samplingEqual(a: ObjectSampling | null, b: ObjectSampling): boolean {
             && (a.region_max === null && b.region_max === null || a.region_max !== null && b.region_max !== null && isClose(a.region_max, b.region_max))
 }
 
-async function decodeState(state: any): Promise<any> {
+function decodeState(state: any): any {
     if (typeof state !== 'object' || state === null) {
         return state;
     }
 
     if (state instanceof Array) {
-        let out: Array<any> = [];
-        for (const v of state) {
-            out.push(await decodeState(v));
-        }
-        return out;
+        return state.map(decodeState);
     }
 
     if (state._ty !== undefined) {
         if (state._ty === 'numpy') {
-            return np!.from_interchange(state as IArrayInterchange);
+            return decodeInterchange(state as ArrayInterchange);
         }
         throw new Error(`Unknown custom type '${state._ty}'`);
     }
 
-    let out = {};
+    let out: Record<string, any> = {};
     for (const [k, v] of Object.entries(state)) {
-        out[k] = (typeof v === 'object' && v !== null) ? await decodeState(v) : v;
+        out[k] = (typeof v === 'object' && v !== null) ? decodeState(v) : v;
     }
     return out;
 }

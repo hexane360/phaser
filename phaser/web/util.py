@@ -35,8 +35,11 @@ def encode_obj(obj: t.Any, to_numpy: bool = True) -> t.Any:
     if isinstance(obj, numpy.ndarray):
         if not to_numpy:
             return obj.tolist()
+        # guarantee C-contiguity so `strides` is always `None` and the client
+        # never needs to handle strided array data
+        obj = numpy.ascontiguousarray(obj)
         d = obj.__array_interface__
-        d['data'] = base64.urlsafe_b64encode(obj.tobytes()).decode('ascii')
+        d['data'] = base64.b64encode(obj.tobytes()).decode('ascii')
         d['_ty'] = 'numpy'
         return d
 
@@ -69,7 +72,7 @@ def decode_obj(obj: t.Any) -> t.Any:
     ty = d.pop('_ty')
 
     if ty == 'numpy':
-        d['data'] = base64.urlsafe_b64decode(d['data'].encode('utf-8'))
+        d['data'] = base64.b64decode(d['data'].encode('utf-8'))
         d['shape'] = tuple(d['shape'])
         return numpy.array(_array_dummy(d))
 
