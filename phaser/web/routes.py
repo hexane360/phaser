@@ -4,6 +4,7 @@ import typing as t
 import sys
 
 from quart import Quart, render_template, request, Response, abort, websocket
+from quart.utils import run_sync
 
 import pane
 
@@ -205,7 +206,9 @@ async def listen():
             updates = [item for item in items if isinstance(item, TopicUpdate)]
             errors = [item for item in items if isinstance(item, ErrorMessage)]
             if updates:
-                await websocket.send(serialize(UpdatesMessage(updates)))
+                # serialize large objects off the event loop
+                data = await run_sync(serialize)(UpdatesMessage(updates))
+                await websocket.send(data)
             for error in errors:
                 await websocket.send(serialize(error))
 

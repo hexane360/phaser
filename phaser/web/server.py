@@ -17,7 +17,7 @@ import weakref
 import typing as t
 
 import pane
-from quart import Quart, url_for, request
+from quart import Quart, url_for, request, g
 from typing_extensions import Self
 
 from .types import (
@@ -519,6 +519,24 @@ class Server:
 
         logging.basicConfig(level=logging.INFO if verbosity == 0 else logging.DEBUG)
 
+        @self.app.before_request
+        async def _time_request():
+            g.start_time = time.monotonic()
+
+        @self.app.after_request
+        async def _log_request_time(response):
+            elapsed = time.monotonic() - g.start_time
+            msg = f"{request.method} {request.path} {response.status_code} {elapsed * 1000.:.1f}ms"
+            if elapsed > 0.5:  # 500 ms
+                logging.warning(msg)
+            else:
+                logging.debug(msg)
+            return response
+
+        @self.app.before_serving
+        async def _start_watchdog():
+            asyncio.create_task(_watch_event_loop_lag())
+
         if verbosity > 0:
             @self.app.before_request
             async def log_request():
@@ -541,6 +559,8 @@ class Server:
         from hypercorn.config import Config
         from hypercorn.asyncio import serve
 
+        _disable_ws_compression()
+
         try:
             loop.run_until_complete(
                 serve(self.app, Config.from_mapping(
@@ -558,6 +578,70 @@ class Server:
             finally:
                 asyncio.set_event_loop(None)
                 loop.close()
+
+
+async def _watch_event_loop_lag(interval: float = 0.5, threshold: float = 0.2) -> None:
+    """Background watchdog. Sleeps in a loop and compares actual elapsed time to the
+    requested interval; any excess is scheduling lag caused by something blocking the
+    event loop (sync work not offloaded to a thread, a blocking call, etc.)."""
+    loop = asyncio.get_running_loop()
+    last = loop.time()
+    while True:
+        await asyncio.sleep(interval)
+        now = loop.time()
+        lag = now - last - interval
+        if lag > threshold:
+            logging.warning(f"Event loop stalled for {lag:.3f}s")
+        last = now
+
+
+def _disable_ws_compression() -> None:
+    """
+    Monkey-patches hypercorn's Handshake.accept function to disable websocket compression
+    """
+    from hypercorn.protocol.ws_stream import Handshake
+    from wsproto.connection import Connection, ConnectionType
+    from wsproto.extensions import Extension
+    from wsproto.handshake import server_extensions_handshake
+    from wsproto.utilities import generate_accept_token
+
+    def accept(
+        self: Handshake,
+        subprotocol: t.Optional[str],
+        additional_headers: t.Iterable[t.Tuple[bytes, bytes]],
+    ) -> t.Tuple[int, t.List[t.Tuple[bytes, bytes]], Connection]:
+        headers = []
+        if subprotocol is not None:
+            if self.subprotocols is None or subprotocol not in self.subprotocols:
+                raise Exception("Invalid Subprotocol")
+            else:
+                headers.append((b"sec-websocket-protocol", subprotocol.encode()))
+
+        extensions: t.List[Extension] = []  # permessage-deflate disabled, see above
+        accepts = None
+        if self.extensions is not None:
+            accepts = server_extensions_handshake(self.extensions, extensions)
+
+        if accepts:
+            headers.append((b"sec-websocket-extensions", accepts))
+
+        if self.key is not None:
+            headers.append((b"sec-websocket-accept", generate_accept_token(self.key)))
+
+        status_code = 200
+        if self.http_version == "1.1":
+            headers.extend([(b"upgrade", b"WebSocket"), (b"connection", b"Upgrade")])
+            status_code = 101
+
+        for name, value in additional_headers:
+            if b"sec-websocket-protocol" == name or name.startswith(b":"):
+                raise Exception(f"Invalid additional header, {name.decode()}")
+            headers.append((name, value))
+
+        self.accepted = True
+        return status_code, headers, Connection(ConnectionType.SERVER, extensions)
+
+    Handshake.accept = accept
 
 
 def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
