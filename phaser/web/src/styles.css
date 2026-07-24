@@ -1,3 +1,15 @@
+:root {
+    --border-width: 2px;
+
+    &[data-mantine-color-scheme="light"] {
+        --mantine-color-default-border: var(--mantine-color-gray-6);
+    }
+
+    &[data-mantine-color-scheme="dark"] {
+        --mantine-color-default-border: var(--mantine-color-gray-3);
+    }
+}
+
 .section-header {
     display: block;
     font-size: x-large;
@@ -16,6 +28,8 @@
 }
 
 .section {
+    container-type: inline-size;
+
     transition: max-height 0.3s ease-out;
     max-height: 100em;
     overflow: hidden;
@@ -35,27 +49,6 @@
     transform: none;
 }
 
-.simple-button {
-    display: block;
-    margin: auto;
-
-    width: 40px;
-    height: 40px;
-    border-radius: 15px;
-    border: none;
-    cursor: pointer;
-    box-sizing: border-box;
-
-    background-color: #e6194B;
-}
-
-.simple-button:hover {
-    filter: brightness(85%);
-
-    border: 2px solid black;
-    border-color: black;
-}
-
 .hbox, .vbox {
     display: flex;
     justify-content: center;
@@ -65,6 +58,10 @@
     flex: 0 0 auto;
 }
 
+.mono {
+    font-family: var(--mantine-font-family-monospace);
+}
+
 .log-cont {
     height: 30ex;
     overflow-y: scroll;
@@ -72,7 +69,7 @@
 }
 
 .log {
-    border: 1px;
+    border: var(--border-width);
 }
 
 .grid {
@@ -84,22 +81,27 @@
     display: grid;
     row-gap: 0em;
 
+    border: var(--border-width) solid var(--mantine-color-default-border);
+    border-radius: var(--mantine-radius-md);
+    background-color: var(--mantine-color-body);
+
     /* header */
     & > div:first-of-type {
         display: grid;
         grid-template-columns: subgrid;
         grid-column: 1 / -1;
 
-        padding-bottom: 5px;
+        padding: 10px 10px 8px;
+        /*font-size: 0.8em;
         font-weight: bold;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--mantine-color-dimmed);*/
+        border-bottom: var(--border-width) solid;
 
         & > div {
             align-content: baseline;
         }
-    }
-
-    & > * {
-        padding: 10px;
     }
 
     & > div > div {
@@ -107,22 +109,120 @@
     }
 }
 
+/* collapses a .card-list from a grid table into standalone stacked cards, once its
+   containing .section drops below $width */
+@define-mixin collapse-card-list-below $width {
+    @container (max-width: $width) {
+        & {
+            display: block;
+            border: 0;
+            background-color: transparent;
+            max-width: none;
+        }
+        & > div:first-of-type {
+            display: none;
+        }
+        & .row-group {
+            display: block;
+            border: var(--border-width) solid var(--mantine-color-default-border);
+            border-radius: var(--mantine-radius-md);
+        }
+        & .row-group + .row-group {
+            border-top: var(--border-width) solid var(--mantine-color-default-border);
+            margin-top: 10px;
+        }
+        & .card {
+            display: flex;
+            flex-wrap: wrap;
+            flex-direction: row;
+            gap: 15px;
+            border-left-width: 4px;
+            justify-content: space-evenly;
+
+            & > div:last-of-type {
+                flex-grow: 1;
+            }
+        }
+    }
+}
+
+.workers-table {
+    max-width: 800px;
+    grid-template-columns:
+        minmax(140px, 1fr)   /* worker id */
+        minmax(90px, 1fr)    /* type */
+        minmax(110px, 1fr)   /* status */
+        minmax(220px, 2fr);  /* actions */
+
+    @mixin collapse-card-list-below 650px;
+}
+
+.jobs-table {
+    max-width: 1000px;
+    grid-template-columns:
+        minmax(140px, 1fr)   /* job id */
+        minmax(140px, 4fr)   /* name */
+        minmax(110px, 1fr)   /* status */
+        minmax(140px, 1fr)   /* engine iter */
+        minmax(140px, 1fr)   /* total iter */
+        minmax(200px, 1fr);  /* actions */
+
+    @mixin collapse-card-list-below 900px;
+}
+
+/* wraps a .card + its .card-body Collapse, so rows can be divided/gapped as units */
+.row-group {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
+}
+
+.row-group + .row-group {
+    border-top: var(--border-width) solid var(--mantine-color-default-border);
+}
+
 .card {
     display: grid;
     grid-template-columns: subgrid;
     grid-column: 1 / -1;
+    align-items: center;
 
-    background-color: var(--mantine-primary-color-2);
-    border-radius: 0;
+    padding: 10px;
+    cursor: pointer;
+    border-left: 3px solid var(--status, transparent);
 
     &:hover {
-        background-color: var(--mantine-primary-color-3);
+        background-color: var(--mantine-color-default-hover);
     }
 }
 
 .card-body {
     grid-column: 1 / -1;
-    background-color: var(--mantine-primary-color-5);
-    color: var(--mantine-color-white);
+    padding: 0 20px 20px 13px;
+    /*color: var(--mantine-color-dimmed);*/
+    border-left: 3px solid var(--status, transparent);
 }
+
+.progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--status);
+
+    &::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: currentColor;
+    }
+}
+
 

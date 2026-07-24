@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { atom, PrimitiveAtom, useAtomValue, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
-import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Modal, Tabs, Stack, Code } from '@mantine/core';
+import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Modal, Tabs, Stack, Code, Progress } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import ky from 'ky';
 import TimeAgo from 'react-timeago';
@@ -12,14 +12,25 @@ import TimeAgo from 'react-timeago';
 import './styles.css';
 import { JobState, WorkerState } from './types';
 import { makeTheme, cssVariableResolver } from './theme';
-import { Section } from './components';
+import { Section, Mono } from './components';
 import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
 import { ConnectionStatus } from './connection';
 import { handleRequest } from './requests';
 
 
-export function Worker({i, state}: {i: number, state: WorkerState}) {
+// semantic status color, read from a Mantine color-scheme-aware token
+function statusColor(status: string): string {
+    switch (status) {
+        case 'running': return 'var(--mantine-color-green-text)';
+        case 'queued':
+        case 'starting': return 'var(--mantine-color-orange-text)';
+        case 'stopping': return 'var(--mantine-color-red-text)';
+        default: return 'var(--mantine-color-gray-text)'; // idle, stopped, unknown
+    }
+}
+
+export function Worker({state}: {state: WorkerState}) {
     const [opened, {toggle}] = useDisclosure(false);
 
     function procBackends(backends: Array<[string, string]>): string {
@@ -31,25 +42,25 @@ export function Worker({i, state}: {i: number, state: WorkerState}) {
         return arr.join(', ');
     }
 
-    return <>
-        <div className="card" style={{gridRow: 2*i + 2}} onClick={toggle}>
-            <div style={{gridColumn: 1}}>{state.worker_id}</div>
-            <div style={{gridColumn: 2}}>{state.worker_type}</div>
-            <div style={{gridColumn: 3}}>{state.status}</div>
-            <Group style={{gridColumn: 4}} justify='center'>
-                <Button color="yellow" onClick={(e) => signal_worker(e, state, 'reload')}>Reload</Button>
-                <Button color="red" onClick={(e) => signal_worker(e, state, 'shutdown')}>Shutdown</Button>
+    return <div className="row-group" style={{'--status': statusColor(state.status)} as React.CSSProperties}>
+        <div className="card" onClick={toggle}>
+            <div><Mono>{state.worker_id}</Mono></div>
+            <div>{state.worker_type}</div>
+            <div className="status">{state.status}</div>
+            <Group justify='right'>
+                <Button variant="default" onClick={(e) => signal_worker(e, state, 'reload')}>Reload</Button>
+                <Button variant="default" mod={{danger: true}} onClick={(e) => signal_worker(e, state, 'shutdown')}>Shutdown</Button>
             </Group>
         </div>
-        <Collapse className="card-body" style={{gridRow: 2*i + 3}} in={opened}>
+        <Collapse className="card-body" in={opened}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
-                <div>{state.hostname ? `Hostname: ${state.hostname}` : ""}</div>
+                <div>{state.hostname ? <>Hostname: <Mono>{state.hostname}</Mono></> : <></>}</div>
                 <div>{state.current_job ? `Running job: ${state.current_job}` : ""}</div>
-                <div style={{gridColumn: "1/-1"}}>{state.backends ? `Backends: ${procBackends(state.backends)}` : ""}</div>
+                <div style={{gridColumn: "1/-1"}}>{state.backends ? <>Backends: <Mono>{procBackends(state.backends)}</Mono></> : <></>}</div>
                 <div style={{gridColumn: "1/-1"}}>{state.start_time ? <>Running since <TimeAgo date={state.start_time}/></> : <></>}</div>
             </div>
         </Collapse>
-    </>
+    </div>
 }
 
 export function Workers({workers}: {workers: PrimitiveAtom<Array<WorkerState> | null>}) {
@@ -59,46 +70,52 @@ export function Workers({workers}: {workers: PrimitiveAtom<Array<WorkerState> | 
         return <Title order={4}>No workers have been started</Title>
     }
 
-    const style = {
-        maxWidth: "800px",
-        gridTemplateColumns: "minmax(150px, 1fr) minmax(130px, 1fr) minmax(130px, 2fr) minmax(250px, 1fr)",
-    }
-
-    return <div className="card-list" style={style}>
+    return <div className="card-list workers-table">
         <div>
             <div>Worker ID</div>
             <div>Type</div>
             <div>Status</div>
             <div></div>
         </div>
-        {...workers_val.map((worker, i) => <Worker state={worker} i={i}/> )}
+        {...workers_val.map((worker) => <Worker state={worker} key={worker.worker_id}/> )}
     </div>;
 }
 
-export function Job({i, state}: {i: number, state: JobState}) {
+function IterProgress({value, max}: {value: number, max: number | null}) {
+    const pct = max ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
+    return <div className="progress-wrap">
+        <Mono>{value}/{max ?? '?'}</Mono>
+        <Progress value={pct} w={44} size={4}/>
+    </div>;
+}
+
+export function Job({state}: {state: JobState}) {
     const [opened, {toggle}] = useDisclosure(false);
 
     const iter_state = state.state.iter;
-    const engine_progress = iter_state ? `${iter_state.engine_iter}/${iter_state.n_engine_iters ?? '?'}` : "";
-    const total_progress = iter_state ? `${iter_state.total_iter}/${iter_state.n_total_iters ?? '?'}` : "";
 
-    return <>
-        <div className="card" style={{gridRow: 2*i + 2}} onClick={toggle}>
-            <div style={{gridColumn: 1}}>{state.job_id}</div>
-            <div style={{gridColumn: 2}}>{state.job_name ?? ""}</div>
-            <div style={{gridColumn: 3}}>{state.status}</div>
-            <div style={{gridColumn: 4}}>{engine_progress}</div>
-            <div style={{gridColumn: 5}}>{total_progress}</div>
-            <Group style={{gridColumn: -1}} justify='center'>
-                <Button color="yellow" component='a' href={state.links.dashboard}>Watch</Button>
-                <Button color="red" onClick={(e) => cancel_job(state, e)}>Cancel</Button>
+    return <div className="row-group" style={{'--status': statusColor(state.status)} as React.CSSProperties}>
+        <div className="card" onClick={toggle}>
+            <div>{state.job_id}</div>
+            <div>{state.job_name ?? ""}</div>
+            <Group className="status">{state.status}</Group>
+            <Group visibleFrom="md">
+                {iter_state && <IterProgress value={iter_state.engine_iter} max={iter_state.n_engine_iters}/>}
+            </Group>
+            <Group>
+                <Group hiddenFrom="md" style={{paddingLeft: "20px"}}>Total iter:</Group>
+                {iter_state && <IterProgress value={iter_state.total_iter} max={iter_state.n_total_iters}/>}
+            </Group>
+            <Group justify='right'>
+                <Button variant="default" component='a' href={state.links.dashboard}>Watch</Button>
+                <Button variant="default" mod={{danger: true}} onClick={(e) => cancel_job(state, e)}>Cancel</Button>
             </Group>
         </div>
-        <Collapse className="card-body" style={{gridRow: 2*i + 3}} in={opened}>
+        <Collapse className="card-body" in={opened}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
             </div>
         </Collapse>
-    </>
+    </div>
 }
 
 export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState> | null>}) {
@@ -108,11 +125,7 @@ export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState> | null>}) {
         return <Title order={4}>No jobs are running</Title>
     }
 
-    const style = {
-        maxWidth: "900px", minWidth: "800px",
-        gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 2fr",
-    }
-    return <div className="card-list" style={style}>
+    return <div className="card-list jobs-table">
         <div>
             <div>Job ID</div>
             <div>Name</div>
@@ -121,7 +134,7 @@ export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState> | null>}) {
             <div>Total iter</div>
             <div></div>
         </div>
-        {...jobs_val.map((job, i) => <Job state={job} i={i}/> )}
+        {...jobs_val.map((job) => <Job state={job} key={job.job_id}/> )}
     </div>;
 }
 

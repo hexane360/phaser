@@ -1,0 +1,15 @@
+.root {
+    font-weight: 600;
+
+    @mixin hover {
+        border-color: var(--mantine-color-blue-text);
+        color: var(--mantine-color-blue-text);
+    }
+
+    &[data-danger] {
+        @mixin hover {
+            border-color: var(--mantine-color-red-text);
+            color: var(--mantine-color-red-text);
+        }
+    }
+}

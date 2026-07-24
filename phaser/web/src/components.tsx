@@ -43,3 +43,11 @@ export function Section(props: SectionProps) {
         <Collapse className="section" in={opened}>{ props.children }</Collapse>
     </>;
 }
+
+interface MonoProps {
+    children?: React.ReactNode;
+}
+
+export function Mono({children}: MonoProps) {
+    return <span className="mono">{children}</span>;
+}
