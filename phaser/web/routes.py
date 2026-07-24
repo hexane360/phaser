@@ -1,17 +1,29 @@
 import asyncio
 import json
-import typing as t
 import sys
+import typing as t
 
-from quart import Quart, render_template, request, Response, abort, websocket
+from quart import Quart, Response, abort, render_template, request, websocket
 from quart.utils import run_sync
 
 import pane
 
-from .types import JobID, ValidationError, WorkerID, WorkerMessage, UpdateMessage
-from .types import ClientMessage, TopicUpdate, UpdatesMessage, ErrorMessage, OkResponse
 from .pubsub import Session
-from .server import server, Job, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown
+from .server import Job, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown, server
+from .types import (
+    ClientMessage,
+    ErrorMessage,
+    HeartbeatAckMessage,
+    JobID,
+    OkResponse,
+    ServerShutdownMessage,
+    TopicUpdate,
+    UpdateMessage,
+    UpdatesMessage,
+    ValidationError,
+    WorkerID,
+    WorkerMessage,
+)
 
 
 def serialize(obj: t.Any, ty: t.Any = None) -> bytes:
@@ -199,6 +211,8 @@ async def listen():
             elif msg.msg == 'unsub':
                 for topic in msg.topics:
                     session.unsubscribe(topic)
+            elif msg.msg == 'ping':
+                await websocket.send(serialize(HeartbeatAckMessage()))
 
     async def send():
         while True:
@@ -215,7 +229,7 @@ async def listen():
     try:
         await asyncio.gather(send(), recv(), raise_on_shutdown())
     except Shutdown:
-        pass
+        await websocket.send(serialize(ServerShutdownMessage()))
     finally:
         session.close()
 

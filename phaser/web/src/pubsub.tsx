@@ -10,7 +10,7 @@ import { atom, PrimitiveAtom, useStore, createStore } from 'jotai';
 
 import { Topic, ClientMessage, ServerMessage, canonicalTopic } from './types';
 import { decodeState } from './array';
-import { WebsocketConnection } from './websocket';
+import { WebsocketConnection, ConnectionStatus } from './connection';
 
 type Store = ReturnType<typeof createStore>;
 
@@ -24,14 +24,16 @@ interface Subscription {
 }
 
 export class PubSubConnection {
-    public readonly status: PrimitiveAtom<string>;
+    public readonly status: PrimitiveAtom<ConnectionStatus>;
     public readonly lastSeen: PrimitiveAtom<Date | null>;
 
     private conn: WebsocketConnection;
     private subscriptions: Map<string, Subscription> = new Map();
+    private reconnectListeners: Set<() => void> = new Set();
+    private everConnected = false;
 
     public constructor(address: string, store: Store) {
-        this.status = atom('status');
+        this.status = atom<ConnectionStatus>({ type: 'connecting' });
         this.lastSeen = atom<Date | null>(null);
         this.conn = new WebsocketConnection(
             address, store, this.lastSeen, this.status,
@@ -75,6 +77,14 @@ export class PubSubConnection {
         this.conn.send(msg);
     }
 
+    // Notifies `listener` on every *re*connect (not the initial connect -- callers
+    // typically fetch their own initial state separately, e.g. `Logs`'s mount effect).
+    // Used to re-fetch anything that could have been missed while disconnected.
+    onReconnect(listener: () => void): () => void {
+        this.reconnectListeners.add(listener);
+        return () => this.reconnectListeners.delete(listener);
+    }
+
     // Replays every currently-active subscription. Called on (re)connect: the server has
     // no memory of a dropped connection's subscriptions, so a reconnecting session must
     // re-`sub` everything to keep receiving updates (and to get fresh retained snapshots).
@@ -83,6 +93,11 @@ export class PubSubConnection {
         if (topics.length) {
             this._send({ msg: 'sub', topics });
         }
+
+        if (this.everConnected) {
+            for (const listener of this.reconnectListeners) listener();
+        }
+        this.everConnected = true;
     }
 
     private _onMessage(event: MessageEvent<any>) {
@@ -107,6 +122,11 @@ export class PubSubConnection {
             const sub = this.subscriptions.get(canonicalTopic(msg.topic));
             if (!sub) return;
             for (const listener of sub.listeners) listener({ error: msg.reason });
+        } else if (msg.msg === 'pong') {
+            // no-op: any message already counts as proof of life (`connection.tsx`)
+        } else if (msg.msg === 'shutdown') {
+            console.info('server is shutting down');
+            this.conn.notifyServerShutdown();
         } else {
             console.warn(`Unknown pub/sub message: ${text}`);
         }

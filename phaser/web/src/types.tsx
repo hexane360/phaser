@@ -24,7 +24,11 @@ export interface UnsubscribeMessage {
     msg: "unsub";
 }
 
-export type ClientMessage = SubscribeMessage | UnsubscribeMessage;
+export interface HeartbeatMessage {
+    msg: "ping";
+}
+
+export type ClientMessage = SubscribeMessage | UnsubscribeMessage | HeartbeatMessage;
 
 export interface TopicUpdate {
     topic: Topic;
@@ -43,7 +47,15 @@ export interface ErrorMessage {
     msg: "error";
 }
 
-export type ServerMessage = UpdatesMessage | ErrorMessage;
+export interface HeartbeatAckMessage {
+    msg: "pong";
+}
+
+export interface ServerShutdownMessage {
+    msg: "shutdown";
+}
+
+export type ServerMessage = UpdatesMessage | ErrorMessage | HeartbeatAckMessage | ServerShutdownMessage;
 
 export type WorkerStatus = "queued" | "starting" | "idle" | "running" | "stopping" | "stopped" | "unknown";
 export type JobStatus = "queued" | "starting" | "running" | "stopping" | "stopped";

@@ -15,6 +15,7 @@ import { makeTheme, cssVariableResolver } from './theme';
 import { Section } from './components';
 import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
+import { ConnectionStatus } from './connection';
 import { handleRequest } from './requests';
 
 
@@ -183,7 +184,7 @@ export function StartWorkers(props: {}) {
 }
 
 export function StartJobs(props: {}) {
-    const pathRef: React.MutableRefObject<HTMLInputElement | null> = React.useRef(null);
+    const pathRef: React.RefObject<HTMLInputElement | null> = React.useRef(null);
 
     const [submitting, { open: setSubmitting, close: finishSubmitting }] = useDisclosure(false);
     const [error, setError] = React.useState<string | null>(null);
@@ -212,7 +213,7 @@ export function StartJobs(props: {}) {
 
 function Manager(props: {}) {
     const conn = usePubSubConnection();
-    const [fallbackStatus] = React.useState(() => atom('status'));
+    const [fallbackStatus] = React.useState(() => atom<ConnectionStatus>({ type: 'connecting' }));
 
     const jobs = usePublishedAtom<Array<JobState>>('jobs');
     const workers = usePublishedAtom<Array<WorkerState>>('workers');

@@ -3,12 +3,12 @@ import json
 import logging
 import typing as t
 
-import pane
-from pane.annotations import Tagged
 from typing_extensions import Self
 
-from .util import ReconsStateConverter
+import pane
+from pane.annotations import Tagged
 
+from .util import ReconsStateConverter
 
 JobID: t.TypeAlias = str
 WorkerID: t.TypeAlias = str
@@ -85,8 +85,12 @@ class UnsubscribeMessage(pane.PaneBase):
     topics: t.List[Topic]
     msg: t.Literal['unsub'] = 'unsub'
 
+class HeartbeatMessage(pane.PaneBase):
+    """Client -> server: liveness check."""
+    msg: t.Literal['ping'] = 'ping'
+
 ClientMessage: t.TypeAlias = t.Annotated[t.Union[
-    SubscribeMessage, UnsubscribeMessage,
+    SubscribeMessage, UnsubscribeMessage, HeartbeatMessage,
 ], Tagged('msg')]
 
 class TopicUpdate(pane.PaneBase):
@@ -109,8 +113,16 @@ class ErrorMessage(pane.PaneBase):
     reason: str
     msg: t.Literal['error'] = 'error'
 
+class HeartbeatAckMessage(pane.PaneBase):
+    """Server -> client: immediate reply to a `HeartbeatMessage`."""
+    msg: t.Literal['pong'] = 'pong'
+
+class ServerShutdownMessage(pane.PaneBase):
+    """Server -> client: Server is shutting down, expect a disconnect."""
+    msg: t.Literal['shutdown'] = 'shutdown'
+
 ServerMessage: t.TypeAlias = t.Annotated[t.Union[
-    UpdatesMessage, ErrorMessage,
+    UpdatesMessage, ErrorMessage, HeartbeatAckMessage, ServerShutdownMessage,
 ], Tagged('msg')]
 
 # server -> client messages

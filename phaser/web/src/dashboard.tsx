@@ -15,6 +15,7 @@ import { Section } from './components';
 import { ProbePlot, ObjectPlot, ProgressPlot } from './plots';
 import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
+import { ConnectionStatus } from './connection';
 import { isClose } from './utils';
 
 function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
@@ -46,6 +47,22 @@ function Logs({state}: {state: PrimitiveAtom<Array<LogRecord>>}) {
                 return;
             }
             store.set(state, (logs) => [...logs, ...(msg.data as Array<LogRecord>)]);
+        });
+    }, [conn, store, state]);
+
+    // catches whatever was missed while disconnected -- limited to the last `limit`
+    // (100) records the server returns; a wider gap would still be missed (no "logs
+    // since index N" endpoint exists).
+    React.useEffect(() => {
+        if (!conn) return;
+        return conn.onReconnect(() => {
+            getLogs().then((data) => {
+                store.set(state, (prev) => {
+                    const lastKnown = prev.length ? prev[prev.length - 1].i : -1;
+                    const newRecords = data.logs.filter((log) => log.i > lastKnown);
+                    return newRecords.length ? [...prev, ...newRecords] : prev;
+                });
+            });
         });
     }, [conn, store, state]);
 
@@ -117,7 +134,7 @@ function useProbeAtoms(): {metaState: PrimitiveAtom<ProbeMeta | null>, dataState
 
 function Dashboard(props: {}) {
     const conn = usePubSubConnection();
-    const [fallbackStatus] = React.useState(() => atom('status'));
+    const [fallbackStatus] = React.useState(() => atom<ConnectionStatus>({ type: 'connecting' }));
 
     const progressState = usePublishedAtom<Record<string, ProgressData>>({view: 'progress'});
     const {metaState: probeMetaState, dataState: probeDataState} = useProbeAtoms();

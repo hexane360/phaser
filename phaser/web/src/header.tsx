@@ -1,14 +1,26 @@
 import React from "react";
 import { ActionIcon, Container, Group, Modal, Text, useMantineColorScheme } from "@mantine/core";
+import TimeAgo from "react-timeago";
 
 import { IconSettings, IconBrightnessFilled, IconInfoCircle, IconBrandGithub } from "@tabler/icons-react";
 import PhaserLogoText from "../static/logo-text.svg";
 import PhaserLogo from "../static/logo.svg";
 import { useDisclosure } from "@mantine/hooks";
 import { useAtomValue, PrimitiveAtom } from "jotai";
+import { ConnectionStatus } from "./connection";
 
 
-export default function Header({serverStatus}: {serverStatus: PrimitiveAtom<string>}) {
+function StatusText({status}: {status: ConnectionStatus}) {
+    switch (status.type) {
+        case 'connecting': return <>Connecting…</>;
+        case 'connected': return <>Connected</>;
+        case 'reconnecting': return <>Reconnecting <TimeAgo date={status.retryAt}/></>;
+        case 'disconnected': return <>Disconnected</>;
+        case 'stopped': return <>Server stopped — refresh to reconnect</>;
+    }
+}
+
+export default function Header({serverStatus}: {serverStatus: PrimitiveAtom<ConnectionStatus>}) {
     const { colorScheme, toggleColorScheme } = useMantineColorScheme();
     const flip = colorScheme === "dark" ? {style: {transform: "scale(-1)"}} : {};
 
@@ -22,7 +34,7 @@ export default function Header({serverStatus}: {serverStatus: PrimitiveAtom<stri
                     <PhaserLogoText className="mantine-visible-from-sm" height="100%"/>
                     <PhaserLogo className="mantine-hidden-from-sm" height="100%"/>
                 </a>
-                <Text size="lg">{status}</Text>
+                <Text size="lg"><StatusText status={status}/></Text>
             </Group>
             <Group>
                 <ActionIcon size="xl" aria-label="Toggle dark mode" onClick={toggleColorScheme}><IconBrightnessFilled size="80%" {...flip}/></ActionIcon>
