@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phaserEM"
-version = "0.3-dev"
+dynamic = ["version"]
 authors = [
   {name = "Colin Gilgenbach", email = "hexane@mit.edu"}
 ]
@@ -96,6 +96,9 @@ Documentation = "https://hexane360.github.io/phaser/dev"
 
 [project.scripts]
 phaser = "phaser.cli:cli"
+
+[tool.setuptools.dynamic]
+version = {attr = "phaser.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["phaser*"]

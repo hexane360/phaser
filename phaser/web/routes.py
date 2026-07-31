@@ -8,6 +8,7 @@ from quart.utils import run_sync
 
 import pane
 
+from ..version import version_info
 from .pubsub import Session
 from .server import Job, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown, server
 from .types import (
@@ -43,6 +44,10 @@ app: Quart = server.app
 @app.get("/")
 async def index():
     return await render_template("manager.html")
+
+@app.get("/version")
+async def version():
+    return json_response(version_info())
 
 @app.post("/shutdown")
 async def shutdown():

@@ -1,34 +1,48 @@
 from __future__ import annotations
+
 import abc
 import asyncio
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
 import datetime
 import logging
-from pathlib import Path
-import random
 import multiprocessing
-import threading
-import signal
 import os
+import random
+import signal
 import sys
+import threading
 import time
-import weakref
 import typing as t
+import weakref
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-import pane
-from quart import Quart, url_for, request, g
+from quart import Quart, g, request, url_for
 from typing_extensions import Self
 
-from .types import (
-    JobID, ValidationError, WorkerID,
-    # worker - server communication
-    WorkerMessage, JobResponse, SignalResponse, OkResponse, ServerResponse, Signal,
-    # server - client communication
-    WorkerStatus, WorkerState, LogRecord,
-    JobStatus, JobState, canonical_topic,
-)
+import pane
+
+from ..version import version_info
 from .pubsub import Broker
+from .types import (
+    JobID,
+    JobResponse,
+    JobState,
+    JobStatus,
+    LogRecord,
+    OkResponse,
+    ServerResponse,
+    Signal,
+    SignalResponse,
+    ValidationError,
+    WorkerID,
+    # worker - server communication
+    WorkerMessage,
+    WorkerState,
+    # server - client communication
+    WorkerStatus,
+    canonical_topic,
+)
 
 T = t.TypeVar('T')
 
@@ -536,6 +550,12 @@ class Server:
         @self.app.before_serving
         async def _start_watchdog():
             asyncio.create_task(_watch_event_loop_lag())
+
+        @self.app.before_serving
+        async def _log_version():
+            # resolves & caches `version_info()`, keeping git subprocesses off the request path
+            info = version_info()
+            logging.info(str(info))
 
         if verbosity > 0:
             @self.app.before_request

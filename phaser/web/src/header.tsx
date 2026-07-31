@@ -8,6 +8,7 @@ import PhaserLogo from "../static/logo.svg";
 import { useDisclosure } from "@mantine/hooks";
 import { useAtomValue, PrimitiveAtom } from "jotai";
 import { ConnectionStatus } from "./connection";
+import { rootPrefix } from "./utils";
 
 
 function StatusText({status}: {status: ConnectionStatus}) {
@@ -50,15 +51,36 @@ export default function Header({serverStatus, actions}: {serverStatus: Primitive
     </Container>
 }
 
+interface VersionInfo {
+    version: string,
+    git: {commit: string, short_commit: string, dirty: boolean, branch: string | null} | null,
+}
+
+function versionText({version, git}: VersionInfo): string {
+    if (!git) return `Version ${version}`;
+    const parts = [git.branch, git.short_commit, git.dirty ? "dirty" : null].filter((p) => p);
+    return `Version ${version} (${parts.join(", ")})`;
+}
+
 export function About({opened, close}: {opened: boolean, close: () => void}) {
     /* TODO:
      - brief instructions
      - link to documentation
      - acknowledgments
-     - version
      */
+    const [version, setVersion] = React.useState<VersionInfo | null>(null);
+
+    React.useEffect(() => {
+        if (!opened || version) return;
+        let cancelled = false;
+        fetch(`${rootPrefix()}/version`)
+            .then((resp) => resp.json())
+            .then((info: VersionInfo) => { if (!cancelled) setVersion(info); })
+            .catch((e) => console.error("Couldn't fetch version:", e));
+        return () => { cancelled = true; };
+    }, [opened, version]);
 
     return <Modal opened={opened} onClose={close} title="About phaser">
-        To be filled out!
+        <Text>{version ? versionText(version) : "\u00A0"}</Text>
     </Modal>
 }
