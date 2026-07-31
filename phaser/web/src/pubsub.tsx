@@ -23,16 +23,49 @@ interface Subscription {
     listeners: Set<TopicListener>;
 }
 
+// What a view's atom holds. `pending` is distinct from an empty `ok` -- "not fetched yet"
+// and "this job has no object" are different things to render.
+export type ViewState<T> =
+    | { status: 'pending' }
+    | { status: 'ok'; data: T }
+    | { status: 'error'; reason: string };
+
+export interface ViewOptions<T> {
+    // An append-conflated topic (`logs`) publishes deltas rather than a whole value; `reduce`
+    // folds each one into the accumulator, starting from `initial`.
+    initial?: T;
+    reduce?: (prev: T, delta: any) => T;
+    // History the socket never replays. Runs on first subscribe and again on every
+    // reconnect; `merge` folds the result into whatever has accumulated since, so updates
+    // that land mid-fetch aren't overwritten.
+    hydrate?: () => Promise<T>;
+    merge?: (prev: T | undefined, fetched: T) => T;
+}
+
+// One atom per canonical topic, shared by every component that asks for it, so N widgets
+// on the same view are one subscription over one piece of state -- and widget N+1 sees the
+// value that's already there instead of waiting for the next publish.
+interface ViewEntry {
+    topic: Topic;
+    options: ViewOptions<any>;
+    atom: PrimitiveAtom<ViewState<any>>;
+    refs: number;
+    stop: (() => void) | null;
+}
+
 export class PubSubConnection {
     public readonly status: PrimitiveAtom<ConnectionStatus>;
     public readonly lastSeen: PrimitiveAtom<Date | null>;
 
     private conn: WebsocketConnection;
+    private store: Store;
     private subscriptions: Map<string, Subscription> = new Map();
+    private views: Map<string, ViewEntry> = new Map();
     private reconnectListeners: Set<() => void> = new Set();
     private everConnected = false;
 
     public constructor(address: string, store: Store) {
+        this.store = store;
         this.status = atom<ConnectionStatus>({ type: 'connecting' });
         this.lastSeen = atom<Date | null>(null);
         this.conn = new WebsocketConnection(
@@ -71,6 +104,76 @@ export class PubSubConnection {
                 this._send({ msg: 'unsub', topics: [topic] });
             }
         };
+    }
+
+    // Idempotent and keyed, so it's safe to call during render. Creating the atom is
+    // separate from subscribing (`retainView`): the atom has to exist before the effect
+    // that starts the subscription runs, and its identity must survive the ref count
+    // hitting zero.
+    viewAtom<T>(key: string, topic: Topic, options: ViewOptions<T> = {}): PrimitiveAtom<ViewState<T>> {
+        let entry = this.views.get(key);
+        if (!entry) {
+            entry = { topic, options, atom: atom<ViewState<any>>({ status: 'pending' }), refs: 0, stop: null };
+            this.views.set(key, entry);
+        }
+        return entry.atom;
+    }
+
+    // Subscribes on the first consumer, unsubscribes after the last one leaves. Returns the
+    // release function for an effect cleanup.
+    retainView(key: string): () => void {
+        const entry = this.views.get(key);
+        if (!entry) return () => {};
+
+        entry.refs += 1;
+        if (entry.refs === 1) this._startView(entry);
+
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            entry.refs -= 1;
+            if (entry.refs === 0) this._stopView(entry);
+        };
+    }
+
+    private _startView(entry: ViewEntry) {
+        const { initial, reduce, hydrate, merge } = entry.options;
+        const set = (fn: (prev: ViewState<any>) => ViewState<any>) => this.store.set(entry.atom, fn);
+
+        const unsubscribe = this.subscribe(entry.topic, (msg) => {
+            if ('error' in msg) {
+                set(() => ({ status: 'error', reason: msg.error }));
+                return;
+            }
+            set((prev) => {
+                if (!reduce) return { status: 'ok', data: msg.data };
+                return { status: 'ok', data: reduce(prev.status === 'ok' ? prev.data : initial, msg.data) };
+            });
+        });
+
+        const runHydrate = () => {
+            if (!hydrate) return;
+            hydrate()
+                .then((fetched) => set((cur) => ({
+                    status: 'ok',
+                    data: merge ? merge(cur.status === 'ok' ? cur.data : undefined, fetched) : fetched,
+                })))
+                .catch((e) => set((cur) => cur.status === 'ok' ? cur : { status: 'error', reason: String(e) }));
+        };
+        runHydrate();
+        const offReconnect = this.onReconnect(runHydrate);
+
+        entry.stop = () => { unsubscribe(); offReconnect(); };
+    }
+
+    // Drops the accumulated value along with the subscription: for `object`/`probe` that's
+    // a multi-megabyte array nobody is rendering any more. The (empty) entry stays, so a
+    // remounting consumer keeps the same atom and re-subscribes for a fresh snapshot.
+    private _stopView(entry: ViewEntry) {
+        entry.stop?.();
+        entry.stop = null;
+        this.store.set(entry.atom, () => ({ status: 'pending' }));
     }
 
     private _send(msg: ClientMessage) {
@@ -162,26 +265,22 @@ export function usePubSubConnection(): PubSubConnection | null {
     return React.useContext(PubSubContext);
 }
 
-// Subscribes to `topic` for the component's lifetime, writing decoded updates into a
-// (stable) jotai atom. Re-subscribes if `topic`'s canonical form changes (e.g. a `slice`
-// param). Subscription errors are logged; the atom is left at its last-known value.
-export function usePublishedAtom<T>(topic: Topic): PrimitiveAtom<T | null> {
+// The atom holding `topic`'s state, shared with every other consumer of the same topic and
+// subscribed for as long as at least one of them is mounted. Re-points at a different atom
+// when `topic`'s canonical form changes (e.g. a `slice` param) or the connection is
+// replaced, so anything derived from it belongs in a `useMemo` keyed on the atom.
+//
+// `options` is read only when the topic's entry is first created -- the first consumer of a
+// topic decides its semantics, and later ones inherit them.
+export function usePubSubView<T>(topic: Topic, options?: ViewOptions<T>): PrimitiveAtom<ViewState<T>> {
     const conn = usePubSubConnection();
-    const store = useStore();
-    const [target] = React.useState<PrimitiveAtom<T | null>>(() => atom(null as T | null));
     const key = canonicalTopic(topic);
 
-    React.useEffect(() => {
-        if (!conn) return;
-        return conn.subscribe(topic, (msg) => {
-            if ('error' in msg) {
-                console.error(`usePublishedAtom(${key}): ${msg.error}`);
-                return;
-            }
-            store.set(target, (_) => msg.data as T);
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [conn, key, store, target]);
+    // stands in until the socket exists, so callers always get a real atom to read
+    const [pending] = React.useState<PrimitiveAtom<ViewState<T>>>(() => atom({ status: 'pending' } as ViewState<T>));
+    const target = conn ? conn.viewAtom<T>(key, topic, options) : pending;
+
+    React.useEffect(() => conn?.retainView(key), [conn, key]);
 
     return target;
 }

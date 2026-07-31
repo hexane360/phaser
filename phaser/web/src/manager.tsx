@@ -14,7 +14,7 @@ import { JobState, WorkerState } from './types';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section, Mono } from './components';
 import Header from './header';
-import { PubSubProvider, usePubSubConnection, usePublishedAtom } from './pubsub';
+import { PubSubProvider, usePubSubConnection, usePubSubView, ViewState } from './pubsub';
 import { ConnectionStatus } from './connection';
 import { handleRequest } from './requests';
 
@@ -52,7 +52,7 @@ export function Worker({state}: {state: WorkerState}) {
                 <Button variant="default" mod={{danger: true}} onClick={(e) => signal_worker(e, state, 'shutdown')}>Shutdown</Button>
             </Group>
         </div>
-        <Collapse className="card-body" in={opened}>
+        <Collapse className="card-body" expanded={opened}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
                 <div>{state.hostname ? <>Hostname: <Mono>{state.hostname}</Mono></> : <></>}</div>
                 <div>{state.current_job ? `Running job: ${state.current_job}` : ""}</div>
@@ -63,8 +63,9 @@ export function Worker({state}: {state: WorkerState}) {
     </div>
 }
 
-export function Workers({workers}: {workers: PrimitiveAtom<Array<WorkerState> | null>}) {
-    const workers_val = useAtomValue(workers) ?? [];
+export function Workers({workers}: {workers: PrimitiveAtom<ViewState<Array<WorkerState>>>}) {
+    const state = useAtomValue(workers);
+    const workers_val = state.status === 'ok' ? state.data : [];
 
     if (!workers_val.length) {
         return <Title order={4}>No workers have been started</Title>
@@ -111,15 +112,16 @@ export function Job({state}: {state: JobState}) {
                 <Button variant="default" mod={{danger: true}} onClick={(e) => cancel_job(state, e)}>Cancel</Button>
             </Group>
         </div>
-        <Collapse className="card-body" in={opened}>
+        <Collapse className="card-body" expanded={opened}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
             </div>
         </Collapse>
     </div>
 }
 
-export function Jobs({jobs}: {jobs: PrimitiveAtom<Array<JobState> | null>}) {
-    const jobs_val = useAtomValue(jobs) ?? [];
+export function Jobs({jobs}: {jobs: PrimitiveAtom<ViewState<Array<JobState>>>}) {
+    const state = useAtomValue(jobs);
+    const jobs_val = state.status === 'ok' ? state.data : [];
 
     if (!jobs_val.length) {
         return <Title order={4}>No jobs are running</Title>
@@ -228,8 +230,8 @@ function Manager(props: {}) {
     const conn = usePubSubConnection();
     const [fallbackStatus] = React.useState(() => atom<ConnectionStatus>({ type: 'connecting' }));
 
-    const jobs = usePublishedAtom<Array<JobState>>('jobs');
-    const workers = usePublishedAtom<Array<WorkerState>>('workers');
+    const jobs = usePubSubView<Array<JobState>>('jobs');
+    const workers = usePubSubView<Array<WorkerState>>('workers');
 
     return <AppShell header={{ height: 80 }} padding="md">
         <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus}/></AppShell.Header>

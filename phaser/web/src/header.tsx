@@ -20,7 +20,9 @@ function StatusText({status}: {status: ConnectionStatus}) {
     }
 }
 
-export default function Header({serverStatus}: {serverStatus: PrimitiveAtom<ConnectionStatus>}) {
+// `actions` are page-specific icons, prepended to the shared ones (the dashboard's palette
+// and split toggles).
+export default function Header({serverStatus, actions}: {serverStatus: PrimitiveAtom<ConnectionStatus>, actions?: React.ReactNode}) {
     const { colorScheme, toggleColorScheme } = useMantineColorScheme();
     const flip = colorScheme === "dark" ? {style: {transform: "scale(-1)"}} : {};
 
@@ -37,6 +39,7 @@ export default function Header({serverStatus}: {serverStatus: PrimitiveAtom<Conn
                 <Text size="lg"><StatusText status={status}/></Text>
             </Group>
             <Group>
+                {actions}
                 <ActionIcon size="xl" aria-label="Toggle dark mode" onClick={toggleColorScheme}><IconBrightnessFilled size="80%" {...flip}/></ActionIcon>
                 <ActionIcon size="xl" aria-label="Settings"><IconSettings size="80%"/></ActionIcon>
                 <About opened={aboutOpened} close={closeAbout}/>
