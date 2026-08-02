@@ -1,14 +1,15 @@
 import numpy
 import pytest
 
-from phaser.web.util import encode_obj, decode_obj
+from phaser.web.util import decode_obj, encode_obj
+
+pytestmark = pytest.mark.web
 
 
 @pytest.mark.parametrize('dtype', ['<f4', '<f8', '<c8', '<c16'])
 def test_encode_decode_roundtrip(dtype: str):
     rng = numpy.random.default_rng(0)
     if dtype in ('<c8', '<c16'):
-        real_dtype = '<f4' if dtype == '<c8' else '<f8'
         arr = (rng.normal(size=(3, 5)) + 1j * rng.normal(size=(3, 5))).astype(dtype)
     else:
         arr = rng.normal(size=(3, 5)).astype(dtype)

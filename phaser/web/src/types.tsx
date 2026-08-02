@@ -92,14 +92,23 @@ export interface LogRecord {
     line_number: number;
     func_name: string | null;
     stack_info: string | null;
+    elapsed: number;  // seconds since the job started
 }
 
+// A window of log records from `/job/<id>/logs`, ascending by `i`. `first`/`last` are
+// null when the page is empty; `has_before`/`has_after` say whether more matching
+// records exist on either side.
 export interface LogsData {
-    first: number;
-    last: number;
-    length: number;
-    total_length: number;
     logs: ReadonlyArray<LogRecord>;
+    first: number | null;
+    last: number | null;
+    count: number;
+    total: number;      // records matching `min_level`
+    total_all: number;  // records regardless of `min_level`
+    oldest: number;
+    has_before: boolean;
+    has_after: boolean;
+    min_level: number;
 }
 
 export interface ReconsData {

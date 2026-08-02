@@ -1,8 +1,11 @@
 import numpy
+import pytest
 
 from phaser.web.pubsub import Cache
-from phaser.web.util import encode_obj, decode_obj
-from phaser.web.views import project_phase, slice_view, VIEWS
+from phaser.web.util import decode_obj, encode_obj
+from phaser.web.views import VIEWS, project_phase, slice_view
+
+pytestmark = pytest.mark.web
 
 
 def _wire_object(data: numpy.ndarray, thicknesses: numpy.ndarray, sampling: dict) -> dict:

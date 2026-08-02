@@ -31,7 +31,7 @@ export default function Header({serverStatus, actions}: {serverStatus: Primitive
     const status = useAtomValue(serverStatus);
 
     return <Container size="lg" h="100%" style={{minWidth: "500px"}}>
-        <Group justify="space-between" h="100%">
+        <Group justify="space-between" h="100%" wrap="nowrap">
             <Group style={{height: "100%"}}>
                 <a style={{height: "95%"}} href="/">
                     <PhaserLogoText className="mantine-visible-from-sm" height="100%"/>
@@ -39,7 +39,7 @@ export default function Header({serverStatus, actions}: {serverStatus: Primitive
                 </a>
                 <Text size="lg"><StatusText status={status}/></Text>
             </Group>
-            <Group>
+            <Group wrap="nowrap">
                 {actions}
                 <ActionIcon size="xl" aria-label="Toggle dark mode" onClick={toggleColorScheme}><IconBrightnessFilled size="80%" {...flip}/></ActionIcon>
                 <ActionIcon size="xl" aria-label="Settings"><IconSettings size="80%"/></ActionIcon>

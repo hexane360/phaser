@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 import typing as t
 
@@ -10,12 +11,14 @@ import pane
 
 from ..version import version_info
 from .pubsub import Session
-from .server import Job, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown, server
+from .server import Job, Kicked, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown, server
 from .types import (
     ClientMessage,
     ErrorMessage,
     HeartbeatAckMessage,
     JobID,
+    LogPage,
+    LogRecord,
     OkResponse,
     ServerShutdownMessage,
     TopicUpdate,
@@ -118,9 +121,7 @@ async def start_job():
 
 @app.get("/job/<string:job_id>")
 async def job_dashboard(job_id: JobID):
-    if job_id == "fake":
-        return await render_template("dashboard.html")
-    if job_id not in server.jobs:
+    if job_id not in server.jobs and job_id != "fake":
         abort(404)
     return await render_template("dashboard.html")
 
@@ -149,25 +150,51 @@ async def delete_job(job_id: JobID):
 
 @app.get("/job/<string:job_id>/logs")
 async def job_logs(job_id: JobID):
+    """A page of log records. `before`/`after` are exclusive cursors on a record's `i`,
+    bounding the window on either side: both give the range between them (filled forwards
+    from `after`), neither gives the newest `limit` records."""
     try:
         job = server.jobs[job_id]
     except KeyError:
         abort(404)
 
-    limit = min(request.args.get('limit', 100, type=int), 100)
-    before = request.args.get('before', len(job.logs), type=int)
+    before = request.args.get('before', type=int)
+    after = request.args.get('after', type=int)
+    limit = min(request.args.get('limit', 100, type=int), 1000)
+    min_level = request.args.get('min_level', 0, type=int)
 
-    first = max(before-limit, 0)
-    last = before - 1
-    logs = job.logs[first:before]
+    if any(val is not None and val < 0 for val in (before, after, min_level)) or limit < 1:
+        abort(Response("Invalid query parameter", 400))
 
-    return json_response({
-        'first': first,
-        'last': last,
-        'length': len(logs),
-        'total_length': len(job.logs),
-        'logs': logs,
+    return json_response(job.logs.page(before, after, limit, min_level), LogPage)
+
+@app.get("/job/<string:job_id>/logs.txt")
+async def job_logs_text(job_id: JobID):
+    """The job's complete log as plaintext, for download."""
+    try:
+        job = server.jobs[job_id]
+    except KeyError:
+        abort(404)
+
+    min_level = request.args.get('min_level', 0, type=int)
+    if min_level < 0:
+        abort(Response("Invalid query parameter", 400))
+
+    # formatting the whole log can be slow, so keep it off the event loop
+    text = await run_sync(format_logs)(job.logs.filtered(min_level))
+
+    return Response(text, content_type='text/plain; charset=utf-8', headers={
+        'Content-Disposition': f'attachment; filename="phaser-{job_id}.log"',
     })
+
+
+def format_logs(records: t.Iterable[LogRecord]) -> str:
+    def format_log(record: LogRecord) -> str:
+        level = logging.getLevelName(record.log_level)
+        line = f"{record.timestamp:%Y-%m-%d %H:%M:%S} {level:<8} {record.logger_name}: {record.log}"
+        return f"{line}\n{record.stack_info}" if record.stack_info else line
+
+    return "".join(f"{format_log(record)}\n" for record in records)
 
 @app.post("/worker/<string:worker_id>/shutdown")
 async def shutdown_worker(worker_id: WorkerID):
@@ -205,6 +232,11 @@ async def listen():
     await websocket.accept()
 
     session = Session(default_topic={"job": job_id} if job_id else None)
+    server.sessions.add(session)
+
+    async def raise_on_kick():
+        await session.kicked.wait()
+        raise Kicked()
 
     async def recv():
         while True:
@@ -232,10 +264,14 @@ async def listen():
                 await websocket.send(serialize(error))
 
     try:
-        await asyncio.gather(send(), recv(), raise_on_shutdown())
+        await asyncio.gather(send(), recv(), raise_on_shutdown(), raise_on_kick())
     except Shutdown:
         await websocket.send(serialize(ServerShutdownMessage()))
+    except Kicked:
+        # deliberately silent: the client should see this as a dropped connection
+        logging.info("Kicking websocket connection")
     finally:
+        server.sessions.discard(session)
         session.close()
 
 @app.post("/worker/<string:worker_id>/update")

@@ -116,6 +116,7 @@ markers = [
     "torch: Run on PyTorch backend",
     "numpy: Run on numpy backend",
     "slow: mark a test as slow",
+    "web: Tests for web server",
 
     "expected_filename: Filename to load expected result from",
 ]
@@ -132,10 +133,14 @@ reportIncompatibleMethodOverride = "information"
 
 [tool.ruff.lint]
 ignore = [
-    #"I001",
     # should migrate these eventually
     "UP006", "UP007", "UP045",
+    # allow root logger
     "LOG015",
+    # allow dict(key=val)
+    "C408",
+    # allow unused noqa
+    "RUF100",
 ]
 
 [tool.ruff.lint.isort]

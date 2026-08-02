@@ -1,4 +1,5 @@
 import dataclasses
+import datetime
 import logging
 import signal
 import socket
@@ -17,8 +18,8 @@ from phaser.state import ReconsState, PartialReconsState
 from phaser.utils.num import get_devices, repr_device
 
 from .types import (
-    ConnectMessage, PollMessage, PingMessage, UpdateMessage, LogMessage, JobResultMessage,
-    WorkerShutdownMessage, WorkerMessage, ServerResponse
+    ConnectMessage, PollMessage, PingMessage, UpdateMessage, LogMessage, JobStartMessage,
+    JobResultMessage, WorkerShutdownMessage, WorkerMessage, ServerResponse
 )
 from .types import JobID, SignalException
 
@@ -157,6 +158,13 @@ def run_worker(url: str, quiet: bool = False):
             try:
                 # run job
                 log_handler.job_id = resp.job_id
+
+                # report the start time by our own clock -- the same one log records are
+                # stamped with, and the anchor the server measures `elapsed` from
+                try:
+                    send_message(JobStartMessage(resp.job_id, datetime.datetime.now(datetime.timezone.utc)))
+                except requests.RequestException:
+                    logger.error("Failed to report job start time", exc_info=True, extra={'local': True})
 
                 plan = ReconsPlan.from_jsons(resp.plan)
                 execute_plan(plan, observers=WorkerObserver(resp.job_id, send_message))

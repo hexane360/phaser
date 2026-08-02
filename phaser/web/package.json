@@ -25,7 +25,8 @@
     "postcss-simple-vars": "^7.0.1",
     "react": "^19.2.2",
     "react-dom": "^19.2.2",
-    "react-timeago": "^8.2.0"
+    "react-timeago": "^8.2.0",
+    "react-virtuoso": "^4.18.11"
   },
   "devDependencies": {
     "@anywidget/types": "^0.4.0",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import bisect
 import datetime
 import logging
 import multiprocessing
@@ -23,12 +24,13 @@ from typing_extensions import Self
 import pane
 
 from ..version import version_info
-from .pubsub import Broker
+from .pubsub import Broker, Session
 from .types import (
     JobID,
     JobResponse,
     JobState,
     JobStatus,
+    LogPage,
     LogRecord,
     OkResponse,
     ServerResponse,
@@ -49,6 +51,10 @@ T = t.TypeVar('T')
 
 class Shutdown(Exception):
     pass
+
+
+class Kicked(Exception):
+    """A websocket connection was dropped on purpose (`phaser/web/debug.py`)"""
 
 
 async def raise_on_shutdown():
@@ -263,6 +269,90 @@ class Workers:
         await asyncio.gather(*(worker.finalize() for worker in self.inner.values()))
 
 
+LOG_LEVELS: t.Tuple[int, ...] = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
+
+
+class LogBuffer:
+    """Append-only store of a job's log records, supporting paging in either direction.
+
+    Cumulative per-level indices (`_index[level]` holds the indices of every record at or
+    above `level`) make a filtered page cost O(page) rather than a scan of every record.
+    """
+    def __init__(self) -> None:
+        self.records: t.List[LogRecord] = []
+        self._index: t.Dict[int, t.List[int]] = {level: [] for level in LOG_LEVELS}
+        self.start: t.Optional[datetime.datetime] = None
+        """Timestamp of the first record appended. Survives eviction, unlike `records[0]`."""
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __iter__(self) -> t.Iterator[LogRecord]:
+        return iter(self.records)
+
+    def append(self, record: LogRecord) -> None:
+        i = len(self.records)
+        if self.start is None:
+            self.start = record.timestamp
+        self.records.append(record)
+        for level in LOG_LEVELS:
+            if record.log_level >= level:
+                self._index[level].append(i)
+
+    def filtered(self, min_level: int = 0) -> t.Sequence[LogRecord]:
+        """Records at or above `min_level` (snapped down, see `snap_level`)"""
+        if not (level := snap_level(min_level)):
+            return self.records
+        return [self.records[i] for i in self._index[level]]
+
+    def page(
+        self, before: t.Optional[int] = None, after: t.Optional[int] = None,
+        limit: int = 100, min_level: int = 0,
+    ) -> LogPage:
+        """A window of at most `limit` records at or above `min_level`, ascending by `i`.
+
+        `before`/`after` are exclusive cursors on `i`, bounding the window on either side:
+        given both, the window is the range between them (a reconnect gap); given neither,
+        it's the newest `limit` records. `limit` truncates the end away from `after` when
+        given (filling a gap forwards from what the client holds), and the older end
+        otherwise.
+        """
+        level = snap_level(min_level)
+        # indices of matching records, ascending. unfiltered, that's just each record's own index
+        indices: t.Sequence[int] = self._index[level] if level else range(len(self.records))
+
+        # the range the cursors ask for, which `limit` then truncates at one end
+        lo = bisect.bisect_right(indices, after) if after is not None else 0
+        hi = max(bisect.bisect_left(indices, before) if before is not None else len(indices), lo)
+        (start, stop) = (lo, min(lo + limit, hi)) if after is not None else (max(hi - limit, lo), hi)
+
+        window = indices[start:stop]
+        return LogPage(
+            [self.records[i] for i in window],
+            first=window[0] if len(window) else None,
+            last=window[-1] if len(window) else None,
+            count=len(window),
+            total=len(indices),
+            total_all=len(self.records),
+            # relative to the requested range, so with both cursors these answer
+            # "is the gap closed?" rather than "does the log continue?"
+            has_before=start > lo,
+            has_after=stop < hi,
+            min_level=level,
+        )
+
+
+def _comparable(time: datetime.datetime, start: t.Optional[datetime.datetime]) -> bool:
+    """Whether `time - start` is well-defined (both present, and neither mixes a naive
+    timestamp with an aware one)"""
+    return start is not None and (time.tzinfo is None) == (start.tzinfo is None)
+
+
+def snap_level(min_level: int) -> int:
+    """`min_level` snapped down to a standard logging level, or 0 (no filtering)"""
+    return max((level for level in LOG_LEVELS if level <= min_level), default=0)
+
+
 class Job:
     def __init__(self, id: JobID, plan: str, name: t.Optional[str] = None):
         self.id: JobID = id
@@ -274,10 +364,13 @@ class Job:
         """Pub/sub broker for this job's views (`status`, `progress`, `obj_phase_sum`, ...).
         `broker.cache.raw` is the wire-form (still-encoded) view of the latest worker
         state -- the single source of truth `Job.state()` also reads from."""
-        self.logs: t.List[LogRecord] = []
+        self.logs: LogBuffer = LogBuffer()
         """Cache of recorded messages"""
         self.start_time: t.Optional[datetime.datetime] = None
-        """Time job was started at"""
+        """Time job was started at (server clock, when the job was dispatched)"""
+        self.worker_start_time: t.Optional[datetime.datetime] = None
+        """Time the worker took up the job, by its own clock. Log records are timestamped
+        by that same clock, so this is what `LogRecord.elapsed` is measured from."""
 
     @classmethod
     async def from_path(cls, path: t.Union[str, Path]) -> t.List[Self]:
@@ -341,6 +434,20 @@ class Job:
             await self.set_status('stopped')
         await server.jobs.remove(self.id)
 
+    def _elapsed(self, timestamp: datetime.datetime) -> float:
+        """Seconds from the start of the job to `timestamp`.
+
+        Both candidate anchors share the record's own clock, so no cross-machine
+        subtraction ever happens: the worker's reported start, or -- when it never
+        reported one (a fake job, a failed `job_start`, or a worker predating that
+        message) -- the job's first log record, making that record t=0.
+        """
+        if _comparable(timestamp, self.worker_start_time):
+            return (timestamp - t.cast(datetime.datetime, self.worker_start_time)).total_seconds()
+        if _comparable(timestamp, self.logs.start):
+            return (timestamp - t.cast(datetime.datetime, self.logs.start)).total_seconds()
+        return 0.
+
     def _total_iter(self) -> t.Optional[int]:
         iter_raw = self.broker.cache.raw.get('iter')
         return iter_raw.get('total_iter') if isinstance(iter_raw, dict) else None
@@ -353,6 +460,7 @@ class Job:
             'cancel': url_for('cancel_job', job_id=self.id),
             'delete': url_for('delete_job', job_id=self.id),
             'logs': url_for('job_logs', job_id=self.id),
+            'logs_txt': url_for('job_logs_text', job_id=self.id),
         }
         return JobState.make_unchecked(
             self.id, self.status, links, job_name=self.job_name, start_time=self.start_time, state=state,
@@ -370,8 +478,10 @@ class Job:
 
             if self._total_iter() != old_total_iter:
                 await server.jobs.notify_changed({'job_id': self.id})
+        elif msg.msg == 'job_start':
+            self.worker_start_time = msg.start_time
         elif msg.msg == 'log':
-            record = msg.into_record(len(self.logs))
+            record = msg.into_record(len(self.logs), self._elapsed(msg.timestamp))
             self.logs.append(record)
             key = canonical_topic({'job': self.id, 'view': 'logs'})
             self.broker.publish_value(key, [pane.into_data(record)])
@@ -398,9 +508,12 @@ class Jobs:
         self.broker.cache.update_raw({'state': None})
         await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
-    async def add(self, job: Job):
+    async def add(self, job: Job, queue: bool = True):
+        """Register `job`, queueing it for a worker unless `queue` is false (a job which
+        drives itself, e.g. `phaser/web/debug.py`'s fake jobs)"""
         self.inner[job.id] = job
-        server.job_queue.append(job)
+        if queue:
+            server.job_queue.append(job)
         await self.notify_changed({'job_id': job.id, 'status': job.status})
 
     async def remove(self, job_id: JobID):
@@ -444,6 +557,9 @@ class Server:
         )
         self.app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5
         self.app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512 MiB
+
+        self.sessions: t.Set[Session] = set()
+        """Live `/listen` connections, so they can be dropped en masse (`debug.py`)"""
 
         @self.app.after_serving
         async def shutdown():
@@ -502,7 +618,7 @@ class Server:
                     loop.add_signal_handler(getattr(signal, signal_name), _signal_handler, signal_name)
                 except NotImplementedError:
                     # Add signal handler may not be implemented on Windows
-                    signal.signal(getattr(signal, signal_name), lambda _sig, _frame: _signal_handler(signal_name))
+                    signal.signal(getattr(signal, signal_name), lambda _sig, _frame, name=signal_name: _signal_handler(name))
 
     def run(
             self,
@@ -511,6 +627,7 @@ class Server:
             root_path: t.Optional[str] = None,
             verbosity: int = 0,
             serving_cb: t.Optional[t.Callable[[], t.Any]] = None,
+            debug: bool = False,
     ):
         self.compute_pool: ThreadPoolExecutor = ThreadPoolExecutor()
         """Shared threadpool for pub/sub view compute + array decode (`phaser/web/pubsub.py`)."""
@@ -530,6 +647,11 @@ class Server:
 
         if serving_cb:
             self.app.before_serving(serving_cb)
+
+        if debug:
+            from .debug import register_debug_routes
+
+            register_debug_routes(self.app)
 
         logging.basicConfig(level=logging.INFO if verbosity == 0 else logging.DEBUG)
 
@@ -576,8 +698,8 @@ class Server:
         if threading.current_thread() is threading.main_thread():
             self._set_signals(loop)
 
-        from hypercorn.config import Config
         from hypercorn.asyncio import serve
+        from hypercorn.config import Config
 
         _disable_ws_compression()
 

@@ -158,6 +158,8 @@ class Session:
         self.default_topic: t.Optional[t.Mapping[str, t.Any]] = default_topic
         self.mailbox: Mailbox = Mailbox()
         self.subscriptions: t.Dict[str, _Subscription] = {}
+        self.kicked: asyncio.Event = asyncio.Event()
+        """Set to drop this connection (`phaser/web/debug.py`), as an unexpected close"""
 
     def _merge(self, client_topic: WireTopic) -> WireTopic:
         """Merge rule: default fills missing keys, an explicit client key wins."""

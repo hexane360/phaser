@@ -158,6 +158,29 @@ class LogRecord(pane.PaneBase):
     line_number: int
     func_name: t.Optional[str] = None
     stack_info: t.Optional[str] = None
+    elapsed: float = 0.
+    """Seconds since the job started (see `Job._elapsed` for what anchors that)"""
+
+class LogPage(pane.PaneBase):
+    """A window of log records, ascending by `i`"""
+    logs: t.List[LogRecord] = pane.field(default_factory=list)
+    first: t.Optional[int] = None
+    """`i` of the first record returned, or `None` if the page is empty"""
+    last: t.Optional[int] = None
+    """`i` of the last record returned, or `None` if the page is empty"""
+    count: int = 0
+    total: int = 0
+    """Records matching `min_level`"""
+    total_all: int = 0
+    """Records regardless of `min_level`"""
+    oldest: int = 0
+    """Lowest `i` still retained"""
+    has_before: bool = False
+    """Whether matching records exist before `first`"""
+    has_after: bool = False
+    """Whether matching records exist after `last`"""
+    min_level: int = 0
+    """Level filter actually applied (the request's `min_level`, snapped down)"""
 
 # worker -> server messages
 
@@ -183,6 +206,12 @@ class UpdateMessage(pane.PaneBase):
     job_id: JobID
     msg: t.Literal['job_update'] = 'job_update'
 
+class JobStartMessage(pane.PaneBase):
+    """Message sent when a worker takes up a job, reporting when (by the worker's clock)"""
+    job_id: JobID
+    start_time: datetime.datetime
+    msg: t.Literal['job_start'] = 'job_start'
+
 class LogMessage(pane.PaneBase):
     """Message corresponding to a log entry"""
     job_id: t.Optional[JobID]
@@ -202,7 +231,9 @@ class LogMessage(pane.PaneBase):
 
     @classmethod
     def from_logrecord(cls, job_id: t.Optional[JobID], record: logging.LogRecord) -> Self:
-        timestamp = datetime.datetime.fromtimestamp(record.created)
+        # aware UTC: these cross machines (a worker may be in another timezone entirely),
+        # so a naive local timestamp is meaningless to the server and the browser
+        timestamp = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
         return cls(
             timestamp=timestamp,
             log=record.getMessage(),
@@ -214,10 +245,10 @@ class LogMessage(pane.PaneBase):
             stack_info=record.stack_info,
         )
 
-    def into_record(self, i: int) -> LogRecord:
+    def into_record(self, i: int, elapsed: float = 0.) -> LogRecord:
         return LogRecord.make_unchecked(
             i, self.timestamp, self.log, self.logger_name, self.log_level,
-            self.line_number, self.func_name, self.stack_info
+            self.line_number, self.func_name, self.stack_info, elapsed
         )
 
 class JobResultMessage(pane.PaneBase):
@@ -257,7 +288,7 @@ class SignalResponse(pane.PaneBase):
 
 WorkerMessage: t.TypeAlias = t.Annotated[t.Union[
     PollMessage, ConnectMessage, PingMessage, UpdateMessage,
-    LogMessage, JobResultMessage, WorkerShutdownMessage,
+    LogMessage, JobStartMessage, JobResultMessage, WorkerShutdownMessage,
 ], Tagged('msg')]
 
 ServerResponse: t.TypeAlias = t.Annotated[t.Union[

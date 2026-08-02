@@ -37,8 +37,9 @@ export interface ViewOptions<T> {
     reduce?: (prev: T, delta: any) => T;
     // History the socket never replays. Runs on first subscribe and again on every
     // reconnect; `merge` folds the result into whatever has accumulated since, so updates
-    // that land mid-fetch aren't overwritten.
-    hydrate?: () => Promise<T>;
+    // that land mid-fetch aren't overwritten. `prev` is what's held at the time of the
+    // call, so a reconnecting view can fetch exactly what it missed.
+    hydrate?: (prev: T | undefined) => Promise<T>;
     merge?: (prev: T | undefined, fetched: T) => T;
 }
 
@@ -77,6 +78,12 @@ export class PubSubConnection {
 
     disconnect() {
         this.conn.disconnect();
+    }
+
+    // Reconnects after a `disconnect()`; the socket's own `onclose` handles every
+    // unintentional drop, so this is only for a deliberate teardown (see `PubSubProvider`).
+    connect() {
+        this.conn.connect();
     }
 
     // Subscribes `listener` to `topic`, sending a `sub` message for the first listener on
@@ -154,7 +161,8 @@ export class PubSubConnection {
 
         const runHydrate = () => {
             if (!hydrate) return;
-            hydrate()
+            const held = this.store.get(entry.atom);
+            hydrate(held.status === 'ok' ? held.data : undefined)
                 .then((fetched) => set((cur) => ({
                     status: 'ok',
                     data: merge ? merge(cur.status === 'ok' ? cur.data : undefined, fetched) : fetched,
@@ -253,6 +261,12 @@ export function PubSubProvider({ address, children }: React.PropsWithChildren<Pu
     React.useEffect(() => {
         const connection = new PubSubConnection(address, store);
         setConn(connection);
+        // devtools handle for testing reconnect/gap-fill behaviour by hand, the client-side
+        // counterpart of the server's `POST /debug/disconnect`
+        (window as any).phaser = {
+            disconnect: () => connection.disconnect(),
+            connect: () => connection.connect(),
+        };
         return () => {
             connection.disconnect();
         };

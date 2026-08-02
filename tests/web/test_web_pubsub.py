@@ -5,12 +5,16 @@ going through `resolve()` or the Quart `server` singleton -- see
 `test_resolve_and_job_wiring` at the bottom for an end-to-end check that does.
 """
 import asyncio
+import typing as t
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-import typing as t
 
-from phaser.web.pubsub import Cache, View, Broker, Session, Mailbox
-from phaser.web.types import TopicUpdate, ErrorMessage, canonical_topic
+import pytest
+
+from phaser.web.pubsub import Broker, Cache, Mailbox, Session, View
+from phaser.web.types import ErrorMessage, TopicUpdate, canonical_topic
+
+pytestmark = pytest.mark.web
 
 
 def run(coro):
@@ -20,7 +24,7 @@ def run(coro):
 def counting_view(**overrides) -> tuple[View, list[int]]:
     calls: list[int] = []
 
-    def compute(cache: Cache, params: dict) -> int:
+    def compute(cache: Cache, params: t.Mapping) -> int:
         calls.append(1)
         return cache.raw['x'] * 2
 
@@ -33,7 +37,7 @@ def field_counting_view(field: str) -> tuple[View, list[int]]:
     """A retained view that reads `field` verbatim, counting how many times it's computed."""
     calls: list[int] = []
 
-    def compute(cache: Cache, params: dict) -> t.Any:
+    def compute(cache: Cache, params: t.Mapping) -> t.Any:
         calls.append(1)
         return cache.raw[field]
 
@@ -81,7 +85,7 @@ def test_subscribe_no_snapshot_when_deps_missing():
 
 
 def test_unwatched_view_never_computed():
-    view, calls = counting_view()
+    _, calls = counting_view()
     broker = Broker()
     broker.cache.update_raw({'x': 1})
     # no subscribers at all -- publish_dirty should see no active topics to recompute
@@ -131,7 +135,7 @@ def test_update_propagates_only_to_dirty_topics():
 
 
 def test_unsubscribe_mid_flight_stops_future_updates():
-    view, calls = counting_view()
+    view, _ = counting_view()
     broker = Broker()
     broker.cache.update_raw({'x': 1})
     s1, s2 = Session(), Session()
@@ -205,7 +209,7 @@ def test_one_worker_update_yields_one_batched_drain():
 
     items = run(scenario())
     # both dirtied topics land in a single drain() -> a single `update` message upstream
-    assert {u.topic for u in items} == {'kx', 'ky'}
+    assert {t.cast(str, u.topic) for u in items} == {'kx', 'ky'}
     assert len(items) == 2
 
 
@@ -331,13 +335,13 @@ def test_resolve_and_job_wiring():
                 items = await session.mailbox.drain()
                 assert len(items) == 1
                 assert items[0].topic == {'view': 'obj_phase_sum'}  # echoed in abbreviated client form
-                out = decode_obj(items[0].data)
+                out = decode_obj(t.cast(TopicUpdate, items[0]).data)
                 numpy.testing.assert_allclose(out['data'], numpy.pi / 2, atol=1e-5)
 
                 jobs_session = Session()
                 await jobs_session.subscribe('jobs')
                 jobs_items = await jobs_session.mailbox.drain()
-                assert jobs_items[0].data[0]['job_id'] == job.id
+                assert t.cast(TopicUpdate, jobs_items[0]).data[0]['job_id'] == job.id
 
                 await server.jobs.remove(job.id)
                 removed_items = await session.mailbox.drain()
