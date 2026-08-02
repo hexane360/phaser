@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Frontend for phaser",
   "scripts": {
-    "build": "webpack",
+    "build": "webpack --mode production",
     "watch": "webpack --mode development --watch"
   },
   "keywords": [

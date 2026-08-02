@@ -21,23 +21,28 @@ function StatusText({status}: {status: ConnectionStatus}) {
     }
 }
 
+// split out so `Header` can omit it entirely: pages without a websocket (the error page)
+// pass no atom, and a conditional `useAtomValue` in `Header` would break the hook rules.
+function ServerStatus({serverStatus}: {serverStatus: PrimitiveAtom<ConnectionStatus>}) {
+    return <Text size="lg"><StatusText status={useAtomValue(serverStatus)}/></Text>;
+}
+
 // `actions` are page-specific icons, prepended to the shared ones (the dashboard's palette
-// and split toggles).
-export default function Header({serverStatus, actions}: {serverStatus: PrimitiveAtom<ConnectionStatus>, actions?: React.ReactNode}) {
+// and split toggles). `serverStatus` is absent on pages with no connection to report.
+export default function Header({serverStatus, actions}: {serverStatus?: PrimitiveAtom<ConnectionStatus>, actions?: React.ReactNode}) {
     const { colorScheme, toggleColorScheme } = useMantineColorScheme();
     const flip = colorScheme === "dark" ? {style: {transform: "scale(-1)"}} : {};
 
     const [aboutOpened, { open: openAbout, close: closeAbout }] = useDisclosure(false);
-    const status = useAtomValue(serverStatus);
 
     return <Container size="lg" h="100%" style={{minWidth: "500px"}}>
         <Group justify="space-between" h="100%" wrap="nowrap">
             <Group style={{height: "100%"}}>
-                <a style={{height: "95%"}} href="/">
+                <a style={{height: "95%"}} href={`${rootPrefix()}/`}>
                     <PhaserLogoText className="mantine-visible-from-sm" height="100%"/>
                     <PhaserLogo className="mantine-hidden-from-sm" height="100%"/>
                 </a>
-                <Text size="lg"><StatusText status={status}/></Text>
+                {serverStatus && <ServerStatus serverStatus={serverStatus}/>}
             </Group>
             <Group wrap="nowrap">
                 {actions}

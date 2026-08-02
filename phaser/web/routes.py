@@ -5,13 +5,23 @@ import sys
 import typing as t
 
 from quart import Quart, Response, abort, render_template, request, websocket
+from quart.typing import ResponseReturnValue
 from quart.utils import run_sync
+from werkzeug.exceptions import HTTPException
 
 import pane
 
 from ..version import version_info
 from .pubsub import Session
-from .server import Job, Kicked, LocalWorker, ManualWorker, Shutdown, raise_on_shutdown, server
+from .server import (
+    Job,
+    Kicked,
+    LocalWorker,
+    ManualWorker,
+    Shutdown,
+    raise_on_shutdown,
+    server,
+)
 from .types import (
     ClientMessage,
     ErrorMessage,
@@ -44,6 +54,28 @@ def json_response(obj: t.Any, ty: t.Any = None, status: t.Optional[int] = None) 
 
 app: Quart = server.app
 
+
+def wants_html() -> bool:
+    """Whether the client is a browser navigating, rather than an API/XHR caller."""
+    accept = request.accept_mimetypes
+    return accept["text/html"] > accept["application/json"]
+
+
+@app.errorhandler(HTTPException)
+async def handle_http_error(e: HTTPException) -> ResponseReturnValue:
+    # `abort(Response(...))`/`abort(json_response(...))` attach an explicit response;
+    # pass those through so existing error paths keep their own bodies.
+    if e.response is not None:
+        # typed as the sansio base, but under Quart it's always a Quart `Response`
+        return t.cast(Response, e.response)
+    code = e.code or 500
+    if not wants_html():
+        return json_response({'result': 'error', 'msg': e.description}, status=code)
+    return await render_template(
+        "error.html", code=code, name=e.name, description=e.description
+    ), code
+
+
 @app.get("/")
 async def index():
     return await render_template("manager.html")
@@ -69,7 +101,7 @@ async def start_worker(worker_type: str):
     _ = await request.get_data()
 
     if worker_type not in ('manual', 'local', 'slurm'):
-        abort(404)
+        abort(404, description=f"Unknown worker type '{worker_type}'")
 
     worker_id = server.make_workerid()
 
@@ -122,7 +154,10 @@ async def start_job():
 @app.get("/job/<string:job_id>")
 async def job_dashboard(job_id: JobID):
     if job_id not in server.jobs and job_id != "fake":
-        abort(404)
+        abort(404, description=(
+            f"Job '{job_id}' not found. It may have been deleted, "
+            "or the link may be out of date."
+        ))
     return await render_template("dashboard.html")
 
 @app.post("/job/<string:job_id>/cancel")
@@ -140,7 +175,7 @@ async def delete_job(job_id: JobID):
     try:
         job = server.jobs[job_id]
     except KeyError:
-        abort(404)
+        abort(404, description=f"Job '{job_id}' not found")
 
     if job.status not in ('queued', 'stopped'):
         abort(Response("Cannot delete a running job", 400))
@@ -156,7 +191,7 @@ async def job_logs(job_id: JobID):
     try:
         job = server.jobs[job_id]
     except KeyError:
-        abort(404)
+        abort(404, description=f"Job '{job_id}' not found")
 
     before = request.args.get('before', type=int)
     after = request.args.get('after', type=int)
@@ -174,7 +209,7 @@ async def job_logs_text(job_id: JobID):
     try:
         job = server.jobs[job_id]
     except KeyError:
-        abort(404)
+        abort(404, description=f"Job '{job_id}' not found")
 
     min_level = request.args.get('min_level', 0, type=int)
     if min_level < 0:
@@ -279,7 +314,7 @@ async def worker_update(worker_id: WorkerID):
     try:
         worker = server.workers[worker_id]
     except KeyError:
-        abort(404)
+        abort(404, description=f"Worker '{worker_id}' not found")
 
     data = await request.json
     if data.get('msg') == 'job_update':

@@ -6,6 +6,10 @@
     <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
     <title>{% block title %}Phaser{% endblock %}</title>
+    {# webpack runtime and the chunk shared between entries; `defer` preserves
+       document order, so these execute before the page's own entry #}
+    <script type="text/javascript" src="{{ url_for('static', filename='dist/runtime.js') }}" defer></script>
+    <script type="text/javascript" src="{{ url_for('static', filename='dist/shared.js') }}" defer></script>
     {% block head %}{% endblock %}
   </head>
   <body>
