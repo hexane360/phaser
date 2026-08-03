@@ -235,8 +235,8 @@ function Manager(props: {}) {
     const workers = usePubSubView<Array<WorkerState>>('workers');
 
     return <AppShell header={{ height: 80 }} padding="md">
-        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus}/></AppShell.Header>
-        <AppShell.Main><Container size="lg">
+        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus} size="lg"/></AppShell.Header>
+        <AppShell.Main><Container>
             <Section name="Start workers"><StartWorkers/></Section>
             <Section name="Workers"><Workers workers={workers}/></Section>
             <Section name="Start reconstructions"><StartJobs/></Section>

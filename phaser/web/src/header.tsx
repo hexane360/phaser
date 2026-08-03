@@ -29,13 +29,17 @@ function ServerStatus({serverStatus}: {serverStatus: PrimitiveAtom<ConnectionSta
 
 // `actions` are page-specific icons, prepended to the shared ones (the dashboard's palette
 // and split toggles). `serverStatus` is absent on pages with no connection to report.
-export default function Header({serverStatus, actions}: {serverStatus?: PrimitiveAtom<ConnectionStatus>, actions?: React.ReactNode}) {
+export default function Header({serverStatus, actions, size}: {
+    serverStatus?: PrimitiveAtom<ConnectionStatus>,
+    actions?: React.ReactNode,
+    size?: string | number
+}) {
     const { colorScheme, toggleColorScheme } = useMantineColorScheme();
     const flip = colorScheme === "dark" ? {style: {transform: "scale(-1)"}} : {};
 
     const [aboutOpened, { open: openAbout, close: closeAbout }] = useDisclosure(false);
 
-    return <Container size="lg" h="100%" style={{minWidth: "500px"}}>
+    return <Container size={size ?? "lg"} h="100%" style={{minWidth: "500px"}}>
         <Group justify="space-between" h="100%" wrap="nowrap">
             <Group style={{height: "100%"}}>
                 <a style={{height: "95%"}} href={`${rootPrefix()}/`}>
@@ -47,7 +51,7 @@ export default function Header({serverStatus, actions}: {serverStatus?: Primitiv
             <Group wrap="nowrap">
                 {actions}
                 <ActionIcon size="xl" aria-label="Toggle dark mode" onClick={toggleColorScheme}><IconBrightnessFilled size="80%" {...flip}/></ActionIcon>
-                <ActionIcon size="xl" aria-label="Settings"><IconSettings size="80%"/></ActionIcon>
+                {/* <ActionIcon size="xl" aria-label="Settings"><IconSettings size="80%"/></ActionIcon> */}
                 <About opened={aboutOpened} close={closeAbout}/>
                 <ActionIcon size="xl" aria-label="About" onClick={openAbout}><IconInfoCircle size="80%"/></ActionIcon>
                 <ActionIcon component="a" classNames={{root: "disable-active"}} href="https://github.com/hexane360/phaser" size="xl" aria-label="GitHub"><IconBrandGithub size="80%"/></ActionIcon>

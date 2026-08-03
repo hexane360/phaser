@@ -108,7 +108,7 @@ export function Dashboard(props: {}) {
     </>;
 
     return <AppShell header={{ height: 80 }} padding={0}>
-        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus} actions={actions}/></AppShell.Header>
+        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus} actions={actions} size="100%"/></AppShell.Header>
         <AppShell.Main className={classes.main}>
             <LayoutProvider value={api}>
                 <div className={classes.workspace}>
