@@ -14,6 +14,7 @@ import random
 import typing as t
 
 from quart import Quart, Response, abort, request, url_for
+from werkzeug.exceptions import HTTPException, default_exceptions
 
 from .server import Job, server
 from .types import JobID, JobStartMessage, LogMessage
@@ -106,6 +107,26 @@ def register_debug_routes(app: Quart) -> None:
             task.cancel()
         await job.set_status('stopped')
         return {'job_id': job.id}
+
+    @app.get("/debug/error/exception")
+    async def debug_exception():
+        """An unhandled exception, exercising the 500 path end to end."""
+        raise RuntimeError("Deliberate exception from /debug/error/exception")
+
+    @app.get("/debug/error/<int:code>")
+    async def debug_error(code: int):
+        """Raise an arbitrary HTTP error, to check how the error page renders it.
+        `?description=` overrides the status's default text."""
+        if not 400 <= code <= 599:
+            abort(Response("Code must be between 400 and 599", 400))
+
+        description = request.args.get('description')
+        if code in default_exceptions:
+            abort(code, description=description)
+
+        e = HTTPException(description=description)
+        e.code = code
+        raise e
 
     @app.post("/debug/disconnect")
     async def debug_disconnect():

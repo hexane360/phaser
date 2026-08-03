@@ -4,6 +4,7 @@ import logging
 import sys
 import typing as t
 
+from markupsafe import Markup, escape
 from quart import Quart, Response, abort, render_template, request, websocket
 from quart.typing import ResponseReturnValue
 from quart.utils import run_sync
@@ -69,10 +70,13 @@ async def handle_http_error(e: HTTPException) -> ResponseReturnValue:
         # typed as the sansio base, but under Quart it's always a Quart `Response`
         return t.cast(Response, e.response)
     code = e.code or 500
+    # `Markup` renders as-is, anything else is escaped
+    description = escape(e.description) if e.description else None
     if not wants_html():
-        return json_response({'result': 'error', 'msg': e.description}, status=code)
+        msg = description.striptags() if description else None
+        return json_response({'result': 'error', 'msg': msg}, status=code)
     return await render_template(
-        "error.html", code=code, name=e.name, description=e.description
+        "error.html", code=code, name=e.name, description=description
     ), code
 
 
@@ -154,10 +158,10 @@ async def start_job():
 @app.get("/job/<string:job_id>")
 async def job_dashboard(job_id: JobID):
     if job_id not in server.jobs and job_id != "fake":
-        abort(404, description=(
-            f"Job '{job_id}' not found. It may have been deleted, "
+        abort(404, description=Markup(
+            "Job <code>{}</code> not found. It may have been deleted, "
             "or the link may be out of date."
-        ))
+        ).format(job_id))
     return await render_template("dashboard.html")
 
 @app.post("/job/<string:job_id>/cancel")

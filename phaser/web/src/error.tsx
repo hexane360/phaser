@@ -30,14 +30,15 @@ function errorData(): ErrorData {
 }
 
 function ErrorPage({code, name, description}: ErrorData) {
-    return <AppShell header={{height: 80}}>
+    return <AppShell header={{height: 80}} padding="md">
         <AppShell.Header><Header/></AppShell.Header>
         <AppShell.Main>
             <Container size="sm" pt="xl">
                 <Stack align="center" gap="md">
                     <Title order={1} c="dimmed" fw="normal">{code}</Title>
                     <Title order={2} fw="normal">{name}</Title>
-                    {description && <Text ta="center">{description}</Text>}
+                    {/* escaped server-side */}
+                    {description && <Text ta="center" dangerouslySetInnerHTML={{__html: description}}/>}
                     <Button component="a" href={`${rootPrefix()}/`} mt="md">Back to jobs</Button>
                 </Stack>
             </Container>

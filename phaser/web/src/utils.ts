@@ -1,14 +1,11 @@
 
-// App root (any `root_path`/SCRIPT_NAME mount prefix, no trailing slash), recovered from
-// the current page's path. `/job/<id>` dashboards strip those two segments; every other
-// page is served from the root itself.
 export function rootPrefix(): string {
-    const parts = window.location.pathname.replace(/\/$/, '').split('/');
-    if (parts.length >= 3 && parts[parts.length - 2] === 'job') {
-        parts.pop();
-        parts.pop();
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="phaser-root"]');
+    if (!meta) {
+        console.error("Missing `phaser-root` meta tag");
+        return "";
     }
-    return parts.join('/');
+    return meta.content.replace(/\/$/, '');
 }
 
 export type ArrayOrNum = number | ReadonlyArray<number>;

@@ -17,6 +17,7 @@ import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePubSubView, ViewState } from './pubsub';
 import { ConnectionStatus } from './connection';
 import { handleRequest } from './requests';
+import { rootPrefix } from './utils';
 
 
 // semantic status color, read from a Mantine color-scheme-aware token
@@ -248,7 +249,7 @@ export function App(props: {}) {
     const store = useStore();
 
     const protocol = window.location.protocol == 'https:' ? "wss:" : "ws:";
-    const address = `${protocol}//${window.location.host}${window.location.pathname}listen`;
+    const address = `${protocol}//${window.location.host}${rootPrefix()}/listen`;
 
     return <Provider store={store}>
         <PubSubProvider address={address}>
