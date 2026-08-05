@@ -34,6 +34,7 @@ from .types import (
     LogPage,
     LogRecord,
     OkResponse,
+    RELOAD_EXIT_CODE,
     Result,
     ServerResponse,
     Signal,
@@ -111,24 +112,33 @@ class Worker(abc.ABC):
             return 'reload'
         return None
 
-    async def set_status(self, status: WorkerStatus):
+    def on_connected(self):
+        """Hook for a worker that has just reported in (`LocalWorker` clears its restart
+        count here)."""
+
+    async def set_status(self, status: WorkerStatus, reason: t.Optional[str] = None,
+                         error: t.Optional[str] = None):
+        """`reason`/`error` describe why the worker stopped, and are carried onto whatever
+        job it was running -- otherwise that job has no account of why it ended."""
         self.status = status
         await server.workers.notify_changed({'worker_id': self.id, 'status': status})
 
         if status == 'stopped':
             if self.current_job and (job := self.current_job()):
-                await job.set_status('stopped')
+                await job.worker_lost(reason or f"Worker {self.id} stopped", error)
             server.workers.schedule_for_removal(self.id, 5.0)
 
     async def handle_message(self, msg: WorkerMessage) -> ServerResponse:
         if msg.msg == 'shutdown':
-            await self.set_status('stopped')
+            reason = _exc_summary(msg.error) or msg.detail or f"Worker {self.id} shut down"
+            await self.set_status('stopped', reason=reason, error=msg.error)
             return OkResponse()
 
         if msg.msg == 'connect':
             self.start_time = datetime.datetime.now(datetime.timezone.utc)
             self.hostname = 'localhost' if self.worker_type() == 'local' else msg.hostname
             self.backends = msg.backends
+            self.on_connected()
             await self.set_status('idle')
 
         if (job_id := getattr(msg, 'job_id', None)):
@@ -162,16 +172,24 @@ class Worker(abc.ABC):
             logging.error(f"Job {self.id} finalized before completion")
 
 
+MAX_WORKER_RESTARTS: int = 5
+"""Consecutive restarts allowed without the worker connecting in between."""
+
+
 class LocalWorker(Worker):
     def __init__(self, worker_id: WorkerID, url: str):
         super().__init__(worker_id)
         self.url = url
+        self._restarts: int = 0
 
         self._start()
-        self._fut: asyncio.Task[None] = asyncio.create_task(asyncio.to_thread(self._watch_process))
+        self._fut: asyncio.Task[None] = asyncio.create_task(self._watch())
 
     def worker_type(self) -> str:
         return 'local'
+
+    def on_connected(self):
+        self._restarts = 0
 
     def _start(self):
         from phaser.web.worker import run_worker
@@ -181,18 +199,27 @@ class LocalWorker(Worker):
         self.status = 'starting'
         self.process.start()
 
-    def _watch_process(self):
+    async def _watch(self):
+        """Await the process, restarting it on a reload and reporting anything else as a stop."""
         while True:
-            self.process.join()
+            await asyncio.to_thread(self.process.join)
+            code = self.process.exitcode
 
-            sig = t.cast(int, self.process.exitcode) - 128
-            if sig == getattr(signal, 'SIGHUP', 1):
-                # restart process
+            if code == RELOAD_EXIT_CODE:
+                if self._restarts >= MAX_WORKER_RESTARTS:
+                    reason = f"Worker {self.id} failed to start {self._restarts} times"
+                    logging.error(reason)
+                    await self.set_status('stopped', reason=reason)
+                    break
+                self._restarts += 1
                 self._start()
                 continue
-            else:
-                # TODO call set_status here
-                self.status = 'stopped'
+
+            # negative for a signal-killed child (-9 for SIGKILL), so report it verbatim
+            await self.set_status('stopped', reason=(
+                f"Worker {self.id} stopped unexpectedly (exit code {code})"
+                if code else f"Worker {self.id} stopped"
+            ))
             break
 
     async def finalize(self):
@@ -441,11 +468,31 @@ class Job:
         await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def set_status(self, status: JobStatus, cause: t.Optional[t.Any] = None):
-        if self.status == status:
+        # a `cause` is new information even when the status itself hasn't moved, e.g. a
+        # result arriving for a job already stopped
+        if self.status == status and cause is None:
             return
         self.status = status
         await self.notify_changed(cause)
         await server.jobs.notify_changed({'job_id': self.id, 'status': status})
+
+    async def worker_lost(self, reason: str, error: t.Optional[str] = None):
+        """Terminal transition for a job whose worker went away without reporting a result.
+
+        Returns without touching anything if the worker did report -- the normal sequence is
+        `job_result` first, worker stop second, and a real outcome must not be overwritten.
+        """
+        if self.result is not None:
+            return
+        self.result = 'interrupted'
+        self.error_summary = reason
+        self._append_log(LogMessage(
+            job_id=self.id, timestamp=datetime.datetime.now(datetime.timezone.utc),
+            log=reason, logger_name=__name__, log_level=logging.ERROR,
+            line_number=0, stack_info=error,
+        ))
+
+        await self.set_status('stopped', cause={'result': self.result})
 
     async def cancel(self):
         if self.status == 'queued':

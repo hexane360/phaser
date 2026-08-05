@@ -48,6 +48,9 @@ Signal: t.TypeAlias = t.Literal['shutdown', 'cancel', 'reload']
 Signal sent to a job or worker.
 """
 
+RELOAD_EXIT_CODE: int = 129
+"""Exit code a worker exits with to request a restart (128 + SIGHUP)."""
+
 class ValidationError(Exception):
     def __init__(self, msg: str):
         self.msg: str = msg

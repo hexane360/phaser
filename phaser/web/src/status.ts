@@ -38,13 +38,16 @@ export function jobStatus(job: Pick<JobState, 'status' | 'result'>): StatusDispl
     return LIFECYCLE[job.status] ?? { label: job.status, color: GRAY };
 }
 
-export function jobFailed(job: Pick<JobState, 'result'>): boolean {
-    return job.result === 'errored';
+// Whether the job ended badly enough to account for itself. Keys on `error_summary` rather
+// than `result`, so it covers both a reconstruction that raised (`errored`) and a job whose
+// worker went away (`interrupted`, with a reason) -- but not an ordinary cancel.
+export function jobHasFailure(job: Pick<JobState, 'error_summary'>): boolean {
+    return job.error_summary !== null;
 }
 
-// The traceback behind an `errored` result. It's deliberately not in `JobState` -- it's an
-// ERROR record the server synthesizes into the job's log, so it costs nothing until a
-// failure is actually being looked at. `logsUrl` is `JobState.links.logs`.
+// The detail behind a failure. Deliberately not in `JobState` -- it's an ERROR record in the
+// job's log, so it costs nothing until a failure is actually being looked at. `logsUrl` is
+// `JobState.links.logs`.
 export async function fetchTraceback(logsUrl: string): Promise<string | null> {
     const response = await fetch(`${logsUrl}?min_level=${LEVEL_ERROR}&limit=1`);
     if (!response.ok) {

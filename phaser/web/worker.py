@@ -1,7 +1,6 @@
 import dataclasses
 import datetime
 import logging
-import signal
 import socket
 import sys
 import time
@@ -24,6 +23,7 @@ from .types import (
     LogMessage,
     PingMessage,
     PollMessage,
+    RELOAD_EXIT_CODE,
     ServerResponse,
     SignalException,
     UpdateMessage,
@@ -44,7 +44,6 @@ def failure_log(job_id: JobID, e: BaseException, formatted: str) -> LogMessage:
 
     return LogMessage(
         job_id=job_id,
-        # aware UTC, like `from_logrecord`: this crosses machines
         timestamp=datetime.datetime.now(datetime.timezone.utc),
         log=f"Job failed: {type(e).__name__}: {e}",
         logger_name=frame.f_globals.get('__name__', '?') if frame is not None else __name__,
@@ -163,6 +162,12 @@ def run_worker(url: str, quiet: bool = False):
     def send_result(msg: JobResultMessage) -> ServerResponse:
         return send_message(msg)
 
+    # send the parting message; it's the server's only account of why we went away
+    @backoff.on_exception(backoff.fibo, requests.RequestException,
+                          max_tries=10, max_time=30)
+    def send_shutdown(msg: WorkerShutdownMessage) -> ServerResponse:
+        return send_message(msg)
+
     log_handler = LogHandler(send_message)
     logging.basicConfig(level=logging.INFO,
         handlers=[log_handler] if quiet else [logging.StreamHandler(), log_handler]
@@ -211,8 +216,6 @@ def run_worker(url: str, quiet: bool = False):
                 resp = send_result(msg)
                 raise
             except BaseException as e:
-                # this one is `local`: the record that reaches the server is `failure_log`'s,
-                # which points at the raising frame rather than at this handler
                 logger.info("Job stopped due to error", exc_info=True, stack_info=True, extra={'local': True})
                 s = traceback.format_exc()
                 msg = JobResultMessage(resp.job_id, 'errored', s, failure_log(resp.job_id, e, s))
@@ -235,13 +238,13 @@ def run_worker(url: str, quiet: bool = False):
         if action == 'reload':
             logger.info("Worker reloading", extra={'local': True})
             # instead of sending disconnect message, signal here
-            sys.exit(128 + getattr(signal, 'SIGHUP', 1))
+            sys.exit(RELOAD_EXIT_CODE)
 
         # disconnect message
         logger.info("Worker shutting down normally", extra={'local': True})
         msg = WorkerShutdownMessage('finished')
 
     try:
-        send_message(msg)
+        send_shutdown(msg)
     except Exception as e:
         logger.error(f"Failed to send shutdown message, error {type(e)}", extra={'local': True})

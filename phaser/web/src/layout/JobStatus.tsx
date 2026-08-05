@@ -6,7 +6,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 
 import { JobState } from '../types';
-import { fetchTraceback, jobStatus } from '../status';
+import { fetchTraceback, jobHasFailure, jobStatus } from '../status';
 import { usePubSubView } from '../pubsub';
 import classes from './Layout.module.css';
 
@@ -38,7 +38,7 @@ export function JobErrorBanner() {
     const [expanded, {toggle}] = useDisclosure(false);
     const [traceback, setTraceback] = React.useState<string | null>(null);
 
-    const failed = job?.result === 'errored';
+    const failed = !!job && jobHasFailure(job);
     const logsUrl = job?.links.logs;
 
     React.useEffect(() => {
@@ -52,16 +52,18 @@ export function JobErrorBanner() {
 
     if (!job || !failed || dismissed) return null;
 
+    // titled from the shared label, so a job whose worker died reads "Job interrupted"
+    // rather than claiming the reconstruction itself failed
     return <Alert
         className={classes.errorBanner} color="red" icon={<IconAlertTriangle/>}
-        title="Job failed" withCloseButton onClose={() => setDismissed(true)}
+        title={`Job ${jobStatus(job).label}`} withCloseButton onClose={() => setDismissed(true)}
     >
-        <Text size="sm">{job.error_summary ?? "The reconstruction stopped with an error."}</Text>
+        <Text size="sm">{job.error_summary}</Text>
         {traceback && <>
             <UnstyledButton onClick={toggle} mt="xs">
                 <Group gap={4}>
                     <IconChevronRight size={14} style={{transform: expanded ? 'rotate(90deg)' : undefined}}/>
-                    <Text size="sm">{expanded ? "Hide" : "Show"} traceback</Text>
+                    <Text size="sm">{expanded ? "Hide" : "Show"} details</Text>
                 </Group>
             </UnstyledButton>
             <Collapse expanded={expanded} keepMounted={false}>

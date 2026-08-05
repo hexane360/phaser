@@ -87,7 +87,7 @@ function LogLine({log}: {log: LogRecord}) {
             <Group gap="lg" className="log-meta">
                 <span>{new Date(log.timestamp).toLocaleString()}</span>
                 <span><Mono>{log.logger_name}</Mono></span>
-                <span><Mono>{log.func_name ?? '?'}:{log.line_number}</Mono></span>
+                {log.func_name && <span><Mono>{log.func_name}:{log.line_number}</Mono></span>}
             </Group>
             {log.stack_info ? <Code block className="log-stack">{log.stack_info}</Code> : null}
         </Collapse>

@@ -5,8 +5,8 @@ import typing as t
 
 import pytest
 
-from phaser.web.server import Job, _exc_summary, server
-from phaser.web.types import JobResultMessage, JobStartMessage
+from phaser.web.server import Job, Worker, _exc_summary, server
+from phaser.web.types import RELOAD_EXIT_CODE, JobResultMessage, JobStartMessage, WorkerShutdownMessage
 from phaser.web.views import VIEWS
 from phaser.web.worker import failure_log
 
@@ -120,12 +120,15 @@ def test_result_lands_even_when_the_job_already_stopped():
     job = make_job()
     asyncio.run(job.set_status('stopped'))
     assert job.result is None
+    published = job.broker.cache.generation('state')
 
     drive(job, errored(job.id))
 
     assert job.result == 'errored'
     assert job.error_summary == "ValueError: negative dimension in object sampling"
     assert job.logs.page(min_level=logging.ERROR).count == 1
+    # and it republished: the status didn't move, so only the `cause` makes this a change
+    assert job.broker.cache.generation('state') > published
 
 
 def test_state_view_reports_status_and_result():
@@ -180,3 +183,76 @@ def test_exc_summary_truncates():
     assert summary is not None
     assert len(summary) == 50
     assert summary.endswith('…')
+
+
+# --- a job whose worker went away ------------------------------------------------------
+
+class FakeWorker(Worker):
+    """`Worker` is abstract only in `worker_type`; everything under test is on the base."""
+    def worker_type(self) -> str:
+        return 'fake'
+
+
+def running_job_with_worker(job_id: str = 'lost-worker-job') -> t.Tuple[Job, FakeWorker]:
+    import weakref
+    job = make_job(job_id)
+    worker = FakeWorker('w-1')
+    worker.current_job = weakref.ref(job)
+    asyncio.run(job.set_status('running'))
+    return job, worker
+
+
+def test_worker_lost_stops_the_job_and_records_why():
+    # the job used to sit at `running` forever, with nothing said about why
+    job = make_job()
+    asyncio.run(job.set_status('running'))
+    asyncio.run(job.worker_lost("Worker w-1 stopped unexpectedly (exit code -9)"))
+
+    assert job.status == 'stopped'
+    assert job.result == 'interrupted'
+    assert job.error_summary == "Worker w-1 stopped unexpectedly (exit code -9)"
+
+    page = job.logs.page(min_level=logging.ERROR)
+    assert page.count == 1
+    assert page.logs[0].log == "Worker w-1 stopped unexpectedly (exit code -9)"
+    assert page.logs[0].func_name is None  # no source location; the UI omits the span
+
+
+def test_worker_lost_does_not_overwrite_a_reported_result():
+    # the normal order is `job_result` first, worker stop second
+    job = make_job()
+    drive(job, JobResultMessage(job.id, 'finished'))
+    asyncio.run(job.worker_lost("Worker w-1 stopped"))
+
+    assert job.result == 'finished'
+    assert job.error_summary is None
+    assert len(job.logs) == 0
+
+
+def test_worker_stopping_carries_its_reason_onto_the_job():
+    job, worker = running_job_with_worker()
+    asyncio.run(worker.set_status('stopped', reason="Worker w-1 stopped unexpectedly (exit code -9)"))
+
+    assert job.status == 'stopped'
+    assert job.result == 'interrupted'
+    assert job.error_summary == "Worker w-1 stopped unexpectedly (exit code -9)"
+
+
+def test_shutdown_message_traceback_reaches_the_job():
+    # `WorkerShutdownMessage.error` used to be discarded outright
+    job, worker = running_job_with_worker('shutdown-msg-job')
+    asyncio.run(worker.handle_message(WorkerShutdownMessage('errored', error=TRACEBACK)))
+
+    assert worker.status == 'stopped'
+    assert job.result == 'interrupted'
+    assert job.error_summary == "ValueError: negative dimension in object sampling"
+    assert job.logs.page(min_level=logging.ERROR).logs[0].stack_info == TRACEBACK
+
+
+def test_reload_exit_code_matches_what_the_worker_exits_with():
+    import inspect
+
+    from phaser.web import worker as worker_mod
+
+    assert RELOAD_EXIT_CODE == 128 + 1  # 128 + SIGHUP
+    assert 'sys.exit(RELOAD_EXIT_CODE)' in inspect.getsource(worker_mod.run_worker)

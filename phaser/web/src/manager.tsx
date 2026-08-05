@@ -11,7 +11,7 @@ import TimeAgo from 'react-timeago';
 
 import './styles.css';
 import { JobState, WorkerState } from './types';
-import { fetchTraceback, jobStatus, workerStatusColor } from './status';
+import { fetchTraceback, jobHasFailure, jobStatus, workerStatusColor } from './status';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section, Mono } from './components';
 import Header from './header';
@@ -81,7 +81,7 @@ function IterProgress({value, max}: {value: number, max: number | null}) {
     </div>;
 }
 
-// The traceback for a failed job, fetched on expand rather than carried in `JobState` --
+// The detail behind a failure, fetched on expand rather than carried in `JobState` --
 // `jobs` republishes on every iteration, and a traceback per failed job in that payload
 // would be paid for continuously. Mounted only while the row is open, so the fetch happens
 // once someone actually looks.
@@ -100,9 +100,9 @@ function JobFailure({state}: {state: JobState}) {
     }, [state.links.logs]);
 
     return <Stack gap="xs" style={{gridColumn: "1/-1"}}>
-        <Text>Job failed</Text>
+        <Text c={jobStatus(state).color}>{state.error_summary}</Text>
         {traceback === 'pending'
-            ? <Text size="sm" c="dimmed">Loading traceback…</Text>
+            ? <Text size="sm" c="dimmed">Loading details…</Text>
             : traceback
                 ? <Code block>{traceback}</Code>
                 : <Text size="sm" c="dimmed">No traceback recorded. <a href={state.links.logs_txt}>Full log</a></Text>}
@@ -134,7 +134,7 @@ export function Job({state}: {state: JobState}) {
         </div>
         <Collapse className="card-body" expanded={opened} keepMounted={false}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
-                {state.result === 'errored' && <JobFailure state={state}/>}
+                {jobHasFailure(state) && <JobFailure state={state}/>}
             </div>
         </Collapse>
     </div>
