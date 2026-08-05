@@ -147,37 +147,38 @@ export interface ObjectSampling {
     region_max: [number, number] | null;
 }
 
-export interface ProbeData {
-    sampling: Sampling;
-    data: DecodedArray;
-};
+// The array views (`obj`, `obj_phase_sum`, `probes`) each send a bare `DecodedArray` and
+// nothing else. Everything that describes those arrays lives on the two metadata topics
+// below, which -- unlike `obj` -- don't change topic when another slice is selected, and so
+// keep their value throughout. See `phaser/web/views.py`.
 
-// client-side view of a probe's rarely-changing shape (as opposed to its per-tick array data)
+// payload of the `probe_meta` view
 export interface ProbeMeta {
     sampling: Sampling;
     nprobes: number;
 }
 
+// payload of the `obj_meta` view. `thicknesses` is null unless the object is genuinely
+// multislice (mirroring `ObjectState.thicknesses`, "length < 2 for single slice"), and is
+// otherwise exactly `n_slices` long. `n_slices` is 1 for a 2D object.
+export interface ObjMeta {
+    sampling: ObjectSampling;
+    n_slices: number;
+    thicknesses: Array<number> | null;
+}
+
+// `ObjectState`/`ProbeState` as the worker sends them (see `ReconsData`), not as any view
+// publishes them -- the views above split these into metadata and a bare array.
 export interface ObjectData {
     sampling: ObjectSampling;
     data: DecodedArray;
     thicknesses: DecodedArray;
 };
 
-// payload of the `obj_phase_sum` view: the object phase, already projected (angle +
-// nansum over slices) server-side -- see `phaser/web/views.py::project_phase`.
-export interface ObjPhaseSumData {
-    sampling: ObjectSampling;
-    data: DecodedArray; // real-valued, 2D
-}
-
-// payload of the `obj` view (a single slice, selected by the `slice` param). Wired but
-// unused in v1 (no slice slider yet) -- see `phaser/web/views.py::slice_view`.
-export interface ObjSliceData {
-    sampling: ObjectSampling;
+export interface ProbeData {
+    sampling: Sampling;
     data: DecodedArray;
-    thickness: number | null;
-}
+};
 
 export interface ProgressData {
     iters: [number];

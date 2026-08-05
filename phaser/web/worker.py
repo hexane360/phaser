@@ -228,8 +228,9 @@ def run_worker(url: str, quiet: bool = False):
 
     except BaseException as e:
         # disconnect message
-        logger.exception(
+        logger.error(
             "Worker interrupted" if isinstance(e, KeyboardInterrupt) else "Worker shutting down due to error",  # noqa: TRY401
+            exc_info=None if isinstance(e, KeyboardInterrupt) else True,
             extra={'local': True}
         )
         s = traceback.format_exc()

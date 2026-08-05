@@ -6,37 +6,40 @@ import { interpolateMagma } from 'd3-scale-chromatic';
 import * as plotlib from '@hexane/plotlib';
 import type { ScaleSpec } from '@hexane/plotlib';
 import type { NumericScale, ColorLike } from '@hexane/plotlib/scale';
-import { useComputedColorScheme } from '@mantine/core';
+import { Group, useComputedColorScheme } from '@mantine/core';
 
 import { DecodedArray, abs2, splitAxis0, minmaxNaN, applyMagmaInto } from '../array';
-import { ProbeData, ProbeMeta } from '../types';
-import { usePubSubView, ViewState } from '../pubsub';
+import { ProbeMeta } from '../types';
+import { usePubSubView } from '../pubsub';
 import { isClose } from '../utils';
+import { PENDING } from './objectPhaseSum';
 import { ViewProps } from './types';
 import { ViewGate, gateAtom } from './ViewStatus';
 
 export function ProbeModesView(_props: ViewProps) {
-    const state = usePubSubView<ProbeData>({view: 'probes'});
+    const metaTopic = usePubSubView<ProbeMeta>({view: 'probe_meta'});
+    const dataTopic = usePubSubView<DecodedArray>({view: 'probes'});
 
-    // rarely-changing meta vs per-tick data, as in `objectPhase`'s `usePhaseAtoms`
+    // rarely-changing meta vs per-tick data, each on its own topic. The equality check
+    // matters: `probe_meta` republishes every tick with identical contents, and without it
+    // `ProbeModesPlotSub` would re-render (and rebuild every mode's plot) on each one.
     const metaState = useMemo(() => selectAtom(
-        state,
-        (s): ProbeMeta | null => s.status === 'ok'
-            ? { sampling: s.data.sampling, nprobes: s.data.data.shape[0] } : null,
+        metaTopic,
+        (s) => s.status === 'ok' ? s.data : null,
         (a, b) => a === b || (a !== null && b !== null && probeMetaEqual(a, b)),
-    ), [state]);
+    ), [metaTopic]);
     const dataState = useMemo(() => selectAtom(
-        state, (s) => s.status === 'ok' ? s.data.data : null,
-    ), [state]);
-    const gate = useMemo(() => gateAtom(state), [state]);
+        dataTopic, (s) => s.status === 'ok' ? s.data : null,
+    ), [dataTopic]);
+    const gate = useMemo(() => gateAtom(metaTopic, dataTopic), [metaTopic, dataTopic]);
 
     return <ViewGate state={gate}>
         <ProbeModesPlot metaState={metaState} dataState={dataState}/>
     </ViewGate>;
 }
 
-function probeMetaEqual(a: ProbeMeta | null, b: ProbeMeta): boolean {
-    return a !== null && a.nprobes === b.nprobes &&
+function probeMetaEqual(a: ProbeMeta, b: ProbeMeta): boolean {
+    return a.nprobes === b.nprobes &&
         isClose(a.sampling.shape, b.sampling.shape) && isClose(a.sampling.extent, b.sampling.extent)
             && isClose(a.sampling.sampling, b.sampling.sampling);
 }
@@ -69,10 +72,12 @@ function ProbeModesPlotSub({metaState, dataState}: ProbePlotProps) {
         return intensities ? splitAxis0(intensities) : null;
     }), [intensitiesAtom]);
 
+    // meta and data are separate topics now, so this can mount before any array has
+    // arrived. Staying pending holds the colorbar rather than autoscaling it to nothing.
     const autoscaleFnAtom = useMemo(() => atom((get) => {
         const intensities = get(intensitiesAtom);
+        if (!intensities) return () => PENDING;
         return () => {
-            if (!intensities) return { vmin: null, vmax: null };
             const [vmin, vmax] = minmaxNaN(intensities.data);
             return { vmin, vmax };
         };
@@ -80,8 +85,9 @@ function ProbeModesPlotSub({metaState, dataState}: ProbePlotProps) {
 
     const drawFnAtoms = useMemo(() => Array.from({length: n_plots}, (_, i) => atom((get) => {
         const slices = get(intensitySlicesAtom);
+        // `slices[i]` is absent if `nprobes` leads the array by a tick
+        if (!slices?.[i]) return () => PENDING;
         return (_ctx: CanvasRenderingContext2D, imageData: ImageData, scale: NumericScale<ColorLike>) => {
-            if (!slices) return;
             const [vmin, vmax] = scale.domain as [number, number];
             applyMagmaInto(imageData, slices[i].data, vmin, vmax);
         };
@@ -91,14 +97,14 @@ function ProbeModesPlotSub({metaState, dataState}: ProbePlotProps) {
         ["x", { scale: plotlib.linear([0, nx * sampling.sampling[1]], undefined, { show: false }), size: '180px' }],
         ["y", { scale: plotlib.linear([0, ny * sampling.sampling[0]], undefined, { show: false }), size: '180px' }],
         ["intensity", { scale: plotlib.linear([0, 1], interpolateMagma, { label: "Probe Intensity" }) }],
-    ] satisfies [string, ScaleSpec][]), [nx, ny]);
+    ] satisfies [string, ScaleSpec][]), [nx, ny, sampling]);
 
-    return <plotlib.Figure scales={scales} width="100%" colorScheme={useComputedColorScheme('light')}>
-        <plotlib.layout.CenteredX hug={plotlib.layout.Strength.medium}>
+    return <Group justify="center"><plotlib.Figure scales={scales} width="80%" colorScheme={useComputedColorScheme('light')}>
+        <plotlib.layout.CenteredX hug={plotlib.layout.Strength.weak}>
             <plotlib.layout.Decorated right={<plotlib.Colorbar scale="intensity" shrink={0.8}/>}>
                 <plotlib.layout.FlexBox wrap columnGap="12pt" rowGap="12pt">
                     {drawFnAtoms.map((drawFnAtom, i) => (
-                        <plotlib.Plot key={i} xaxis="x" yaxis="y" fixedAspect={true}>
+                        <plotlib.Plot key={i} xaxis="x" yaxis="y" fixedAspect={true} suspense={true}>
                             <plotlib.Plot.Clip>
                                 <plotlib.PlotImage draw_fn={drawFnAtom} autoscale_fn={autoscaleFnAtom} width={nx} height={ny} scale="intensity"/>
                             </plotlib.Plot.Clip>
@@ -108,5 +114,5 @@ function ProbeModesPlotSub({metaState, dataState}: ProbePlotProps) {
                 </plotlib.layout.FlexBox>
             </plotlib.layout.Decorated>
         </plotlib.layout.CenteredX>
-    </plotlib.Figure>;
+    </plotlib.Figure></Group>;
 }

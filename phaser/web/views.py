@@ -10,7 +10,7 @@ import numpy
 import pane
 
 from .pubsub import Cache, View
-from .util import encode_obj
+from .util import decode_obj, encode_obj
 
 
 def _state_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -27,29 +27,84 @@ def _progress_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     # already wire-form (encoded by the worker); pass through verbatim, no decode/encode.
-    return cache.raw.get('probe')
+    # Bulk array only -- shape and sampling belong to `probe_meta`.
+    probe = cache.raw.get('probe')
+    return probe['data'] if probe is not None else None
+
+
+# `execute` reshapes a 2D object to a leading axis of length 1 (leaving `thicknesses`
+# empty), so an object is normally already (z, y, x); a bare (y, x) one is accepted too.
+# `slice_view` and `obj_meta_view` must agree on this, or the client's slice bound and the
+# server's clamp disagree.
+def _n_slices(shape: t.Sequence[int]) -> int:
+    return int(shape[0]) if len(shape) > 2 else 1
+
+
+def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """Everything about the object except its bulk array: the sampling grid, the slice
+    count, and the per-slice thicknesses.
+
+    Its own topic rather than a field on the object payloads, because those are per-slice
+    (`obj`) and so change topic -- and momentarily lose their value -- whenever a different
+    slice is selected. This one is stable for the lifetime of the run.
+
+    Computed from `cache.raw` alone, and deliberately so: `encode_obj` stores an array as
+    its `__array_interface__` plus base64 `data`, so the shape is readable without touching
+    the payload. Reaching for `cache.array` here would decode the whole object.
+    """
+    obj = cache.raw.get('object')
+    if obj is None:
+        return None
+
+    n_slices = _n_slices(obj['data']['shape'])
+    # `ObjectState.thicknesses` is "length < 2 for single slice, equal to the number of
+    # slices otherwise" -- length 0 from `execute`'s 2D normalization, or length 1 from a
+    # re-used init state. Both mean "not per-slice", hence null.
+    thicknesses = decode_obj(obj['thicknesses']) if obj.get('thicknesses') is not None else None
+    per_slice = n_slices > 1 and thicknesses is not None and len(thicknesses) == n_slices
+
+    return {
+        'sampling': obj['sampling'],  # encoded with `to_numpy=False`: already wire-ready
+        'n_slices': n_slices,
+        'thicknesses': [float(t) for t in thicknesses] if per_slice else None,
+    }
+
+
+def probe_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """The probe's sampling grid and mode count. Split from `probes` for the same reason
+    `obj_meta` is split from `obj` -- see there."""
+    probe = cache.raw.get('probe')
+    if probe is None:
+        return None
+
+    return {'sampling': probe['sampling'], 'nprobes': int(probe['data']['shape'][0])}
 
 
 def project_phase(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     """Projected object phase: `angle` + `nansum` over every leading (slice) axis,
     collapsing an (..., y, x) complex object down to a single real (y, x) phase image.
     Mirrors the (now-retired) client-side `objectPhaseProjected` from `src/array.ts`."""
-    obj = cache.array('object')
-    data = obj['data']
+    data = cache.array('object')['data']
     axes = tuple(range(data.ndim - 2))
-    phase = numpy.nansum(numpy.angle(data), axis=axes)
-    return encode_obj({'sampling': obj['sampling'], 'data': phase})
+    return encode_obj(numpy.nansum(numpy.angle(data), axis=axes))
 
 
 def slice_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     """A single object slice, selected by the `slice` param. v1 decodes the whole object
     blob (accepted per the design doc); byte-range single-slice decode is a later
-    optimization."""
-    obj = cache.array('object')
-    idx = int(params['slice'])
-    thicknesses = obj.get('thicknesses')
-    thickness = float(thicknesses[idx]) if thicknesses is not None and idx < len(thicknesses) else None
-    return encode_obj({'sampling': obj['sampling'], 'data': obj['data'][idx], 'thickness': thickness})
+    optimization.
+
+    `slice` is clamped, not validated, and that clamp is load-bearing: a widget's params
+    outlive the run that set them, and the client can only correct an out-of-range one
+    after `obj_meta` reaches it. An `IndexError` here would propagate out of the
+    `asyncio.gather` in `Broker.publish_dirty` and take down that tick's publish for every
+    topic on the job, not just this one.
+    """
+    data = cache.array('object')['data']
+    data = data.reshape((1, *data.shape)) if data.ndim == 2 else data
+
+    idx = min(max(int(params.get('slice', 0)), 0), _n_slices(data.shape) - 1)
+    return encode_obj(data[idx])
 
 
 def _logs_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -75,6 +130,8 @@ VIEWS: t.Dict[str, View] = {
     'probes':        View(frozenset({'probe'}),    True,  'latest', _probes_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
     'obj':           View(frozenset({'object'}),   True,  'latest', slice_view),
+    'obj_meta':      View(frozenset({'object'}),   True,  'latest', obj_meta_view),
+    'probe_meta':    View(frozenset({'probe'}),    True,  'latest', probe_meta_view),
     'logs':          View(frozenset(),              False, 'append', _logs_view),
 }
 

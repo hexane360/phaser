@@ -13,6 +13,7 @@ architecture") minus the view registry (`views.py`) and the wiring into `Job`/`J
 from __future__ import annotations
 
 import asyncio
+import threading
 import typing as t
 from dataclasses import dataclass
 
@@ -36,6 +37,11 @@ class Cache:
         self._raw: t.Dict[str, t.Any] = {}
         self._generations: t.Dict[str, int] = {}
         self._decoded: t.Dict[str, t.Tuple[int, t.Any]] = {}
+        # `View.compute` runs in a worker thread and `Broker.publish_dirty` gathers every
+        # dirty topic at once, so several threads can reach `array()` for one field
+        # concurrently. Without this they'd each decode the same (potentially large)
+        # blob, which is exactly what the memo exists to avoid.
+        self._lock: threading.Lock = threading.Lock()
 
     @property
     def raw(self) -> t.Mapping[str, t.Any]:
@@ -52,14 +58,22 @@ class Cache:
             self._generations[k] = self._generations.get(k, 0) + 1
 
     def array(self, field: str) -> t.Any:
-        """Decode `raw[field]` (via `decode_obj`), memoized by generation."""
+        """Decode `raw[field]` (via `decode_obj`), memoized by generation. Thread-safe:
+        concurrent callers for the same field wait, then hit the memo."""
         gen = self.generation(field)
         cached = self._decoded.get(field)
         if cached is not None and cached[0] == gen:
             return cached[1]
-        value = decode_obj(self._raw[field])
-        self._decoded[field] = (gen, value)
-        return value
+
+        with self._lock:
+            # another thread may have decoded this generation while we waited
+            cached = self._decoded.get(field)
+            if cached is not None and cached[0] == gen:
+                return cached[1]
+
+            value = decode_obj(self._raw[field])
+            self._decoded[field] = (gen, value)
+            return value
 
 
 class View(t.NamedTuple):

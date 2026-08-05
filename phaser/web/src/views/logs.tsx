@@ -176,7 +176,7 @@ export function LogsView(_props: ViewProps) {
     };
 
     return <>
-        <div className="log-cont" style={{height: '100ex'}}>
+        <div className="log-cont">
             <Virtuoso
                 ref={listRef}
                 key={epoch}

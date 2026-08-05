@@ -81,6 +81,10 @@ def encode_obj(obj: t.Any, to_numpy: bool = True) -> t.Any:
 
 
 def decode_obj(obj: t.Any) -> t.Any:
+    """Inverse of `encode_obj`. Pure: the wire-form passed in is left untouched, so it
+    stays decodable. `Cache` holds exactly this wire-form and hands it to several views,
+    and some (`_probes_view`) forward it to the client verbatim -- decoding in place
+    would corrupt both."""
     if isinstance(obj, dict):
         d = obj
     elif dataclasses.is_dataclass(obj):
@@ -90,12 +94,13 @@ def decode_obj(obj: t.Any) -> t.Any:
 
     if '_ty' not in d:
         return {k: decode_obj(v) for (k, v) in d.items()}
-    ty = d.pop('_ty')
 
-    if ty == 'numpy':
-        d['data'] = base64.b64decode(d['data'].encode('utf-8'))
-        d['shape'] = tuple(d['shape'])
-        return numpy.array(_array_dummy(d))
+    if (ty := d['_ty']) == 'numpy':
+        interface = {k: v for (k, v) in d.items() if k != '_ty'}
+        interface['data'] = base64.b64decode(d['data'].encode('utf-8'))
+        interface['shape'] = tuple(d['shape'])
+        # copies, so the array doesn't alias `interface['data']`
+        return numpy.array(_array_dummy(interface))
 
     if ty == 'bytes':
         return base64.urlsafe_b64decode(d['data'].encode('utf-8'))

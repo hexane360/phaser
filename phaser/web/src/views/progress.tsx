@@ -3,7 +3,7 @@ import { PrimitiveAtom, useAtomValue } from 'jotai';
 
 import * as plotlib from '@hexane/plotlib';
 import type { ScaleSpec } from '@hexane/plotlib';
-import { useComputedColorScheme } from '@mantine/core';
+import { Group, useComputedColorScheme } from '@mantine/core';
 
 import { ProgressData } from '../types';
 import { usePubSubView, ViewState } from '../pubsub';
@@ -54,11 +54,11 @@ function ProgressPlotSub({progress}: {progress: ProgressData}) {
             scale: plotlib.log(padLogDomain([y_max, y_min], 0.1), undefined, 10, {
                 label: "Error", labelOffset: 110, tickFormat: ".2e",
             }),
-            size: '300px', zoomExtent: [0.7, Infinity],
+            size: '300px', zoomExtent: [1.0, Infinity],
         }],
     ] satisfies [string, ScaleSpec][]), [x_max, y_max, y_min]);
 
-    return <plotlib.Figure scales={scales} colorScheme={useComputedColorScheme('light')}>
+    return <Group justify="center"><plotlib.Figure scales={scales} colorScheme={useComputedColorScheme('light')}>
         <plotlib.Plot xaxis="iter" yaxis="error">
             <plotlib.Plot.Clip>
                 <marker id={markerId} viewBox="0 0 10 10" refX="5" refY="5" style={{fill: 'var(--mantine-color-bright, black)', stroke: 'none'}}>
@@ -68,5 +68,5 @@ function ProgressPlotSub({progress}: {progress: ProgressData}) {
             </plotlib.Plot.Clip>
             <plotlib.PlotLegend location='upper right'/>
         </plotlib.Plot>
-    </plotlib.Figure>;
+    </plotlib.Figure></Group>;
 }

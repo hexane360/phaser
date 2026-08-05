@@ -84,13 +84,17 @@
 
 /* The log view (`views/logs.tsx`). `.log-cont` is the bordered frame marking the
    scrollable region; `.log-scroll` (Virtuoso's own root) is what actually scrolls, and
-   its height is set inline -- see the `style` prop there. */
+   fills the frame via its own inline `height: 100%`. */
 .log-cont {
-    margin: 0 10px;
+    margin: 0 5px;
     border: var(--border-width) solid var(--mantine-color-default-border);
     border-radius: var(--mantine-radius-md);
     background-color: var(--mantine-color-body);
     overflow: hidden;
+
+    /* fallback */
+    height: clamp(20rem, 70vh, 80rem);
+    height: clamp(20rem, 70lvh, 80rem);
 }
 
 .log-scroll {
