@@ -12,9 +12,8 @@ import { DecodedArray, abs2, splitAxis0, minmaxNaN, applyMagmaInto } from '../ar
 import { ProbeMeta } from '../types';
 import { usePubSubView } from '../pubsub';
 import { isClose } from '../utils';
-import { PENDING } from './objectPhaseSum';
 import { ViewProps } from './types';
-import { ViewGate, gateAtom } from './ViewStatus';
+import { PENDING, ViewGate, gateAtom } from './ViewStatus';
 
 export function ProbeModesView(_props: ViewProps) {
     const metaTopic = usePubSubView<ProbeMeta>({view: 'probe_meta'});

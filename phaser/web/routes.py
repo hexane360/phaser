@@ -58,7 +58,7 @@ app: Quart = server.app
 
 def wants_html() -> bool:
     """Whether the client is a browser navigating, rather than an API/XHR caller."""
-    if not request:  # not in reqest, websocket context
+    if not request:  # not in request, websocket context
         return False
     accept = request.accept_mimetypes
     return accept["text/html"] > accept["application/json"]

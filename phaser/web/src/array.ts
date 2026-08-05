@@ -102,6 +102,20 @@ export function objectPhaseProjected(arr: DecodedArray): DecodedArray {
     return { data: out, shape: [ny, nx], complex: false };
 }
 
+// |x|, elementwise. The conjugate of `objectPhaseProjected` for a single object slice --
+// no projection, since amplitudes compose multiplicatively and the server does that
+// reduction (`project_amp_mean`) for the whole-object view.
+export function amplitude(arr: DecodedArray): DecodedArray {
+    if (!arr.complex) throw new Error("'amplitude' requires complex input");
+    const n = arr.data.length / 2;
+    const out = zerosLike(arr.data, n);
+    const buf = arr.data;
+    for (let i = 0; i < n; i++) {
+        out[i] = Math.hypot(buf[2 * i], buf[2 * i + 1]);
+    }
+    return { data: out, shape: arr.shape, complex: false };
+}
+
 // |x|^2, elementwise, over an entire complex array (e.g. the full probe mode stack).
 export function abs2(arr: DecodedArray): DecodedArray {
     if (!arr.complex) throw new Error("'abs2' requires complex input");

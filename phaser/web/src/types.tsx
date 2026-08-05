@@ -147,11 +147,6 @@ export interface ObjectSampling {
     region_max: [number, number] | null;
 }
 
-// The array views (`obj`, `obj_phase_sum`, `probes`) each send a bare `DecodedArray` and
-// nothing else. Everything that describes those arrays lives on the two metadata topics
-// below, which -- unlike `obj` -- don't change topic when another slice is selected, and so
-// keep their value throughout. See `phaser/web/views.py`.
-
 // payload of the `probe_meta` view
 export interface ProbeMeta {
     sampling: Sampling;

@@ -89,6 +89,22 @@ def project_phase(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     return encode_obj(numpy.nansum(numpy.angle(data), axis=axes))
 
 
+def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """Projected object amplitude: `abs`, then the *geometric* mean over every leading
+    (slice) axis, giving a real (y, x) image. The conjugate of `project_phase` -- slices
+    compose multiplicatively in amplitude where they add in phase, so the geometric mean
+    is the amplitude a single slice would need to produce the same total.
+
+    Computed as `exp(mean(log(a)))` rather than `prod(a) ** (1/n)`, which underflows to 0
+    for any realistic slice count. A zero-amplitude pixel gives `log(0) == -inf` and so a
+    zero mean amplitude, which is correct.
+    """
+    data = cache.array('object')['data']
+    axes = tuple(range(data.ndim - 2))
+    with numpy.errstate(divide='ignore'):
+        return encode_obj(numpy.exp(numpy.nanmean(numpy.log(numpy.abs(data)), axis=axes)))
+
+
 def slice_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     """A single object slice, selected by the `slice` param. v1 decodes the whole object
     blob (accepted per the design doc); byte-range single-slice decode is a later
@@ -129,6 +145,9 @@ VIEWS: t.Dict[str, View] = {
     'progress':      View(frozenset({'progress'}), True,  'latest', _progress_view),
     'probes':        View(frozenset({'probe'}),    True,  'latest', _probes_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
+    'obj_amp_mean':  View(frozenset({'object'}),   True,  'latest', project_amp_mean),
+    # both object stacks read this one: it sends the raw complex slice, and phase vs
+    # amplitude is a client-side transform of it
     'obj':           View(frozenset({'object'}),   True,  'latest', slice_view),
     'obj_meta':      View(frozenset({'object'}),   True,  'latest', obj_meta_view),
     'probe_meta':    View(frozenset({'probe'}),    True,  'latest', probe_meta_view),

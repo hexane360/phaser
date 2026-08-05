@@ -6,6 +6,12 @@ import { Text } from '@mantine/core';
 
 import { ViewState } from '../pubsub';
 
+// Never settles. Returned in place of a `PlotImage` draw/autoscale function when the image
+// isn't available yet, which holds it in its loading state (see `Plot`'s `suspense`): the
+// previously drawn canvas stays up, and the figure is never unmounted. The counterpart to
+// `ViewGate` for the gap a plot covers itself rather than being gated on.
+export const PENDING: Promise<never> = new Promise(() => {});
+
 // Placeholder for a view whose topic has no value yet, or failed. Only ever rendered for a
 // non-`ok` state, so it says nothing about *why* data is absent beyond what the state carries.
 export function ViewStatus({state, pending}: {state: ViewState<unknown>, pending?: string}) {
@@ -27,7 +33,7 @@ export function ViewGate({state, children}: React.PropsWithChildren<{state: Atom
 // passes its bulk array topics as `also`: those contribute only their errors, never their
 // pending state. Gating on a pending bulk topic would unmount the plot (and reflow the
 // layout) every time another slice is selected, where the plot can instead hold its last
-// image and cover the gap itself -- see `PENDING` in `objectPhaseSum.tsx`.
+// image and cover the gap itself -- see `PENDING` above.
 export function gateAtom(
     state: Atom<ViewState<unknown>>, ...also: Array<Atom<ViewState<unknown>>>
 ): Atom<ViewState<unknown> | null> {

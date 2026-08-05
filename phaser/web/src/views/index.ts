@@ -1,7 +1,6 @@
 import { View } from './types';
 import { ProgressView } from './progress';
-import { ObjectPhaseSumView } from './objectPhaseSum';
-import { ObjectPhaseStackView } from './objectPhaseStack';
+import { ObjectAmpMeanView, ObjectAmpStackView, ObjectPhaseSumView, ObjectPhaseStackView } from './object';
 import { ProbeModesView } from './probe';
 import { LogsView } from './logs';
 
@@ -29,6 +28,21 @@ export const VIEWS: Map<string, View> = new Map(([
         name: 'Object phase stack',
         description: 'Object phase stack',
         Component: ObjectPhaseStackView,
+        defaultParams: {slice: 0},
+        topicLabel: (params) => `obj?slice=${params.slice ?? 0}`,
+    },
+    {
+        key: 'objectAmpMean',
+        name: 'Object amplitude mean',
+        description: 'Object amplitude, geometric mean over slices',
+        Component: ObjectAmpMeanView,
+        topicLabel: () => 'obj_amp_mean',
+    },
+    {
+        key: 'objectAmpStack',
+        name: 'Object amplitude stack',
+        description: 'Object amplitude stack',
+        Component: ObjectAmpStackView,
         defaultParams: {slice: 0},
         topicLabel: (params) => `obj?slice=${params.slice ?? 0}`,
     },
