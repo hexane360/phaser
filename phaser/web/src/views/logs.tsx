@@ -1,8 +1,8 @@
 import React from 'react';
 import { useAtomValue, useStore } from 'jotai';
-import { Badge, Code, Collapse, Group, Loader, Text } from '@mantine/core';
+import { Badge, Button, Code, Collapse, Group, Loader, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { Virtuoso } from 'react-virtuoso';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 import { LogRecord, LogsData } from '../types';
 import { usePubSubView } from '../pubsub';
@@ -15,6 +15,8 @@ const MAX_GAP = 1000;   // largest reconnect gap we'll stitch before resyncing t
 // `firstItemIndex` must stay positive as older records are prepended, so record `i` is
 // offset by a constant larger than any log we'd hold.
 const FIRST_BASE = 1e7;
+// px from the bottom still counted as "at the bottom" for autoscroll
+const BOTTOM_SLACK = 30;
 
 // Both runs ascend by `i` and are individually contiguous; the result is too. Overlapping
 // or touching runs are unioned (dropping duplicates), disjoint ones can't both be kept
@@ -116,6 +118,33 @@ export function LogsView(_props: ViewProps) {
         prevFirst.current = first;
     }, [first]);
 
+    // Whether to stick to the tail. We keep track of this ourselves
+    const follow = React.useRef(true);
+    const lastTop = React.useRef(0);
+    const [following, setFollowing] = React.useState(true);
+
+    const onScroll = (el: HTMLElement) => {
+        const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (dist <= BOTTOM_SLACK) follow.current = true;
+        else if (el.scrollTop < lastTop.current) follow.current = false;
+        lastTop.current = el.scrollTop;
+        setFollowing(follow.current);
+    };
+
+    // Virtuoso owns the scroller element, so the listener is attached through its ref
+    // callback -- which also fires with `null` on the `epoch` remount, detaching the old one.
+    const detach = React.useRef<(() => void) | null>(null);
+    const scrollerRef = (el: HTMLElement | Window | null) => {
+        detach.current?.();
+        detach.current = null;
+        if (!(el instanceof HTMLElement)) return;
+
+        const handler = () => onScroll(el);
+        el.addEventListener('scroll', handler, {passive: true});
+        detach.current = () => el.removeEventListener('scroll', handler);
+    };
+    React.useEffect(() => () => detach.current?.(), []);
+
     // scrolled to the top: page backwards from the oldest record held. Prepends into the
     // shared atom, so a second Log widget gets that history without refetching it.
     const fetchOlder = () => {
@@ -138,24 +167,38 @@ export function LogsView(_props: ViewProps) {
         {hasBefore ? <Loader size="xs" type="dots"/> : <Text size="xs" c="dimmed">start of log</Text>}
     </div>;
 
-    return <div className="log-cont">
-        <Virtuoso
-            key={epoch}
-            className="log-scroll"
-            // Virtuoso's default root style is `height: 100%`, which collapses to nothing
-            // inside the auto-height widget body -- the height has to be a definite value
-            // here, where it beats that default (a CSS class does not).
-            style={{height: '100ex'}}
-            data={logs}
-            firstItemIndex={FIRST_BASE + first}
-            initialTopMostItemIndex={Math.max(logs.length - 1, 0)}
-            // stick to the tail only when already there, so scrolling back stays put
-            followOutput={(atBottom) => atBottom ? 'auto' : false}
-            startReached={fetchOlder}
-            itemContent={(_index, log) => <LogLine log={log}/>}
-            components={{Header: logs.length ? Header : undefined}}
-        />
-    </div>
+    // jumps to the tail and re-arms the latch, for when the log has been scrolled away from
+    const listRef = React.useRef<VirtuosoHandle>(null);
+    const toBottom = () => {
+        follow.current = true;
+        setFollowing(true);
+        listRef.current?.scrollToIndex({index: 'LAST', align: 'end'});
+    };
+
+    return <>
+        <div className="log-cont" style={{height: '100ex'}}>
+            <Virtuoso
+                ref={listRef}
+                key={epoch}
+                className="log-scroll"
+                data={logs}
+                firstItemIndex={FIRST_BASE + first}
+                initialTopMostItemIndex={Math.max(logs.length - 1, 0)}
+                // stick to the tail until scrolled away from it, so scrolling back stays put
+                followOutput={() => follow.current ? 'auto' : false}
+                atBottomThreshold={BOTTOM_SLACK}
+                scrollerRef={scrollerRef}
+                startReached={fetchOlder}
+                itemContent={(_index, log) => <LogLine log={log}/>}
+                components={{Header: logs.length ? Header : undefined}}
+            />
+        </div>
+        <Group justify="center" pt={6}>
+            <Button size="compact-xs" variant="default" onClick={toBottom} disabled={following}>
+                scroll to bottom
+            </Button>
+        </Group>
+    </>
 }
 
 // exclusive cursors on a record's `i`. Both bound the window on either side (a reconnect
