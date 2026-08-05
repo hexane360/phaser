@@ -26,6 +26,7 @@ import pane
 from ..version import version_info
 from .pubsub import Broker, Session
 from .types import (
+    RELOAD_EXIT_CODE,
     JobID,
     JobResponse,
     JobState,
@@ -34,7 +35,6 @@ from .types import (
     LogPage,
     LogRecord,
     OkResponse,
-    RELOAD_EXIT_CODE,
     Result,
     ServerResponse,
     Signal,
@@ -48,6 +48,7 @@ from .types import (
     WorkerStatus,
     canonical_topic,
 )
+from .util import timeout
 
 T = t.TypeVar('T')
 
@@ -293,9 +294,10 @@ class Workers:
         return self.inner.values()
 
     async def finalize(self):
+        await asyncio.gather(*(worker.finalize() for worker in self.inner.values()))
         for fut in self._futs:
             fut.cancel()
-        await asyncio.gather(*(worker.finalize() for worker in self.inner.values()))
+        await asyncio.gather(*self._futs, return_exceptions=True)
 
 
 LOG_LEVELS: t.Tuple[int, ...] = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
@@ -666,9 +668,14 @@ class Server:
         @self.app.after_serving
         async def shutdown():
             logging.info("Shutting down...")
+            for fut in self.futs:
+                fut.cancel()
             try:
-                async with asyncio.timeout(5):
-                    await asyncio.gather(self.jobs.finalize(), self.workers.finalize(), self.slurm_manager.finalize(), *self.futs)
+                async with timeout(5):
+                    await asyncio.gather(
+                        self.jobs.finalize(), self.workers.finalize(), self.slurm_manager.finalize()
+                    )
+                    await asyncio.gather(*self.futs, return_exceptions=True)
             except TimeoutError:
                 logging.warning("Cleanup didn't finish in time")
             finally:
@@ -723,17 +730,18 @@ class Server:
                     signal.signal(getattr(signal, signal_name), lambda _sig, _frame, name=signal_name: _signal_handler(name))
 
     def run(
-            self,
-            hostname: str = 'localhost',
-            port: t.Optional[int] = None,
-            root_path: t.Optional[str] = None,
-            verbosity: int = 0,
-            serving_cb: t.Optional[t.Callable[[], t.Any]] = None,
-            debug: bool = False,
+        self,
+        hostname: str = 'localhost',
+        port: t.Optional[int] = None,
+        root_path: t.Optional[str] = None,
+        verbosity: int = 0,
+        serving_cb: t.Optional[t.Callable[[], t.Any]] = None,
+        debug: bool = False,
     ):
         self.compute_pool: ThreadPoolExecutor = ThreadPoolExecutor()
         """Shared threadpool for pub/sub view compute + array decode (`phaser/web/pubsub.py`)."""
-        self.futs: t.List[t.Awaitable[t.Any]] = []
+        self.futs: t.List[asyncio.Task[t.Any]] = []
+        """Long-lived background tasks, cancelled on shutdown."""
 
         self.shutdown_event: asyncio.Event = asyncio.Event()
 
@@ -770,7 +778,8 @@ class Server:
 
         @self.app.before_serving
         async def _start_watchdog():
-            asyncio.create_task(_watch_event_loop_lag())
+            # tracked, so shutdown cancels it rather than abandoning it mid-sleep
+            self.futs.append(asyncio.create_task(_watch_event_loop_lag()))
 
         @self.app.before_serving
         async def _log_version():

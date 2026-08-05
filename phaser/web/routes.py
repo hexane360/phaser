@@ -302,14 +302,22 @@ async def listen():
             for error in errors:
                 await websocket.send(serialize(error))
 
+    # `gather` propagates the first exception but leaves its siblings running, so the four
+    # are held explicitly and cancelled together -- otherwise a kicked connection strands
+    # `send`, blocked on a mailbox nothing will fill again, for the life of the process.
+    tasks = [asyncio.ensure_future(coro) for coro in
+             (send(), recv(), raise_on_shutdown(), raise_on_kick())]
     try:
-        await asyncio.gather(send(), recv(), raise_on_shutdown(), raise_on_kick())
+        await asyncio.gather(*tasks)
     except Shutdown:
         await websocket.send(serialize(ServerShutdownMessage()))
     except Kicked:
         # deliberately silent: the client should see this as a dropped connection
         logging.info("Kicking websocket connection")
     finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         server.sessions.discard(session)
         session.close()
 

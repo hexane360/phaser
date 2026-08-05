@@ -16,6 +16,7 @@ from phaser.state import PartialReconsState, ReconsState
 from phaser.utils.num import get_devices, repr_device
 
 from .types import (
+    RELOAD_EXIT_CODE,
     ConnectMessage,
     JobID,
     JobResultMessage,
@@ -23,7 +24,6 @@ from .types import (
     LogMessage,
     PingMessage,
     PollMessage,
-    RELOAD_EXIT_CODE,
     ServerResponse,
     SignalException,
     UpdateMessage,
@@ -67,7 +67,7 @@ class LogHandler(logging.Handler):
             return
         try:
             self.send_message(LogMessage.from_logrecord(self.job_id, record))
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.handleError(record)
 
 
@@ -83,7 +83,7 @@ class WorkerObserver(Observer):
         try:
             resp = self._send_message(msg)
         except (requests.RequestException, pane.ConvertError):
-            logging.error("Failed to update server", exc_info=sys.exc_info(), extra={'local': True})
+            logging.exception("Failed to update server", extra={'local': True})
             return
 
         self.msg_time = time.monotonic()
@@ -200,7 +200,7 @@ def run_worker(url: str, quiet: bool = False):
                 try:
                     send_message(JobStartMessage(resp.job_id, datetime.datetime.now(datetime.timezone.utc)))
                 except requests.RequestException:
-                    logger.error("Failed to report job start time", exc_info=True, extra={'local': True})
+                    logger.exception("Failed to report job start time", extra={'local': True})
 
                 plan = ReconsPlan.from_jsons(resp.plan)
                 execute_plan(plan, observers=WorkerObserver(resp.job_id, send_message))
@@ -228,8 +228,8 @@ def run_worker(url: str, quiet: bool = False):
 
     except BaseException as e:
         # disconnect message
-        logger.error(
-            "Worker interrupted" if isinstance(e, KeyboardInterrupt) else "Worker shutting down due to error",
+        logger.exception(
+            "Worker interrupted" if isinstance(e, KeyboardInterrupt) else "Worker shutting down due to error",  # noqa: TRY401
             extra={'local': True}
         )
         s = traceback.format_exc()
@@ -246,5 +246,5 @@ def run_worker(url: str, quiet: bool = False):
 
     try:
         send_shutdown(msg)
-    except Exception as e:
-        logger.error(f"Failed to send shutdown message, error {type(e)}", extra={'local': True})
+    except Exception:
+        logger.exception("Failed to send shutdown message", extra={'local': True})

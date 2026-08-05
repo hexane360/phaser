@@ -13,12 +13,13 @@ architecture") minus the view registry (`views.py`) and the wiring into `Job`/`J
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import typing as t
+from dataclasses import dataclass
 
 from quart.utils import run_sync
 
-from .types import JobID, Topic as WireTopic, TopicUpdate, ErrorMessage, canonical_topic
+from .types import ErrorMessage, JobID, TopicUpdate, canonical_topic
+from .types import Topic as WireTopic
 from .util import decode_obj
 
 Conflation: t.TypeAlias = t.Literal['latest', 'append']
@@ -145,7 +146,7 @@ class Mailbox:
 
 @dataclass
 class _Subscription:
-    owner: 'Broker'
+    owner: Broker
     client_topic: WireTopic
 
 
@@ -272,7 +273,7 @@ def resolve(topic: WireTopic) -> t.Tuple[Broker, str, View, t.Mapping[str, t.Any
     params)`. Imports `server`/`views` lazily to avoid a module-level import cycle
     (`server.py` imports `Broker` from this module at load time)."""
     from .server import server
-    from .views import VIEWS, JOBS_VIEW, WORKERS_VIEW
+    from .views import JOBS_VIEW, VIEWS, WORKERS_VIEW
 
     key = canonical_topic(topic)
 

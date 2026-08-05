@@ -1,5 +1,8 @@
+import asyncio
 import base64
+import contextlib
 import dataclasses
+import sys
 import typing as t
 
 import numpy
@@ -7,6 +10,42 @@ from pane.converters import Converter
 from pane.errors import ProductErrorNode, WrongTypeError, ParseInterrupt
 
 T = t.TypeVar('T')
+
+
+@contextlib.asynccontextmanager
+async def _timeout(delay: t.Optional[float]) -> t.AsyncIterator[None]:
+    """`asyncio.timeout` for 3.10: cancel the enclosing task after `delay` seconds and raise
+    `TimeoutError` instead.
+
+    Lacking 3.11's `uncancel`, this can't distinguish its own expiry from a cancellation
+    arriving at the same moment, and nesting two attributes the timeout to the inner one.
+    """
+    if delay is None:
+        yield
+        return
+
+    task = asyncio.current_task()
+    assert task is not None
+    expired = False
+
+    def on_timeout():
+        nonlocal expired
+        expired = True
+        task.cancel()
+
+    handle = asyncio.get_running_loop().call_later(delay, on_timeout)
+    try:
+        yield
+    except asyncio.CancelledError:
+        if expired:
+            raise TimeoutError from None
+        raise
+    finally:
+        handle.cancel()
+
+
+timeout = asyncio.timeout if sys.version_info >= (3, 11) else _timeout
+"""`asyncio.timeout`, or `_timeout` on 3.10 where it doesn't exist yet."""
 
 class _array_dummy():
     def __init__(self, array_interface: t.Any):
