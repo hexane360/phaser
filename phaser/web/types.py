@@ -144,6 +144,10 @@ class JobState(pane.PaneBase):
     job_name: t.Optional[str] = None
     start_time: t.Optional[datetime.datetime] = None
     state: t.Dict[str, t.Any] = pane.field(converter=ReconsStateConverter(), default_factory=dict)
+    result: t.Optional[Result] = None
+    """Terminal outcome, set once the job stops."""
+    error_summary: t.Optional[str] = None
+    """The exception's final line, for `result == 'errored'`. The traceback is in the log."""
 
 class LogRecord(pane.PaneBase):
     i: int
@@ -231,8 +235,6 @@ class LogMessage(pane.PaneBase):
 
     @classmethod
     def from_logrecord(cls, job_id: t.Optional[JobID], record: logging.LogRecord) -> Self:
-        # aware UTC: these cross machines (a worker may be in another timezone entirely),
-        # so a naive local timestamp is meaningless to the server and the browser
         timestamp = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
         return cls(
             timestamp=timestamp,
@@ -256,6 +258,8 @@ class JobResultMessage(pane.PaneBase):
     job_id: JobID
     result: Result
     error: t.Optional[str] = None
+    log: t.Optional[LogMessage] = None
+    """Failure record for `result == 'errored'`, with the traceback in `stack_info`."""
 
     msg: t.Literal['job_result'] = 'job_result'
 

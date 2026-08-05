@@ -4,24 +4,55 @@ import logging
 import signal
 import socket
 import sys
-import traceback
 import time
+import traceback
 import typing as t
 
 import backoff
 import requests
 
 import pane
-
-from phaser.execute import execute_plan, Observer, ReconsPlan, EnginePlan
-from phaser.state import ReconsState, PartialReconsState
+from phaser.execute import EnginePlan, Observer, ReconsPlan, execute_plan
+from phaser.state import PartialReconsState, ReconsState
 from phaser.utils.num import get_devices, repr_device
 
 from .types import (
-    ConnectMessage, PollMessage, PingMessage, UpdateMessage, LogMessage, JobStartMessage,
-    JobResultMessage, WorkerShutdownMessage, WorkerMessage, ServerResponse
+    ConnectMessage,
+    JobID,
+    JobResultMessage,
+    JobStartMessage,
+    LogMessage,
+    PingMessage,
+    PollMessage,
+    ServerResponse,
+    SignalException,
+    UpdateMessage,
+    WorkerMessage,
+    WorkerShutdownMessage,
 )
-from .types import JobID, SignalException
+
+
+def failure_log(job_id: JobID, e: BaseException, formatted: str) -> LogMessage:
+    """The failure's log record, pointing at the frame that *raised* rather than the one
+    that caught -- the same module/function/line a `logger.error` at the raise site would
+    have carried. The server appends this to the job's log as-is."""
+    frame, lineno = None, 0
+    tb = e.__traceback__
+    while tb is not None:
+        frame, lineno = tb.tb_frame, tb.tb_lineno
+        tb = tb.tb_next
+
+    return LogMessage(
+        job_id=job_id,
+        # aware UTC, like `from_logrecord`: this crosses machines
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        log=f"Job failed: {type(e).__name__}: {e}",
+        logger_name=frame.f_globals.get('__name__', '?') if frame is not None else __name__,
+        log_level=logging.ERROR,
+        line_number=lineno,
+        func_name=frame.f_code.co_name if frame is not None else None,
+        stack_info=formatted,
+    )
 
 
 class LogHandler(logging.Handler):
@@ -179,10 +210,12 @@ def run_worker(url: str, quiet: bool = False):
                 msg = JobResultMessage(resp.job_id, 'interrupted')
                 resp = send_result(msg)
                 raise
-            except BaseException:
+            except BaseException as e:
+                # this one is `local`: the record that reaches the server is `failure_log`'s,
+                # which points at the raising frame rather than at this handler
                 logger.info("Job stopped due to error", exc_info=True, stack_info=True, extra={'local': True})
                 s = traceback.format_exc()
-                msg = JobResultMessage(resp.job_id, 'errored', s)
+                msg = JobResultMessage(resp.job_id, 'errored', s, failure_log(resp.job_id, e, s))
             else:
                 logger.info("Job finished successfully", extra={'local': True})
                 msg = JobResultMessage(resp.job_id, 'finished')

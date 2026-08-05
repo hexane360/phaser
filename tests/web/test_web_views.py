@@ -88,11 +88,10 @@ def test_cache_array_decodes_once_per_generation():
         pubsub_mod.decode_obj = orig
 
 
-def test_status_progress_probes_are_raw_passthrough():
+def test_progress_probes_are_raw_passthrough():
     cache = Cache()
-    cache.update_raw({'status': 'running', 'progress': {'total_loss': {'iters': [1], 'values': [0.5]}}, 'probe': {'sampling': {}, 'data': 'x'}})
+    cache.update_raw({'progress': {'total_loss': {'iters': [1], 'values': [0.5]}}, 'probe': {'sampling': {}, 'data': 'x'}})
 
-    assert VIEWS['status'].compute(cache, {}) == 'running'
     assert VIEWS['progress'].compute(cache, {}) == {'total_loss': {'iters': [1], 'values': [0.5]}}
     assert VIEWS['probes'].compute(cache, {}) == {'sampling': {}, 'data': 'x'}
 
@@ -102,6 +101,6 @@ def test_views_deps_are_disjoint_from_unrelated_fields():
     # not on unrelated fields like 'iter' or 'progress' (laziness/dirty-set correctness).
     assert VIEWS['obj_phase_sum'].deps == frozenset({'object'})
     assert VIEWS['obj'].deps == frozenset({'object'})
-    assert VIEWS['status'].deps == frozenset({'status'})
+    assert VIEWS['state'].deps == frozenset({'state'})
     assert VIEWS['progress'].deps == frozenset({'progress'})
     assert VIEWS['probes'].deps == frozenset({'probe'})

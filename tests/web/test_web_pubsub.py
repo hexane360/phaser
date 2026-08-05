@@ -342,6 +342,9 @@ def test_resolve_and_job_wiring():
                 await jobs_session.subscribe('jobs')
                 jobs_items = await jobs_session.mailbox.drain()
                 assert t.cast(TopicUpdate, jobs_items[0]).data[0]['job_id'] == job.id
+                # `server.jobs` is a process-wide singleton, so a subscription left behind
+                # here would have every later test's `notify_changed` recompute this view
+                jobs_session.close()
 
                 await server.jobs.remove(job.id)
                 removed_items = await session.mailbox.drain()

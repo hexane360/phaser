@@ -30,9 +30,11 @@ from .types import (
     JobResponse,
     JobState,
     JobStatus,
+    LogMessage,
     LogPage,
     LogRecord,
     OkResponse,
+    Result,
     ServerResponse,
     Signal,
     SignalResponse,
@@ -348,6 +350,17 @@ def _comparable(time: datetime.datetime, start: t.Optional[datetime.datetime]) -
     return start is not None and (time.tzinfo is None) == (start.tzinfo is None)
 
 
+def _exc_summary(error: t.Optional[str], max_len: int = 200) -> t.Optional[str]:
+    """Last non-empty line of a formatted traceback -- the exception line itself
+    (`ValueError: ...`). Truncated, since this rides along on every `jobs` update."""
+    if error is None:
+        return None
+    lines = [line.strip() for line in error.splitlines() if line.strip()]
+    if not lines:
+        return None
+    return lines[-1] if len(lines[-1]) <= max_len else lines[-1][:max_len - 1] + '…'
+
+
 def snap_level(min_level: int) -> int:
     """`min_level` snapped down to a standard logging level, or 0 (no filtering)"""
     return max((level for level in LOG_LEVELS if level <= min_level), default=0)
@@ -360,10 +373,21 @@ class Job:
         self.job_name: t.Optional[str] = name
         """Name of job"""
         self.status: JobStatus = 'queued'
+        self.result: t.Optional[Result] = None
+        """Terminal outcome, once the job stops. `status` is the lifecycle; this is how it
+        ended."""
+        self.error_summary: t.Optional[str] = None
+        """Final line of the traceback, for `result == 'errored'`. The traceback itself is
+        a record in `logs`."""
         self.broker: Broker = Broker()
-        """Pub/sub broker for this job's views (`status`, `progress`, `obj_phase_sum`, ...).
+        """Pub/sub broker for this job's views (`state`, `progress`, `obj_phase_sum`, ...).
         `broker.cache.raw` is the wire-form (still-encoded) view of the latest worker
         state -- the single source of truth `Job.state()` also reads from."""
+        # synthetic dep for the `state` view, which reads this `Job` rather than the cache
+        # (like `Jobs`/`Workers` do for the manager topics). Seeded here so `has_deps()`
+        # holds for a subscriber arriving before the first transition -- a queued job has
+        # made none.
+        self.broker.cache.update_raw({'state': None})
         self.logs: LogBuffer = LogBuffer()
         """Cache of recorded messages"""
         self.start_time: t.Optional[datetime.datetime] = None
@@ -410,12 +434,17 @@ class Job:
             await server.jobs.add(job)
         return jobs
 
+    async def notify_changed(self, cause: t.Optional[t.Any] = None):
+        """Republish this job's `state` topic. Mirrors `Jobs.notify_changed`: `'state'` is
+        synthetic, so all this does is bump the generation the view is memoized against."""
+        self.broker.cache.update_raw({'state': None})
+        await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
+
     async def set_status(self, status: JobStatus, cause: t.Optional[t.Any] = None):
         if self.status == status:
             return
         self.status = status
-        self.broker.cache.update_raw({'status': status})
-        await self.broker.publish_dirty(frozenset({'status'}), cause=cause)
+        await self.notify_changed(cause)
         await server.jobs.notify_changed({'job_id': self.id, 'status': status})
 
     async def cancel(self):
@@ -464,6 +493,7 @@ class Job:
         }
         return JobState.make_unchecked(
             self.id, self.status, links, job_name=self.job_name, start_time=self.start_time, state=state,
+            result=self.result, error_summary=self.error_summary,
         )
 
     async def handle_update(self, msg: WorkerMessage):
@@ -477,16 +507,35 @@ class Job:
             await self.broker.publish_dirty(changed)
 
             if self._total_iter() != old_total_iter:
+                await self.notify_changed()
                 await server.jobs.notify_changed({'job_id': self.id})
         elif msg.msg == 'job_start':
             self.worker_start_time = msg.start_time
         elif msg.msg == 'log':
-            record = msg.into_record(len(self.logs), self._elapsed(msg.timestamp))
-            self.logs.append(record)
-            key = canonical_topic({'job': self.id, 'view': 'logs'})
-            self.broker.publish_value(key, [pane.into_data(record)])
+            self._append_log(msg)
         elif msg.msg == 'job_result':
-            await self.set_status('stopped', cause={'result': msg.result, 'error': msg.error})
+            # assigned before `set_status`, which early-returns on an unchanged status: a
+            # job already stopped (its worker went away first) would otherwise swallow the
+            # result and its traceback entirely
+            self.result = msg.result
+            self.error_summary = _exc_summary(msg.error)
+            # the worker's own crash log is `local`-only, so this record is the only way the
+            # traceback reaches the log view, `min_level` filtering, or the plaintext export
+            if msg.log is not None:
+                self._append_log(msg.log)
+
+            cause = {'result': msg.result}
+            already_stopped = self.status == 'stopped'
+            await self.set_status('stopped', cause=cause)
+            if already_stopped:
+                await self.notify_changed(cause)
+                await server.jobs.notify_changed({'job_id': self.id, 'result': msg.result})
+
+    def _append_log(self, msg: LogMessage) -> None:
+        record = msg.into_record(len(self.logs), self._elapsed(msg.timestamp))
+        self.logs.append(record)
+        key = canonical_topic({'job': self.id, 'view': 'logs'})
+        self.broker.publish_value(key, [pane.into_data(record)])
 
     async def finalize(self):
         if self.status != 'stopped':
@@ -561,6 +610,12 @@ class Server:
         self.sessions: t.Set[Session] = set()
         """Live `/listen` connections, so they can be dropped en masse (`debug.py`)"""
 
+        # plain containers, no loop required -- built here rather than in `run()` so a
+        # `Server` is well-formed on construction (`Job.set_status` reaches `server.jobs`)
+        self.workers: Workers = Workers()
+        self.jobs: Jobs = Jobs()
+        self.job_queue: deque[Job] = deque()
+
         @self.app.after_serving
         async def shutdown():
             logging.info("Shutting down...")
@@ -631,9 +686,6 @@ class Server:
     ):
         self.compute_pool: ThreadPoolExecutor = ThreadPoolExecutor()
         """Shared threadpool for pub/sub view compute + array decode (`phaser/web/pubsub.py`)."""
-        self.workers: Workers = Workers()
-        self.jobs: Jobs = Jobs()
-        self.job_queue: deque[Job] = deque()
         self.futs: t.List[t.Awaitable[t.Any]] = []
 
         self.shutdown_event: asyncio.Event = asyncio.Event()

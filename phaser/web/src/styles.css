@@ -120,8 +120,6 @@
     }
 }
 
-/* elapsed times vary in width between units (`35.8 s` vs `1 h 38.2 min`), so right-align
-   to keep the message column and the digits within a unit lined up */
 .log-time {
     font-family: var(--mantine-font-family-monospace);
     font-size: var(--mantine-font-size-xs);
@@ -132,9 +130,9 @@
 
 .log-level {
     justify-self: start;
+    margin-right: 1em;
 }
 
-/* the message itself stays uncolored -- severity is the pill's job */
 .log-msg {
     font-size: var(--mantine-font-size-sm);
     white-space: pre-wrap;

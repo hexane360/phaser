@@ -29,8 +29,11 @@ function ServerStatus({serverStatus}: {serverStatus: PrimitiveAtom<ConnectionSta
 
 // `actions` are page-specific icons, prepended to the shared ones (the dashboard's palette
 // and split toggles). `serverStatus` is absent on pages with no connection to report.
-export default function Header({serverStatus, actions, size}: {
+// `info` is whatever the page is *about* -- the dashboard passes its job's state; the
+// manager and error page pass nothing.
+export default function Header({serverStatus, info, actions, size}: {
     serverStatus?: PrimitiveAtom<ConnectionStatus>,
+    info?: React.ReactNode,
     actions?: React.ReactNode,
     size?: string | number
 }) {
@@ -47,6 +50,7 @@ export default function Header({serverStatus, actions, size}: {
                     <PhaserLogo className="mantine-hidden-from-sm" height="100%"/>
                 </a>
                 {serverStatus && <ServerStatus serverStatus={serverStatus}/>}
+                {info}
             </Group>
             <Group wrap="nowrap">
                 {actions}

@@ -57,7 +57,7 @@ export interface ServerShutdownMessage {
 
 export type ServerMessage = UpdatesMessage | ErrorMessage | HeartbeatAckMessage | ServerShutdownMessage;
 
-export type WorkerStatus = "queued" | "starting" | "idle" | "running" | "stopping" | "stopped" | "unknown";
+export type WorkerStatus = "queued" | "starting" | "reloading" | "idle" | "running" | "stopping" | "stopped" | "unknown";
 export type JobStatus = "queued" | "starting" | "running" | "stopping" | "stopped";
 export type Result = "finished" | "errored" | "cancelled" | "interrupted";
 
@@ -79,6 +79,10 @@ export interface JobState {
     links: Record<string, string>;
     start_time: string | null;
     state: PartialReconsData;
+    // terminal outcome, null while the job is still live. The traceback behind an
+    // `errored` result isn't here -- it's an ERROR record in the job's log.
+    result: Result | null;
+    error_summary: string | null;
 };
 
 export interface LogRecord {

@@ -8,6 +8,15 @@
     flex-direction: column;
 }
 
+/* sits above `.workspace` in `.main`'s column, so the panes shrink to make room for it
+   rather than the page growing a scrollbar */
+.errorBanner {
+    flex: 0 0 auto;
+    margin: 8px;
+    max-height: 40dvh;
+    overflow-y: auto;
+}
+
 .workspace {
     flex: 1 1 auto;
     display: flex;

@@ -299,5 +299,7 @@ def resolve(topic: WireTopic) -> t.Tuple[Broker, str, View, t.Mapping[str, t.Any
     if view is None:
         raise ResolveError(f"Unknown view '{view_name}'")
 
-    params = {k: v for (k, v) in topic.items() if k not in ('job', 'view')}
+    # `job` is kept: a view over the owner itself (`state`) needs to know which job it is,
+    # the same way the manager views reach into `server.jobs`/`server.workers`.
+    params = {k: v for (k, v) in topic.items() if k != 'view'}
     return job.broker, key, view, params

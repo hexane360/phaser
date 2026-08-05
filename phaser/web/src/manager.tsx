@@ -4,13 +4,14 @@ import { createRoot } from 'react-dom/client';
 import { atom, PrimitiveAtom, useAtomValue, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
-import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Modal, Tabs, Stack, Code, Progress } from '@mantine/core';
+import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Modal, Tabs, Stack, Code, Progress, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import ky from 'ky';
 import TimeAgo from 'react-timeago';
 
 import './styles.css';
 import { JobState, WorkerState } from './types';
+import { fetchTraceback, jobStatus, workerStatusColor } from './status';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section, Mono } from './components';
 import Header from './header';
@@ -19,17 +20,6 @@ import { ConnectionStatus } from './connection';
 import { handleRequest } from './requests';
 import { rootPrefix } from './utils';
 
-
-// semantic status color, read from a Mantine color-scheme-aware token
-function statusColor(status: string): string {
-    switch (status) {
-        case 'running': return 'var(--mantine-color-green-text)';
-        case 'queued':
-        case 'starting': return 'var(--mantine-color-orange-text)';
-        case 'stopping': return 'var(--mantine-color-red-text)';
-        default: return 'var(--mantine-color-gray-text)'; // idle, stopped, unknown
-    }
-}
 
 export function Worker({state}: {state: WorkerState}) {
     const [opened, {toggle}] = useDisclosure(false);
@@ -43,7 +33,7 @@ export function Worker({state}: {state: WorkerState}) {
         return arr.join(', ');
     }
 
-    return <div className="row-group" style={{'--status': statusColor(state.status)} as React.CSSProperties}>
+    return <div className="row-group" style={{'--status': workerStatusColor(state.status)} as React.CSSProperties}>
         <div className="card" onClick={toggle}>
             <div><Mono>{state.worker_id}</Mono></div>
             <div>{state.worker_type}</div>
@@ -91,16 +81,45 @@ function IterProgress({value, max}: {value: number, max: number | null}) {
     </div>;
 }
 
+// The traceback for a failed job, fetched on expand rather than carried in `JobState` --
+// `jobs` republishes on every iteration, and a traceback per failed job in that payload
+// would be paid for continuously. Mounted only while the row is open, so the fetch happens
+// once someone actually looks.
+function JobFailure({state}: {state: JobState}) {
+    const [traceback, setTraceback] = React.useState<string | null | 'pending'>('pending');
+
+    React.useEffect(() => {
+        let live = true;
+        fetchTraceback(state.links.logs)
+            .then((tb) => { if (live) setTraceback(tb); })
+            .catch((e) => {
+                console.error("Couldn't fetch traceback:", e);
+                if (live) setTraceback(null);
+            });
+        return () => { live = false; };
+    }, [state.links.logs]);
+
+    return <Stack gap="xs" style={{gridColumn: "1/-1"}}>
+        <Text>Job failed</Text>
+        {traceback === 'pending'
+            ? <Text size="sm" c="dimmed">Loading traceback…</Text>
+            : traceback
+                ? <Code block>{traceback}</Code>
+                : <Text size="sm" c="dimmed">No traceback recorded. <a href={state.links.logs_txt}>Full log</a></Text>}
+    </Stack>;
+}
+
 export function Job({state}: {state: JobState}) {
     const [opened, {toggle}] = useDisclosure(false);
 
     const iter_state = state.state.iter;
+    const status = jobStatus(state);
 
-    return <div className="row-group" style={{'--status': statusColor(state.status)} as React.CSSProperties}>
+    return <div className="row-group" style={{'--status': status.color} as React.CSSProperties}>
         <div className="card" onClick={toggle}>
             <div>{state.job_id}</div>
             <div>{state.job_name ?? ""}</div>
-            <Group className="status">{state.status}</Group>
+            <Group className="status">{status.label}</Group>
             <Group visibleFrom="md">
                 {iter_state && <IterProgress value={iter_state.engine_iter} max={iter_state.n_engine_iters}/>}
             </Group>
@@ -113,8 +132,9 @@ export function Job({state}: {state: JobState}) {
                 <Button variant="default" mod={{danger: true}} onClick={(e) => cancel_job(state, e)}>Cancel</Button>
             </Group>
         </div>
-        <Collapse className="card-body" expanded={opened}>
+        <Collapse className="card-body" expanded={opened} keepMounted={false}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
+                {state.result === 'errored' && <JobFailure state={state}/>}
             </div>
         </Collapse>
     </div>

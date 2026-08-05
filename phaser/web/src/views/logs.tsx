@@ -80,7 +80,6 @@ function LogLine({log}: {log: LogRecord}) {
             <time className="log-time" dateTime={log.timestamp}>{formatElapsed(log.elapsed)}</time>
             <div>
                 <Badge className="log-level" size="xs" variant="light" color={level.color} radius="sm">{level.name}</Badge>
-                &nbsp;
                 <span className="log-msg mono">{log.log}</span>
             </div>
         </div>

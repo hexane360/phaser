@@ -13,8 +13,12 @@ from .pubsub import Cache, View
 from .util import encode_obj
 
 
-def _status_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    return cache.raw.get('status')
+def _state_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """One job's `JobState` -- status, terminal result, name, timings. Like `_jobs_view`
+    below, this reads the owner directly rather than the cache; `'state'` is a synthetic
+    dep bumped by `Job.notify_changed`."""
+    from .server import server
+    return pane.into_data(server.jobs[params['job']].state())
 
 
 def _progress_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -66,7 +70,7 @@ def _workers_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 VIEWS: t.Dict[str, View] = {
-    'status':        View(frozenset({'status'}),   True,  'latest', _status_view),
+    'state':         View(frozenset({'state'}),    True,  'latest', _state_view),
     'progress':      View(frozenset({'progress'}), True,  'latest', _progress_view),
     'probes':        View(frozenset({'probe'}),    True,  'latest', _probes_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
