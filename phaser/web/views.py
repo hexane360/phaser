@@ -32,13 +32,36 @@ def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     return probe['data'] if probe is not None else None
 
 
-def probes_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """The probe modes in reciprocal space, on the same (ky, kx) grid `probe_meta`'s
-    `wavelength` and `sampling.extent` describe. `fft2` un-centers real space before
+def _recip_probes(cache: Cache) -> t.Any:
+    """The probe modes in reciprocal space. `fft2` un-centers real space before
     transforming (phaser's convention), and `fft2shift` centers the result."""
     from phaser.utils.num import fft2, fft2shift
 
-    return encode_obj(fft2shift(fft2(cache.array('probe')['data'])))
+    return fft2shift(fft2(cache.array('probe')['data']))
+
+
+def probes_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """The probe modes in reciprocal space, on the (ky, kx) grid `probe_meta`'s
+    `wavelength` and `sampling` describe."""
+    return encode_obj(_recip_probes(cache))
+
+
+def probe_sum_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """Total probe intensity: `abs2` summed over the modes, giving a real (y, x) image.
+    The modes are mutually incoherent, so they add in intensity -- which is also why this
+    is the only meaningful reduction over them (a summed amplitude or phase is not)."""
+    from phaser.utils.num import abs2
+
+    return encode_obj(numpy.sum(abs2(cache.array('probe')['data']), axis=0))
+
+
+def probe_sum_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """`probe_sum` in reciprocal space -- the probe's total intensity distribution over
+    scattering angle. The sum is taken there rather than transformed from `probe_sum`:
+    the transform is per-mode, so the two don't commute."""
+    from phaser.utils.num import abs2
+
+    return encode_obj(numpy.sum(abs2(_recip_probes(cache)), axis=0))
 
 
 # `execute` reshapes a 2D object to a leading axis of length 1 (leaving `thicknesses`
@@ -113,10 +136,6 @@ def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     (slice) axis, giving a real (y, x) image. The conjugate of `project_phase` -- slices
     compose multiplicatively in amplitude where they add in phase, so the geometric mean
     is the amplitude a single slice would need to produce the same total.
-
-    Computed as `exp(mean(log(a)))` rather than `prod(a) ** (1/n)`, which underflows to 0
-    for any realistic slice count. A zero-amplitude pixel gives `log(0) == -inf` and so a
-    zero mean amplitude, which is correct.
     """
     data = cache.array('object')['data']
     axes = tuple(range(data.ndim - 2))
@@ -164,6 +183,8 @@ VIEWS: t.Dict[str, View] = {
     'progress':      View(frozenset({'progress'}), True,  'latest', _progress_view),
     'probes':        View(frozenset({'probe'}),    True,  'latest', _probes_view),
     'probes_recip':  View(frozenset({'probe'}),    True,  'latest', probes_recip_view),
+    'probe_sum':     View(frozenset({'probe'}),    True,  'latest', probe_sum_view),
+    'probe_sum_recip': View(frozenset({'probe'}),  True,  'latest', probe_sum_recip_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
     'obj_amp_mean':  View(frozenset({'object'}),   True,  'latest', project_amp_mean),
     # both object stacks read this one: it sends the raw complex slice, and phase vs
