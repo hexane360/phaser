@@ -147,10 +147,12 @@ export interface ObjectSampling {
     region_max: [number, number] | null;
 }
 
-// payload of the `probe_meta` view
+// payload of the `probe_meta` view. `wavelength` is in the same length units as
+// `sampling` (Angstrom); it sets the reciprocal-space view's mrad scales.
 export interface ProbeMeta {
     sampling: Sampling;
     nprobes: number;
+    wavelength: number;
 }
 
 // payload of the `obj_meta` view. `thicknesses` is null unless the object is genuinely

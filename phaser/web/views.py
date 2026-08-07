@@ -32,6 +32,15 @@ def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     return probe['data'] if probe is not None else None
 
 
+def probes_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    """The probe modes in reciprocal space, on the same (ky, kx) grid `probe_meta`'s
+    `wavelength` and `sampling.extent` describe. `fft2` un-centers real space before
+    transforming (phaser's convention), and `fft2shift` centers the result."""
+    from phaser.utils.num import fft2, fft2shift
+
+    return encode_obj(fft2shift(fft2(cache.array('probe')['data'])))
+
+
 # `execute` reshapes a 2D object to a leading axis of length 1 (leaving `thicknesses`
 # empty), so an object is normally already (z, y, x); a bare (y, x) one is accepted too.
 # `slice_view` and `obj_meta_view` must agree on this, or the client's slice bound and the
@@ -71,13 +80,23 @@ def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def probe_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """The probe's sampling grid and mode count. Split from `probes` for the same reason
-    `obj_meta` is split from `obj` -- see there."""
+    """The probe's sampling grid, mode count, and wavelength (the last for the reciprocal-
+    space view's mrad scales). Split from `probes` for the same reason `obj_meta` is split
+    from `obj` -- see there.
+
+    `wavelength` is a field of `ReconsState`, not of the probe, but arrives with it: the
+    worker's first update (`WorkerObserver.init_engine`) sends the whole state. Null until
+    then, and the client treats that as "no probe yet"."""
     probe = cache.raw.get('probe')
-    if probe is None:
+    wavelength = cache.raw.get('wavelength')
+    if probe is None or wavelength is None:
         return None
 
-    return {'sampling': probe['sampling'], 'nprobes': int(probe['data']['shape'][0])}
+    return {
+        'sampling': probe['sampling'],
+        'nprobes': int(probe['data']['shape'][0]),
+        'wavelength': float(wavelength),
+    }
 
 
 def project_phase(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -144,13 +163,14 @@ VIEWS: t.Dict[str, View] = {
     'state':         View(frozenset({'state'}),    True,  'latest', _state_view),
     'progress':      View(frozenset({'progress'}), True,  'latest', _progress_view),
     'probes':        View(frozenset({'probe'}),    True,  'latest', _probes_view),
+    'probes_recip':  View(frozenset({'probe'}),    True,  'latest', probes_recip_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
     'obj_amp_mean':  View(frozenset({'object'}),   True,  'latest', project_amp_mean),
     # both object stacks read this one: it sends the raw complex slice, and phase vs
     # amplitude is a client-side transform of it
     'obj':           View(frozenset({'object'}),   True,  'latest', slice_view),
     'obj_meta':      View(frozenset({'object'}),   True,  'latest', obj_meta_view),
-    'probe_meta':    View(frozenset({'probe'}),    True,  'latest', probe_meta_view),
+    'probe_meta':    View(frozenset({'probe', 'wavelength'}), True, 'latest', probe_meta_view),
     'logs':          View(frozenset(),              False, 'append', _logs_view),
 }
 

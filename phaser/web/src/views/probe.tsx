@@ -31,16 +31,24 @@ const PROBE_MODES: Array<{value: ProbeMode, label: string}> = [
 
 const DEFAULT_MODE: ProbeMode = 'phaseAmp';
 
+// Real space, or its `fft2shift(fft2(...))` on the server (`probes_recip`). The two
+// differ only in the topic they read and the axes they carry: real space is drawn
+// against a scalebar, reciprocal space against labelled kx/ky axes in mrad.
+type ProbeSpace = 'real' | 'recip';
+
 // a persisted layout can name a mode this build doesn't have
 function parseMode(value: unknown): ProbeMode {
     return PROBE_MODES.some((m) => m.value === value) ? value as ProbeMode : DEFAULT_MODE;
 }
 
-export function ProbeModesView({params, setParams}: ViewProps) {
+export const ProbeModesView = (props: ViewProps) => <ProbeModes {...props} space="real"/>;
+export const ProbeModesRecipView = (props: ViewProps) => <ProbeModes {...props} space="recip"/>;
+
+function ProbeModes({params, setParams, space}: ViewProps & {space: ProbeSpace}) {
     const mode = parseMode(params.mode);
 
     const metaTopic = usePubSubView<ProbeMeta>({view: 'probe_meta'});
-    const dataTopic = usePubSubView<DecodedArray>({view: 'probes'});
+    const dataTopic = usePubSubView<DecodedArray>({view: space === 'real' ? 'probes' : 'probes_recip'});
 
     // rarely-changing meta vs per-tick data, each on its own topic. The equality check
     // matters: `probe_meta` republishes every tick with identical contents, and without it
@@ -57,7 +65,7 @@ export function ProbeModesView({params, setParams}: ViewProps) {
 
     return <>
         <ViewGate state={gate}>
-            <ProbeModesPlot metaState={metaState} dataState={dataState} mode={mode}/>
+            <ProbeModesPlot metaState={metaState} dataState={dataState} mode={mode} space={space}/>
         </ViewGate>
         <Group gap="sm" mb="sm" align="center" justify="center" wrap="nowrap">
             <Text size="xs">Display</Text>
@@ -70,7 +78,7 @@ export function ProbeModesView({params, setParams}: ViewProps) {
 }
 
 function probeMetaEqual(a: ProbeMeta, b: ProbeMeta): boolean {
-    return a.nprobes === b.nprobes &&
+    return a.nprobes === b.nprobes && isClose(a.wavelength, b.wavelength) &&
         isClose(a.sampling.shape, b.sampling.shape) && isClose(a.sampling.extent, b.sampling.extent)
             && isClose(a.sampling.sampling, b.sampling.sampling);
 }
@@ -79,18 +87,19 @@ interface ProbePlotProps {
     metaState: Atom<ProbeMeta | null>
     dataState: Atom<DecodedArray | null>
     mode: ProbeMode
+    space: ProbeSpace
 }
 
-function ProbeModesPlot({metaState, dataState, mode}: ProbePlotProps) {
-    const hasProbe = useAtomValue(metaState) !== null;
+function ProbeModesPlot(props: ProbePlotProps) {
+    const hasProbe = useAtomValue(props.metaState) !== null;
     if (!hasProbe) return <div></div>;
-    return <ProbeModesPlotSub metaState={metaState} dataState={dataState} mode={mode} />;
+    return <ProbeModesPlotSub {...props} />;
 }
 
 // see the equivalent comment on `PhaseImageSub`: `metaState` only changes rarely,
 // `dataState` carries the per-tick array data straight into `PlotImage` atoms.
-function ProbeModesPlotSub({metaState, dataState, mode}: ProbePlotProps) {
-    const {sampling, nprobes} = useAtomValue(metaState)!;
+function ProbeModesPlotSub({metaState, dataState, mode, space}: ProbePlotProps) {
+    const {sampling, nprobes, wavelength} = useAtomValue(metaState)!;
     const [ny, nx] = sampling.shape;
 
     // the raw complex modes, one per plot. `phaseAmp` draws straight from these; the
@@ -150,11 +159,27 @@ function ProbeModesPlotSub({metaState, dataState, mode}: ProbePlotProps) {
         }
     }, [mode]);
 
+    // real space spans the probe extent from the origin (unlabelled -- a `Scalebar` carries
+    // the scale instead); reciprocal space spans +-lambda/(2*extent), the Nyquist angle of
+    // the real-space grid, in mrad
+    const [xScale, yScale] = useMemo(() => {
+        if (space === 'real') return [
+            plotlib.linear([0, nx * sampling.sampling[1]], undefined, { show: false }),
+            plotlib.linear([0, ny * sampling.sampling[0]], undefined, { show: false }),
+        ];
+        const kx = wavelength / (2 * sampling.sampling[1]) * 1e3;
+        const ky = wavelength / (2 * sampling.sampling[0]) * 1e3;
+        return [
+            plotlib.linear([-kx, kx], undefined, { label: "kx [mrad]", show: false }),
+            plotlib.linear([-ky, ky], undefined, { label: "ky [mrad]", show: false }),
+        ];
+    }, [space, nx, ny, sampling, wavelength]);
+
     const scales: Map<string, ScaleSpec> = useMemo(() => new Map([
-        ["x", { scale: plotlib.linear([0, nx * sampling.sampling[1]], undefined, { show: false }), size: '180px' }],
-        ["y", { scale: plotlib.linear([0, ny * sampling.sampling[0]], undefined, { show: false }), size: '180px' }],
+        ["x", { scale: xScale, size: '180px' }],
+        ["y", { scale: yScale, size: '180px' }],
         ["intensity", { scale: valueScale }],
-    ] satisfies [string, ScaleSpec][]), [nx, ny, sampling, valueScale]);
+    ] satisfies [string, ScaleSpec][]), [xScale, yScale, valueScale]);
 
     return <Group justify="center"><plotlib.Figure scales={scales} width="80%" colorScheme={useComputedColorScheme('light')}>
         <plotlib.layout.CenteredX hug={plotlib.layout.Strength.weak}>
@@ -165,7 +190,7 @@ function ProbeModesPlotSub({metaState, dataState, mode}: ProbePlotProps) {
                             <plotlib.Plot.Clip>
                                 <plotlib.PlotImage draw_fn={drawFnAtom} autoscale_fn={autoscaleFnAtom} width={nx} height={ny} scale="intensity"/>
                             </plotlib.Plot.Clip>
-                            {i === nprobes - 1 && <plotlib.Scalebar unitScale={1e-10}/>}
+                            {(i === nprobes - 1) && <plotlib.Scalebar unitScale={space == 'real' ? 1e-10 : 1e-3} unit={space == 'real' ? 'm' : 'rad'}/>}
                         </plotlib.Plot>
                     ))}
                 </plotlib.layout.FlexBox>

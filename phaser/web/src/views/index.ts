@@ -1,7 +1,7 @@
 import { View } from './types';
 import { ProgressView } from './progress';
 import { ObjectAmpMeanView, ObjectAmpStackView, ObjectPhaseSumView, ObjectPhaseStackView } from './object';
-import { ProbeModesView } from './probe';
+import { ProbeModesView, ProbeModesRecipView } from './probe';
 import { LogsView } from './logs';
 
 export type { View, ViewProps, ViewParams } from './types';
@@ -53,6 +53,14 @@ export const VIEWS: Map<string, View> = new Map((<Array<View>>[
         Component: ProbeModesView,
         defaultParams: {mode: 'phaseAmp'},
         topicLabel: () => 'probes',
+    },
+    {
+        key: 'probesRecip',
+        name: 'Probe modes (recip.)',
+        description: 'Phase/amplitude plot of each probe mode in reciprocal space',
+        Component: ProbeModesRecipView,
+        defaultParams: {mode: 'phaseAmp'},
+        topicLabel: () => 'probes_recip',
     },
     {
         key: 'logs',
