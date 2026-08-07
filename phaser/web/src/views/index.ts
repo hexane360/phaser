@@ -2,6 +2,7 @@ import { View } from './types';
 import { ProgressView } from './progress';
 import { ObjectAmpMeanView, ObjectAmpStackView, ObjectPhaseSumView, ObjectPhaseStackView } from './object';
 import { ProbeModesView, ProbeModesRecipView, ProbeSumView, ProbeSumRecipView } from './probe';
+import { PositionsView } from './positions';
 import { LogsView } from './logs';
 
 export type { View, ViewProps, ViewParams } from './types';
@@ -75,6 +76,13 @@ export const VIEWS: Map<string, View> = new Map((<Array<View>>[
         description: 'Total probe intensity in reciprocal space',
         Component: ProbeSumRecipView,
         topicLabel: () => 'probe_sum_recip',
+    },
+    {
+        key: 'positions',
+        name: 'Probe positions',
+        description: 'Scan positions, in scan order',
+        Component: PositionsView,
+        topicLabel: () => 'positions',
     },
     {
         key: 'logs',

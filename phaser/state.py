@@ -4,14 +4,14 @@ import numpy
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from phaser.utils.num import Sampling, to_numpy, get_array_module, Float
-from phaser.utils.tree import tree_dataclass, field
+from phaser.utils.num import Float, Sampling, get_array_module, to_numpy
 from phaser.utils.object import ObjectSampling
+from phaser.utils.tree import field, tree_dataclass
 
 if t.TYPE_CHECKING:
-    from phaser.utils.io import HdfLike
-    from phaser.utils.image import _InterpBoundaryMode
     from phaser.observer import Observer, ObserverSet
+    from phaser.utils.image import _InterpBoundaryMode
+    from phaser.utils.io import HdfLike
 
 
 @tree_dataclass

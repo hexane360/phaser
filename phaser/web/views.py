@@ -7,6 +7,7 @@ requirement here, unlike the rest of `phaser`.
 import typing as t
 
 import numpy
+
 import pane
 
 from .pubsub import Cache, View
@@ -30,6 +31,12 @@ def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     # Bulk array only -- shape and sampling belong to `probe_meta`.
     probe = cache.raw.get('probe')
     return probe['data'] if probe is not None else None
+
+
+def _positions_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
+    # `ReconsState.scan`, wire-form as sent (shape (..., 2), in length units). Passed
+    # through verbatim like `_probes_view`; the client flattens the leading axes.
+    return cache.raw.get('scan')
 
 
 def _recip_probes(cache: Cache) -> t.Any:
@@ -187,11 +194,10 @@ VIEWS: t.Dict[str, View] = {
     'probe_sum_recip': View(frozenset({'probe'}),  True,  'latest', probe_sum_recip_view),
     'obj_phase_sum': View(frozenset({'object'}),   True,  'latest', project_phase),
     'obj_amp_mean':  View(frozenset({'object'}),   True,  'latest', project_amp_mean),
-    # both object stacks read this one: it sends the raw complex slice, and phase vs
-    # amplitude is a client-side transform of it
     'obj':           View(frozenset({'object'}),   True,  'latest', slice_view),
     'obj_meta':      View(frozenset({'object'}),   True,  'latest', obj_meta_view),
     'probe_meta':    View(frozenset({'probe', 'wavelength'}), True, 'latest', probe_meta_view),
+    'positions':     View(frozenset({'scan'}),     True,  'latest', _positions_view),
     'logs':          View(frozenset(),              False, 'append', _logs_view),
 }
 
