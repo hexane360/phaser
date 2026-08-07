@@ -63,16 +63,16 @@ function PositionsPlot({positions}: {positions: DecodedArray}) {
     const scales: Map<string, ScaleSpec> = useMemo(() => {
         const [ymin, ymax] = padDomain(ylim, 0.05);
         return new Map([
-            ["x", { scale: plotlib.linear(padDomain(xlim, 0.05), undefined, { label: "x [Å]" }), size: '400px' }],
+            ["x", { scale: plotlib.linear(padDomain(xlim, 0.05), undefined, { label: "x [Å]" }), size: '70%' }],
             // y increases downward, matching the object and probe images
-            ["y", { scale: plotlib.linear([ymin, ymax], undefined, { label: "y [Å]" }), size: '400px' }],
+            ["y", { scale: plotlib.linear([ymin, ymax], undefined, { label: "y [Å]" }), size: '70%' }],
         ] satisfies [string, ScaleSpec][]);
     }, [xlim, ylim]);
 
     const markerId = React.useId();
     const markerRef = `url(#${markerId})`;
 
-    return <Group justify="center"><plotlib.Figure scales={scales} colorScheme={useComputedColorScheme('light')}>
+    return <Group justify="center"><plotlib.Figure width="100%" scales={scales} colorScheme={useComputedColorScheme('light')}>
         <plotlib.layout.CenteredX hug={plotlib.layout.Strength.weak}>
             <plotlib.Plot xaxis="x" yaxis="y" fixedAspect={true}>
                 <marker id={markerId} viewBox="0 0 6 6" refX="3" refY="3" style={{fill: 'var(--mantine-color-bright, black)', stroke: 'none'}}>

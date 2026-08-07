@@ -86,6 +86,12 @@ export class PubSubConnection {
         this.conn.connect();
     }
 
+    // Resolves once the socket is live, retrying immediately rather than waiting out a
+    // backoff. Rejects with `NotConnectedError` on timeout. See `requests.tsx`.
+    ensureConnected(timeoutMs?: number): Promise<void> {
+        return this.conn.ensureConnected(timeoutMs);
+    }
+
     // Subscribes `listener` to `topic`, sending a `sub` message for the first listener on
     // a given (canonical) topic. Returns an unsubscribe function; the last listener
     // removed for a topic sends `unsub`.

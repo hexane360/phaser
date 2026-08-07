@@ -1,5 +1,6 @@
 .root {
     font-weight: 600;
+    flex-shrink: 0; /* prevent shrinking in header */
 
     @mixin hover {
         border-color: var(--mantine-color-blue-text);

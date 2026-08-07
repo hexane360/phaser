@@ -13,7 +13,7 @@ import { DragPayload, dragEnd, subscribeDrag } from './dnd';
 import { LayoutProvider } from './context';
 import { Pane } from './Pane';
 import { Palette } from './Palette';
-import { JobErrorBanner, JobStatusText } from './JobStatus';
+import { JobCancelButton, JobErrorBanner, JobStatusText } from './JobStatus';
 import classes from './Layout.module.css';
 
 // Right-edge hot zone, live only while something is being dragged. The preview is a
@@ -111,7 +111,7 @@ export function Dashboard(props: {}) {
     return <AppShell header={{ height: 80 }} padding={0}>
         <AppShell.Header>
             <Header
-                serverStatus={conn?.status ?? fallbackStatus} info={<JobStatusText/>}
+                serverStatus={conn?.status ?? fallbackStatus} info={<><JobStatusText/> <JobCancelButton/></>}
                 actions={actions} size="100%"
             />
         </AppShell.Header>

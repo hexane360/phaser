@@ -13,12 +13,28 @@ const DEAD_TIMEOUT_MS = 60_000;
 const BACKOFF_STARTING_MS = 500;
 const BACKOFF_MAX_MS = 5 * 60_000;
 
+// How long `ensureConnected` waits for a socket before giving up.
+const ENSURE_CONNECTED_MS = 3_000;
+
 export type ConnectionStatus =
     | { type: 'connecting' }
     | { type: 'connected' }
     | { type: 'reconnecting'; attempt: number; retryAt: Date }
     | { type: 'disconnected' }
     | { type: 'stopped' };
+
+// No usable websocket. Thrown by `ensureConnected`, and by the request helpers gated on it.
+export class NotConnectedError extends Error {
+    constructor(msg: string = "Not connected to server") {
+        super(msg);
+        this.name = 'NotConnectedError';
+    }
+}
+
+interface OpenWaiter {
+    resolve: () => void;
+    timer: ReturnType<typeof setTimeout>;
+}
 
 export class WebsocketConnection {
     socket: WebSocket | null = null;
@@ -29,6 +45,11 @@ export class WebsocketConnection {
     // unmounted) from every other closure (heartbeat-forced, server-initiated, network
     // drop), which all fall through to `_reconnectLoop`.
     private shouldReconnect = false;
+    // Identifies the current `_reconnectLoop`. `ensureConnected` starts a fresh loop while an
+    // old one may still be asleep in its backoff; that sleeper wakes with a stale generation
+    // and stands down, rather than opening a second socket alongside the live one.
+    private generation = 0;
+    private openWaiters: Set<OpenWaiter> = new Set();
 
     public constructor(
         public readonly address: string,
@@ -65,6 +86,32 @@ export class WebsocketConnection {
         this.store.set(this.status, { type: 'stopped' });
     }
 
+    // Resolves once the socket is open, rejecting with `NotConnectedError` after `timeoutMs`.
+    // A connection that has been down a while is asleep in a backoff up to `BACKOFF_MAX_MS`
+    // long, so waiting alone would time out without a single attempt being made -- an idle
+    // connection is kickstarted into a fresh backoff run instead.
+    ensureConnected(timeoutMs: number = ENSURE_CONNECTED_MS): Promise<void> {
+        if (this.socket?.readyState === WebSocket.OPEN) return Promise.resolve();
+
+        // an attempt already in flight is left to finish; restarting would only throw away
+        // its progress
+        if (this.socket?.readyState !== WebSocket.CONNECTING) {
+            this.shouldReconnect = true;
+            this._reconnectLoop();
+        }
+
+        return new Promise((resolve, reject) => {
+            const waiter: OpenWaiter = {
+                resolve,
+                timer: setTimeout(() => {
+                    this.openWaiters.delete(waiter);
+                    reject(new NotConnectedError());
+                }, timeoutMs),
+            };
+            this.openWaiters.add(waiter);
+        });
+    }
+
     send(data: unknown) {
         // Only transmit on an OPEN socket. Sends attempted while CONNECTING (e.g. a
         // component subscribing on mount, before `onopen`) would throw an
@@ -79,15 +126,16 @@ export class WebsocketConnection {
     // `shouldReconnect` goes false. Called once from `connect()`, and again (fresh)
     // every time an established connection subsequently drops.
     private async _reconnectLoop() {
+        const gen = ++this.generation;
         this.store.set(this.status, { type: 'connecting' });
         try {
-            await backOff(() => this._attemptOnce(), {
+            await backOff(() => this._attemptOnce(gen), {
                 numOfAttempts: Number.POSITIVE_INFINITY,
                 startingDelay: BACKOFF_STARTING_MS,
                 maxDelay: BACKOFF_MAX_MS,
                 jitter: 'full',
                 retry: (_error, attemptNumber) => {
-                    if (!this.shouldReconnect) return false;
+                    if (!this.shouldReconnect || gen !== this.generation) return false;
                     const delay = Math.min(BACKOFF_STARTING_MS * 2 ** (attemptNumber - 1), BACKOFF_MAX_MS);
                     this.store.set(this.status, {
                         type: 'reconnecting', attempt: attemptNumber, retryAt: new Date(Date.now() + delay),
@@ -96,15 +144,17 @@ export class WebsocketConnection {
                 },
             });
         } catch {
-            // only reached once `shouldReconnect` went false mid-backoff (`retry` above)
+            // only reached once `shouldReconnect` went false, or this loop was superseded,
+            // mid-backoff (`retry` above)
         }
     }
 
     // One connection attempt: resolves once OPEN, rejects if it closes/errors first.
     // Once resolved, a later drop of this same socket no longer touches this promise --
     // `onclose` instead starts a brand new `_reconnectLoop`.
-    private _attemptOnce(): Promise<void> {
+    private _attemptOnce(gen: number): Promise<void> {
         if (!this.shouldReconnect) return Promise.reject(new Error('disconnected'));
+        if (gen !== this.generation) return Promise.reject(new Error('superseded'));
 
         return new Promise((resolve, reject) => {
             console.log(`connecting to '${this.address}'...`);
@@ -114,12 +164,23 @@ export class WebsocketConnection {
             let opened = false;
 
             socket.onopen = (event) => {
+                // a socket this loop opened after being superseded is surplus: closing it
+                // here is what keeps a kickstart from leaving two live connections
+                if (gen !== this.generation) {
+                    socket.close();
+                    reject(new Error('superseded'));
+                    return;
+                }
                 opened = true;
                 this._open(event);
                 resolve();
             };
             socket.onerror = () => { };
             socket.onclose = (event) => {
+                if (gen !== this.generation) {
+                    reject(new Error('superseded'));
+                    return;
+                }
                 this._clearHeartbeat();
                 if (!opened) {
                     reject(new Error(`connection closed before opening (code ${event.code})`));
@@ -140,6 +201,14 @@ export class WebsocketConnection {
         this.store.set(this.status, { type: 'connected' });
         this.store.set(this.lastSeen, new Date(event.timeStamp));
         this._scheduleHeartbeat();
+
+        const waiters = Array.from(this.openWaiters);
+        this.openWaiters.clear();
+        for (const waiter of waiters) {
+            clearTimeout(waiter.timer);
+            waiter.resolve();
+        }
+
         if (this.onOpen) {
             this.onOpen();
         }

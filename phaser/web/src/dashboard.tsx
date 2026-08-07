@@ -4,12 +4,15 @@ import { createRoot } from 'react-dom/client';
 import { Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
+import '@mantine/notifications/styles.css';
 import '@hexane/plotlib/styles.css';
-import { createTheme, MantineProvider } from '@mantine/core';
+import { MantineProvider } from '@mantine/core';
+import { Notifications } from '@mantine/notifications';
 import * as plotlib from '@hexane/plotlib';
 
 import './styles.css';
 import { PubSubProvider } from './pubsub';
+import { makeTheme, cssVariableResolver } from './theme';
 import { rootPrefix } from './utils';
 import { Dashboard } from './layout/Dashboard';
 
@@ -28,14 +31,11 @@ function App(props: {}) {
     </Provider>
 }
 
-const theme = createTheme({
-
-});
-
 const root = createRoot(document.getElementById('app')!);
 root.render(
     <StrictMode>
-        <MantineProvider theme={theme}>
+        <MantineProvider theme={makeTheme()} cssVariablesResolver={cssVariableResolver}>
+            <Notifications position="top-center"/>
             <plotlib.ThemeProvider>
                 <App/>
             </plotlib.ThemeProvider>

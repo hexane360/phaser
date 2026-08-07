@@ -1,13 +1,14 @@
 import React from 'react';
 import { useAtomValue } from 'jotai';
 
-import { Alert, Code, Collapse, Group, Text, UnstyledButton } from '@mantine/core';
+import { Alert, Button, Code, Collapse, Group, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 
 import { JobState } from '../types';
 import { fetchTraceback, jobHasFailure, jobStatus } from '../status';
 import { usePubSubView } from '../pubsub';
+import { usePostAction } from '../requests';
 import classes from './Layout.module.css';
 
 // The dashboard's own job. Both consumers below read this one topic; the pub/sub layer
@@ -28,6 +29,18 @@ export function JobStatusText() {
     return <Text size="lg" c="dimmed">
         {job.job_name ?? job.job_id} · <span style={{color: status.color}}>{status.label}</span>
     </Text>;
+}
+
+// Header slot: the manager list's cancel button, for the job this dashboard is watching.
+export function JobCancelButton() {
+    const job = useJobState();
+    const [cancel] = usePostAction("Couldn't cancel job");
+    if (!job) return null;
+
+    return <Button
+        variant="default" mod={{danger: true}}
+        onClick={() => cancel(job.links.cancel)}
+    >Cancel</Button>;
 }
 
 // Fixed chrome rather than a palette widget, deliberately: a widget can be absent from a

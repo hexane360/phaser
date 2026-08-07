@@ -8,6 +8,7 @@ import PhaserLogo from "../static/logo.svg";
 import { useDisclosure } from "@mantine/hooks";
 import { useAtomValue, PrimitiveAtom } from "jotai";
 import { ConnectionStatus } from "./connection";
+import { useGetAction } from "./requests";
 import { rootPrefix } from "./utils";
 
 
@@ -44,7 +45,7 @@ export default function Header({serverStatus, info, actions, size}: {
 
     return <Container size={size ?? "lg"} h="100%" style={{minWidth: "500px"}}>
         <Group justify="space-between" h="100%" wrap="nowrap">
-            <Group style={{height: "100%"}}>
+            <Group style={{height: "100%"}} wrap="nowrap">
                 <a style={{height: "95%"}} href={`${rootPrefix()}/`}>
                     <PhaserLogoText className="mantine-visible-from-sm" height="100%"/>
                     <PhaserLogo className="mantine-hidden-from-sm" height="100%"/>
@@ -82,18 +83,24 @@ export function About({opened, close}: {opened: boolean, close: () => void}) {
      - acknowledgments
      */
     const [version, setVersion] = React.useState<VersionInfo | null>(null);
+    // quiet: nothing was clicked, so this belongs in the modal rather than over the page
+    const [fetchVersion, , error] = useGetAction<VersionInfo>("Couldn't load version", {quiet: true});
 
+    // One attempt per opening: a failure leaves `version` null, so without the latch the
+    // effect would re-fire the moment `pending` cleared and retry forever. Reopening the
+    // modal is how you ask again.
+    const attempted = React.useRef(false);
     React.useEffect(() => {
-        if (!opened || version) return;
-        let cancelled = false;
-        fetch(`${rootPrefix()}/version`)
-            .then((resp) => resp.json())
-            .then((info: VersionInfo) => { if (!cancelled) setVersion(info); })
-            .catch((e) => console.error("Couldn't fetch version:", e));
-        return () => { cancelled = true; };
-    }, [opened, version]);
+        if (!opened) {
+            attempted.current = false;
+            return;
+        }
+        if (version || attempted.current) return;
+        attempted.current = true;
+        fetchVersion(`${rootPrefix()}/version`).then((info) => { if (info) setVersion(info); });
+    }, [opened, version, fetchVersion]);
 
     return <Modal opened={opened} onClose={close} title="About phaser">
-        <Text>{version ? versionText(version) : "\u00A0"}</Text>
+        <Text c={error ? "red" : undefined}>{version ? versionText(version) : error ?? "\u00A0"}</Text>
     </Modal>
 }

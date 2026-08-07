@@ -1,3 +1,5 @@
+/*! MIT License © Sindre Sorhus */
+
 /**
  * @license @tabler/icons-react v3.35.0 - MIT
  *

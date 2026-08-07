@@ -4,9 +4,10 @@ import { createRoot } from 'react-dom/client';
 import { atom, PrimitiveAtom, useAtomValue, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
-import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Modal, Tabs, Stack, Code, Progress, Text } from '@mantine/core';
+import '@mantine/notifications/styles.css';
+import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text } from '@mantine/core';
+import { Notifications } from '@mantine/notifications';
 import { useDisclosure } from '@mantine/hooks';
-import ky from 'ky';
 import TimeAgo from 'react-timeago';
 
 import './styles.css';
@@ -17,12 +18,20 @@ import { Section, Mono } from './components';
 import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePubSubView, ViewState } from './pubsub';
 import { ConnectionStatus } from './connection';
-import { handleRequest } from './requests';
+import { usePostAction } from './requests';
 import { rootPrefix } from './utils';
 
 
 export function Worker({state}: {state: WorkerState}) {
     const [opened, {toggle}] = useDisclosure(false);
+    const [reload] = usePostAction("Couldn't reload worker");
+    const [shutdown] = usePostAction("Couldn't shut down worker");
+
+    // the row card toggles on click, so a button press must not reach it
+    function signal(e: React.MouseEvent, run: (url: string) => void, link: string) {
+        e.stopPropagation();
+        run(state.links[link]);
+    }
 
     function procBackends(backends: Array<[string, string]>): string {
         // TODO: refactor
@@ -39,8 +48,8 @@ export function Worker({state}: {state: WorkerState}) {
             <div>{state.worker_type}</div>
             <div className="status">{state.status}</div>
             <Group justify='right'>
-                <Button variant="default" onClick={(e) => signal_worker(e, state, 'reload')}>Reload</Button>
-                <Button variant="default" mod={{danger: true}} onClick={(e) => signal_worker(e, state, 'shutdown')}>Shutdown</Button>
+                <Button variant="default" onClick={(e) => signal(e, reload, 'reload')}>Reload</Button>
+                <Button variant="default" mod={{danger: true}} onClick={(e) => signal(e, shutdown, 'shutdown')}>Shutdown</Button>
             </Group>
         </div>
         <Collapse className="card-body" expanded={opened}>
@@ -111,6 +120,7 @@ function JobFailure({state}: {state: JobState}) {
 
 export function Job({state}: {state: JobState}) {
     const [opened, {toggle}] = useDisclosure(false);
+    const [cancel] = usePostAction("Couldn't cancel job");
 
     const iter_state = state.state.iter;
     const status = jobStatus(state);
@@ -129,7 +139,10 @@ export function Job({state}: {state: JobState}) {
             </Group>
             <Group justify='right'>
                 <Button variant="default" component='a' href={state.links.dashboard}>Watch</Button>
-                <Button variant="default" mod={{danger: true}} onClick={(e) => cancel_job(state, e)}>Cancel</Button>
+                <Button variant="default" mod={{danger: true}} onClick={(e) => {
+                    e.stopPropagation();
+                    cancel(state.links.cancel);
+                }}>Cancel</Button>
             </Group>
         </div>
         <Collapse className="card-body" expanded={opened} keepMounted={false}>
@@ -162,25 +175,11 @@ export function Jobs({jobs}: {jobs: PrimitiveAtom<ViewState<Array<JobState>>>}) 
 }
 
 export function StartWorkers(props: {}) {
-    const [submitting, { open: setSubmitting, close: finishSubmitting }] = useDisclosure(false);
-    const [message, setMessage] = React.useState<[string, string] | null>(null);
+    const [start, pending] = usePostAction("Couldn't start worker");
 
-    function start_worker(worker_type: string): (e: React.MouseEvent) => void {
-        return async function(e: React.MouseEvent) {
-            setSubmitting();
-            const result = await handleRequest('submitting worker', () => ky(`worker/${worker_type}/start`, {
-                method: "post",
-                body: "",
-                timeout: 5000,
-            }));
-            if (result.type == 'error') {
-                setMessage(["Error submitting worker", result.msg]);
-            } else if (result.body.message) {
-                setMessage(["Allocated worker", result.body.message]);
-            }
-            finishSubmitting();
-        }
-    }
+    // an allocated worker announces itself on the `workers` topic, so there's nothing to
+    // report on success
+    const start_worker = (worker_type: string) => () => start(`worker/${worker_type}/start`);
 
     const panelStyle = {
         padding: "10px",
@@ -188,8 +187,7 @@ export function StartWorkers(props: {}) {
     };
 
     return <Box pos="relative" style={{maxWidth: "600px"}}>
-        <Modal opened={message !== null} onClose={() => setMessage(null)} title={message ? message[0] : ""}>{message ? message[1] : ""}</Modal>
-        <LoadingOverlay visible={submitting} zIndex={1000}/>
+        <LoadingOverlay visible={pending} zIndex={1000}/>
         <Tabs variant="pills" defaultValue="local">
             <Tabs.List>
                 <Tabs.Tab value="local">Local</Tabs.Tab>
@@ -222,26 +220,12 @@ export function StartWorkers(props: {}) {
 export function StartJobs(props: {}) {
     const pathRef: React.RefObject<HTMLInputElement | null> = React.useRef(null);
 
-    const [submitting, { open: setSubmitting, close: finishSubmitting }] = useDisclosure(false);
-    const [error, setError] = React.useState<string | null>(null);
+    const [submit, pending] = usePostAction("Couldn't submit job");
 
-    async function submit_job(e: React.MouseEvent) {
-        const path = pathRef.current!.value;
-        setSubmitting();
-        const result = await handleRequest('submitting job', () => ky("job/start", {
-            method: "post",
-            body: JSON.stringify({'source': 'path', path}),
-            timeout: 5000,
-        }));
-        if (result.type == 'error') {
-            setError(result.msg)
-        }
-        finishSubmitting();
-    }
+    const submit_job = () => submit("job/start", {source: 'path', path: pathRef.current!.value});
 
     return <Box pos="relative">
-        <Modal opened={!!error} onClose={() => setError(null)} title="Error submitting job">{error}</Modal>
-        <LoadingOverlay visible={submitting} zIndex={1000}/>
+        <LoadingOverlay visible={pending} zIndex={1000}/>
         <input name="path" type="text" size={50} ref={pathRef}/>
         <button type="submit" onClick={submit_job}>Submit</button>
     </Box>;
@@ -278,41 +262,12 @@ export function App(props: {}) {
     </Provider>;
 }
 
-function signal_worker(e: React.MouseEvent<HTMLElement>, worker: WorkerState, signal: string) {
-    e.stopPropagation();
-    fetch(worker.links[signal], {
-        method: "POST",
-        body: "",
-    })
-    .then((response) => response.ok ? response.json() : Promise.reject(response))
-    .then((json) => {
-        console.log(`Got response: ${JSON.stringify(json)}`);
-    })
-    .catch((response: Response) => {
-        console.error(`Error: HTTP ${response.status} ${response.statusText}`)
-    });
-};
-
-function cancel_job(job: JobState, e: React.MouseEvent) {
-    console.log(`cancelRecons: recons: ${JSON.stringify(job)}`);
-    fetch(job.links.cancel, {
-        method: "POST",
-        body: "",
-    })
-    .then((response) => response.ok ? response.json() : Promise.reject(response))
-    .then((json) => {
-        console.log(`Got response: ${JSON.stringify(json)}`);
-    })
-    .catch((response: Response) => {
-        console.error(`Error: HTTP ${response.status} ${response.statusText}`)
-    });
-};
-
 
 const root = createRoot(document.getElementById('app')!);
 root.render(
     <StrictMode>
         <MantineProvider theme={makeTheme()} cssVariablesResolver={cssVariableResolver}>
+            <Notifications position="top-center"/>
             <App/>
         </MantineProvider>
     </StrictMode>

@@ -6,6 +6,7 @@ import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
 import { LogRecord, LogsData } from '../types';
 import { usePubSubView } from '../pubsub';
+import { useGetAction } from '../requests';
 import { Mono } from '../components';
 import { ViewProps } from './types';
 import { formatElapsed } from '../utils';
@@ -100,7 +101,7 @@ export function LogsView(_props: ViewProps) {
     const state = usePubSubView<Array<LogRecord>>({view: 'logs'}, LOGS_OPTIONS);
     const store = useStore();
     const view = useAtomValue(state);
-    const fetching = React.useRef(false);
+    const [fetchOlderPage, fetching, fetchError] = useGetAction<LogsData>("Couldn't load older logs");
     // lowest `i` the server still retains, per the last response we saw
     const oldest = React.useRef(0);
 
@@ -148,23 +149,24 @@ export function LogsView(_props: ViewProps) {
     // scrolled to the top: page backwards from the oldest record held. Prepends into the
     // shared atom, so a second Log widget gets that history without refetching it.
     const fetchOlder = () => {
-        if (!hasBefore || fetching.current) return;
+        if (!hasBefore || fetching) return;
 
-        fetching.current = true;
-        getLogs({before: first, limit: PAGE})
-            .then((data) => {
-                oldest.current = data.oldest;
-                store.set(state, (cur) => ({
-                    status: 'ok', data: combine(cur.status === 'ok' ? cur.data : [], data.logs),
-                }));
-            })
-            .catch((e) => console.error("Couldn't fetch older logs:", e))
-            .finally(() => { fetching.current = false; });
+        fetchOlderPage(logsUrl({before: first, limit: PAGE})).then((data) => {
+            if (!data) return;
+            oldest.current = data.oldest;
+            store.set(state, (cur) => ({
+                status: 'ok', data: combine(cur.status === 'ok' ? cur.data : [], data.logs),
+            }));
+        });
     };
 
-    // marks the top of the list: either more history to load, or the start of the log
+    // marks the top of the list: either more history to load, or the start of the log. A
+    // failed page reports itself here as well as in a notification -- the spinner alone would
+    // just keep spinning.
     const Header = () => <div className="log-edge">
-        {hasBefore ? <Loader size="xs" type="dots"/> : <Text size="xs" c="dimmed">start of log</Text>}
+        {!hasBefore ? <Text size="xs" c="dimmed">start of log</Text>
+            : fetchError ? <Text size="xs" c="red">{fetchError}</Text>
+                : <Loader size="xs" type="dots"/>}
     </div>;
 
     // jumps to the tail and re-arms the latch, for when the log has been scrolled away from
@@ -212,12 +214,18 @@ interface LogQuery {
 
 // `document.URL` is the job dashboard's own URL, so this resolves to `.../job/<id>/logs`.
 // With no cursor, the endpoint returns the newest `limit` records.
-async function getLogs(query: LogQuery = {}): Promise<LogsData> {
+function logsUrl(query: LogQuery = {}): string {
     const params = new URLSearchParams();
     for (const [key, val] of Object.entries(query)) {
         if (val !== undefined) params.set(key, val.toString());
     }
-    const response = await fetch(document.URL + '/logs?' + params);
+    return document.URL + '/logs?' + params;
+}
+
+// Used by `hydrate`, which runs outside a component and reports through the view's own state.
+// Scrollback goes through `useGetAction` instead -- see `LogsView`.
+async function getLogs(query: LogQuery = {}): Promise<LogsData> {
+    const response = await fetch(logsUrl(query));
     if (!response.ok) {
         throw new Error(`Failed to fetch logs: ${response.status} ${response.statusText}`);
     }
