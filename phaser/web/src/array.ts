@@ -7,7 +7,8 @@
 // data to real-valued displays, and rendering them to canvas via a magma
 // colormap.
 
-import { interpolateMagma } from 'd3-scale-chromatic';
+import { rgb } from 'd3-color';
+import { interpolateMagma, interpolateSinebow } from 'd3-scale-chromatic';
 
 export type RealTypedArray = Float32Array | Float64Array;
 
@@ -116,6 +117,18 @@ export function amplitude(arr: DecodedArray): DecodedArray {
     return { data: out, shape: arr.shape, complex: false };
 }
 
+// arg(x), elementwise, in [-pi, pi].
+export function angle(arr: DecodedArray): DecodedArray {
+    if (!arr.complex) throw new Error("'angle' requires complex input");
+    const n = arr.data.length / 2;
+    const out = zerosLike(arr.data, n);
+    const buf = arr.data;
+    for (let i = 0; i < n; i++) {
+        out[i] = Math.atan2(buf[2 * i + 1], buf[2 * i]);
+    }
+    return { data: out, shape: arr.shape, complex: false };
+}
+
 // |x|^2, elementwise, over an entire complex array (e.g. the full probe mode stack).
 export function abs2(arr: DecodedArray): DecodedArray {
     if (!arr.complex) throw new Error("'abs2' requires complex input");
@@ -131,15 +144,15 @@ export function abs2(arr: DecodedArray): DecodedArray {
 
 // Zero-copy split along axis 0 (e.g. probe mode stack -> one 2D array per mode).
 export function splitAxis0(arr: DecodedArray): DecodedArray[] {
-    if (arr.complex) throw new Error("'splitAxis0' does not support complex input");
     const [n, ...rest] = arr.shape;
-    const planeSize = rest.reduce((a, b) => a * b, 1);
+    // a complex plane occupies two buffer elements per array element
+    const planeSize = rest.reduce((a, b) => a * b, 1) * (arr.complex ? 2 : 1);
     const out: DecodedArray[] = [];
     for (let i = 0; i < n; i++) {
         out.push({
             data: arr.data.subarray(i * planeSize, (i + 1) * planeSize) as RealTypedArray,
             shape: rest,
-            complex: false,
+            complex: arr.complex,
         });
     }
     return out;
@@ -180,38 +193,40 @@ export function minmaxNaN(data: RealTypedArray, bounds?: CropBounds): [number, n
     return [mn, mx];
 }
 
-const MAGMA_LUT_SIZE = 256;
-let _magmaLut: Uint8ClampedArray | null = null;
+const LUT_SIZE = 256;
+const _luts: Map<(t: number) => string, Uint8ClampedArray> = new Map();
 
-// Precomputes a colormap lookup table from `interpolateMagma` (already a
-// dependency, used for the colorbar/legend gradient) once, so the hot
-// per-pixel canvas render never parses a CSS color string. This also
+// Precomputes a colormap lookup table from a d3 interpolator (already a
+// dependency, used for the colorbar/legend gradient) once per colormap, so the
+// hot per-pixel canvas render never parses a CSS color string. This also
 // guarantees the raster and the colorbar legend render identical colors,
 // since both derive from the same source.
-function magmaLut(): Uint8ClampedArray {
-    if (_magmaLut) return _magmaLut;
+function colorLut(interpolate: (t: number) => string): Uint8ClampedArray {
+    const cached = _luts.get(interpolate);
+    if (cached) return cached;
 
-    const lut = new Uint8ClampedArray(MAGMA_LUT_SIZE * 4);
-    for (let i = 0; i < MAGMA_LUT_SIZE; i++) {
-        const hex = interpolateMagma(i / (MAGMA_LUT_SIZE - 1)); // "#rrggbb"
-        const v = parseInt(hex.slice(1), 16);
-        lut[4 * i] = (v >> 16) & 0xff;
-        lut[4 * i + 1] = (v >> 8) & 0xff;
-        lut[4 * i + 2] = v & 0xff;
-        lut[4 * i + 3] = 255;
+    const lut = new Uint8ClampedArray(LUT_SIZE * 4);
+    for (let i = 0; i < LUT_SIZE; i++) {
+        // interpolators differ in the string they return -- the ramp-based maps (magma)
+        // '#rrggbb', the analytic ones (sinebow) 'rgb(r, g, b)'
+        const c = rgb(interpolate(i / (LUT_SIZE - 1)));
+        lut[4 * i] = c.r; lut[4 * i + 1] = c.g; lut[4 * i + 2] = c.b; lut[4 * i + 3] = 255 * c.opacity;
     }
-    _magmaLut = lut;
-    return _magmaLut;
+    _luts.set(interpolate, lut);
+    return lut;
 }
 
-// Normalizes `data` into [vmin, vmax], maps through the magma LUT (clamping
+// Normalizes `data` into [vmin, vmax], maps through the colormap LUT (clamping
 // out-of-range values to the endpoint colors), and writes RGBA bytes
 // directly into `imageData.data`. NaN pixels render fully transparent,
 // matching wasm-array's `apply_cmap` default invalid color ([0,0,0,0]).
-export function applyMagmaInto(imageData: ImageData, data: RealTypedArray, vmin: number, vmax: number): void {
-    const lut = magmaLut();
+export function applyLutInto(
+    imageData: ImageData, data: RealTypedArray, vmin: number, vmax: number,
+    interpolate: (t: number) => string,
+): void {
+    const lut = colorLut(interpolate);
     const out = imageData.data;
-    const scale = (MAGMA_LUT_SIZE - 1) / (vmax - vmin);
+    const scale = (LUT_SIZE - 1) / (vmax - vmin);
 
     for (let i = 0; i < data.length; i++) {
         const v = data[i];
@@ -221,8 +236,44 @@ export function applyMagmaInto(imageData: ImageData, data: RealTypedArray, vmin:
             continue;
         }
         let t = (v - vmin) * scale;
-        if (t < 0) t = 0; else if (t > MAGMA_LUT_SIZE - 1) t = MAGMA_LUT_SIZE - 1;
+        if (t < 0) t = 0; else if (t > LUT_SIZE - 1) t = LUT_SIZE - 1;
         const idx = t | 0;
-        out[o] = lut[4 * idx]; out[o + 1] = lut[4 * idx + 1]; out[o + 2] = lut[4 * idx + 2]; out[o + 3] = 255;
+        out[o] = lut[4 * idx]; out[o + 1] = lut[4 * idx + 1];
+        out[o + 2] = lut[4 * idx + 2]; out[o + 3] = lut[4 * idx + 3];
+    }
+}
+
+export const applyMagmaInto = (imageData: ImageData, data: RealTypedArray, vmin: number, vmax: number) =>
+    applyLutInto(imageData, data, vmin, vmax, interpolateMagma);
+
+// cyclic, for phase in [-pi, pi]
+export const applySinebowInto = (imageData: ImageData, data: RealTypedArray, vmin: number, vmax: number) =>
+    applyLutInto(imageData, data, vmin, vmax, interpolateSinebow);
+
+// Complex-domain coloring: hue from arg(x) through the cyclic sinebow map, brightness
+// from |x| normalized to `vmax`. The `colorize_complex` of `phaser/utils/image.py`,
+// with sinebow in place of HSV. NaN pixels render fully transparent, as in `applyLutInto`.
+export function colorizeComplexInto(imageData: ImageData, arr: DecodedArray, vmax: number): void {
+    if (!arr.complex) throw new Error("'colorizeComplexInto' requires complex input");
+    const lut = colorLut(interpolateSinebow);
+    const out = imageData.data;
+    const buf = arr.data;
+    const n = buf.length / 2;
+
+    for (let i = 0; i < n; i++) {
+        const re = buf[2 * i], im = buf[2 * i + 1];
+        const o = i * 4;
+        if (Number.isNaN(re) || Number.isNaN(im)) {
+            out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+            continue;
+        }
+        let v = Math.sqrt(re * re + im * im) / vmax;
+        if (v < 0) v = 0; else if (v > 1) v = 1;
+
+        let t = (Math.atan2(im, re) / (2 * Math.PI) + 0.5) * (LUT_SIZE - 1);
+        if (t < 0) t = 0; else if (t > LUT_SIZE - 1) t = LUT_SIZE - 1;
+        const idx = t | 0;
+        out[o] = lut[4 * idx] * v; out[o + 1] = lut[4 * idx + 1] * v; out[o + 2] = lut[4 * idx + 2] * v;
+        out[o + 3] = lut[4 * idx + 3];
     }
 }

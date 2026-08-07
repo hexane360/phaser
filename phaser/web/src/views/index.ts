@@ -8,7 +8,7 @@ export type { View, ViewProps, ViewParams } from './types';
 
 // Registry keys are persisted in the stored layout; renaming one orphans existing widgets
 // (`parseLayout` drops them).
-export const VIEWS: Map<string, View> = new Map(([
+export const VIEWS: Map<string, View> = new Map((<Array<View>>[
     {
         key: 'progress',
         name: 'Progress',
@@ -49,8 +49,9 @@ export const VIEWS: Map<string, View> = new Map(([
     {
         key: 'probes',
         name: 'Probe modes',
-        description: 'Complex plot of each probe mode',
+        description: 'Phase/amplitude plot of each probe mode',
         Component: ProbeModesView,
+        defaultParams: {mode: 'phaseAmp'},
         topicLabel: () => 'probes',
     },
     {
@@ -60,4 +61,4 @@ export const VIEWS: Map<string, View> = new Map(([
         Component: LogsView,
         topicLabel: () => 'logs',
     },
-] satisfies Array<View>).map((view) => [view.key, view]));
+]).map((view) => [view.key, view]));
