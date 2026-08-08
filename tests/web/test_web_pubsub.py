@@ -328,15 +328,20 @@ def test_resolve_and_job_wiring():
 
                 session = Session(default_topic={'job': job.id})
                 await session.subscribe({'view': 'obj_phase_sum'})
+                await session.subscribe({'view': 'obj_meta'})
                 assert session.mailbox.pending == {}  # no snapshot yet: 'object' dep not populated
 
                 await job.handle_update(FakeMsg())  # type: ignore
 
-                items = await session.mailbox.drain()
-                assert len(items) == 1
-                assert items[0].topic == {'view': 'obj_phase_sum'}  # echoed in abbreviated client form
-                out = decode_obj(t.cast(TopicUpdate, items[0]).data)
-                numpy.testing.assert_allclose(out['data'], numpy.pi / 2, atol=1e-5)
+                # a meta topic and its bulk topic share the 'object' dep, so one
+                # `publish_dirty` recomputes both and they drain in a single batch -- which
+                # is what lets the client treat them as one consistent value
+                drained = [t.cast(TopicUpdate, item) for item in await session.mailbox.drain()]
+                items = {item.topic['view']: item for item in drained}
+                assert set(items) == {'obj_phase_sum', 'obj_meta'}
+
+                numpy.testing.assert_allclose(decode_obj(items['obj_phase_sum'].data), numpy.pi / 2, atol=1e-5)
+                assert items['obj_meta'].data == {'sampling': sampling, 'n_slices': 2, 'thicknesses': [1.0, 1.0]}
 
                 jobs_session = Session()
                 await jobs_session.subscribe('jobs')

@@ -11,6 +11,7 @@ import { atom, PrimitiveAtom, useStore, createStore } from 'jotai';
 import { Topic, ClientMessage, ServerMessage, canonicalTopic } from './types';
 import { decodeState } from './array';
 import { WebsocketConnection, ConnectionStatus } from './connection';
+import { ConnectionModal } from './notify';
 
 type Store = ReturnType<typeof createStore>;
 
@@ -278,7 +279,11 @@ export function PubSubProvider({ address, children }: React.PropsWithChildren<Pu
         };
     }, [address, store]);
 
-    return <PubSubContext.Provider value={conn}>{children}</PubSubContext.Provider>;
+    // rendered here so every page with a connection reports a lost one, without opting in
+    return <PubSubContext.Provider value={conn}>
+        {conn && <ConnectionModal status={conn.status}/>}
+        {children}
+    </PubSubContext.Provider>;
 }
 
 export function usePubSubConnection(): PubSubConnection | null {
