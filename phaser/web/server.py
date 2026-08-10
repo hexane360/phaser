@@ -153,9 +153,8 @@ class Worker(abc.ABC):
             return SignalResponse(action)
 
         if msg.msg in ('poll', 'job_result'):
-            if len(server.job_queue):
+            if (job := server.take_queued_job()) is not None:
                 # send a new job if available
-                job = server.job_queue.popleft()
                 self.current_job = weakref.ref(job)
                 await self.set_status('running')
                 job.start_time = datetime.datetime.now(datetime.timezone.utc)
@@ -665,6 +664,9 @@ class Server:
         self.jobs: Jobs = Jobs()
         self.job_queue: deque[Job] = deque()
 
+        self.file_root: Path = Path.cwd().resolve()
+        """Root for path completion. Resolved, so a symlinked cwd compares correctly."""
+
         @self.app.after_serving
         async def shutdown():
             logging.info("Shutting down...")
@@ -680,6 +682,34 @@ class Server:
                 logging.warning("Cleanup didn't finish in time")
             finally:
                 self.compute_pool.shutdown(wait=False, cancel_futures=True)
+
+    def take_queued_job(self) -> t.Optional[Job]:
+        """The next job actually waiting to run, discarding any that no longer are.
+
+        `Job.cancel` and `Job.delete` only move a job's status -- a queued job stays in the
+        deque -- so a job is checked when it comes out, not when it stops being wanted.
+        """
+        while self.job_queue:
+            job = self.job_queue.popleft()
+            if job.status == 'queued' and job.id in self.jobs:
+                return job
+        return None
+
+    def resolve_in_root(self, path: str) -> t.Optional[Path]:
+        """`path`, relative to the file root or absolute, or None if it escapes the root.
+
+        Normalized lexically rather than resolved, so a symlinked directory under the root
+        can be traversed. `..` is still collapsed textually, and the caller must use the
+        path returned here -- listing the un-normalized spelling would follow a symlink
+        first and land outside the root.
+        """
+        full = Path(os.path.normpath(self.file_root / Path(path).expanduser()))
+        if full.is_relative_to(self.file_root):
+            return full
+        # a root reached through a symlink (a cwd of `/tmp/x`, really `/private/tmp/x`)
+        # fails the lexical test for a path spelled the other way
+        resolved = full.resolve()
+        return resolved if resolved.is_relative_to(self.file_root) else None
 
     def get_worker_url(self, worker_id: WorkerID) -> str:
         assert self.host is not None

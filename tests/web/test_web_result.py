@@ -6,7 +6,15 @@ import typing as t
 import pytest
 
 from phaser.web.server import Job, Worker, _exc_summary, server
-from phaser.web.types import RELOAD_EXIT_CODE, JobResultMessage, JobStartMessage, WorkerShutdownMessage
+from phaser.web.types import (
+    RELOAD_EXIT_CODE,
+    JobResponse,
+    JobResultMessage,
+    JobStartMessage,
+    OkResponse,
+    PollMessage,
+    WorkerShutdownMessage,
+)
 from phaser.web.views import VIEWS
 from phaser.web.worker import failure_log
 
@@ -247,6 +255,70 @@ def test_shutdown_message_traceback_reaches_the_job():
     assert job.result == 'interrupted'
     assert job.error_summary == "ValueError: negative dimension in object sampling"
     assert job.logs.page(min_level=logging.ERROR).logs[0].stack_info == TRACEBACK
+
+
+# --- what a worker is allowed to be handed ---------------------------------------------
+
+def poll(worker: 'FakeWorker') -> t.Any:
+    """A fresh worker's poll for work, driven the way the real one arrives."""
+    return asyncio.run(worker.handle_message(PollMessage()))
+
+
+def queued_jobs(*job_ids: str) -> t.List[Job]:
+    """`job_ids` registered and queued against a clean `server`, in order."""
+    from collections import deque
+
+    from phaser.web.server import Jobs
+
+    async def run():
+        server.jobs = Jobs()  # `server` is a process-wide singleton; don't inherit its state
+        server.job_queue = deque()
+        jobs = [make_job(job_id) for job_id in job_ids]
+        for job in jobs:
+            await server.jobs.add(job)
+        return jobs
+
+    return asyncio.run(run())
+
+
+def test_cancelled_job_is_not_handed_to_a_worker():
+    # cancelling only moved the status; the job stayed in `server.job_queue` and the next
+    # poll ran it anyway, putting a job the user stopped back to 'starting'
+    (job,) = queued_jobs('cancelled-queued-job')
+    asyncio.run(job.cancel())
+    assert job.status == 'stopped'
+
+    response = poll(FakeWorker('w-poll'))
+
+    assert isinstance(response, OkResponse)
+    assert job.status == 'stopped'
+    assert len(server.job_queue) == 0
+
+
+def test_deleted_job_is_skipped_but_the_one_behind_it_still_runs():
+    # a deleted job left the queue holding a job no longer in `server.jobs`, which the
+    # worker would then report against -- a `KeyError` in `Worker.handle_message`
+    deleted, live = queued_jobs('deleted-queued-job', 'live-queued-job')
+    asyncio.run(deleted.delete())
+    assert deleted.id not in server.jobs
+
+    worker = FakeWorker('w-poll')
+    response = poll(worker)
+
+    assert isinstance(response, JobResponse)
+    assert response.job_id == live.id
+    assert live.status == 'starting'
+    assert worker.status == 'running'
+
+
+def test_worker_goes_idle_when_every_queued_job_is_dead():
+    (job,) = queued_jobs('only-cancelled-job')
+    asyncio.run(job.cancel())
+
+    worker = FakeWorker('w-poll')
+    assert isinstance(poll(worker), OkResponse)
+    assert worker.status == 'idle'
+    assert worker.current_job is None
 
 
 def test_reload_exit_code_matches_what_the_worker_exits_with():

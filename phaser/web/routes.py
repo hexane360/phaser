@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import typing as t
+from pathlib import Path
 
 from markupsafe import Markup, escape
 from quart import Quart, Response, abort, render_template, request, websocket
@@ -90,6 +92,43 @@ async def index():
 async def version():
     return json_response(version_info())
 
+# Entries of a single directory, for path completion in the manager. Names only: the client
+# re-prefixes them with whatever it typed, so an absolute and a relative spelling of the same
+# directory both complete without the server having to echo one back.
+MAX_LS_ENTRIES = 500
+
+def _ls_dir(dir: Path) -> t.List[str]:
+    entries: t.List[str] = []
+    try:
+        with os.scandir(dir) as it:
+            for entry in it:
+                if entry.name.startswith('.'):
+                    continue
+                try:
+                    if entry.is_dir():
+                        entries.append(f"{entry.name}/")
+                    elif entry.name.endswith(('.yaml', '.yml')):
+                        entries.append(entry.name)
+                except OSError:
+                    # a broken symlink, or something we can't stat
+                    continue
+    except OSError:
+        # missing, not a directory, or unreadable -- the usual state mid-word
+        return []
+
+    # directories first, so completing a tree doesn't mean hunting through the files
+    entries.sort(key=lambda name: (not name.endswith('/'), name.lower()))
+    return entries[:MAX_LS_ENTRIES]
+
+@app.get("/ls_path")
+async def ls_path():
+    dir = server.resolve_in_root(request.args.get('path', ''))
+    if dir is None:
+        abort(json_response({'result': 'error', 'msg': "Path is outside the server root"}, status=403))
+
+    # `os.scandir` can block on a network mount, and this sits on the request path
+    return json_response({'entries': await run_sync(_ls_dir)(dir)})
+
 @app.post("/shutdown")
 async def shutdown():
     async def shutdown():
@@ -140,8 +179,9 @@ async def start_job():
     source = d['source']
 
     if source == 'path':
+        path = server.file_root / Path(d['path']).expanduser()
         try:
-            jobs = await Job.from_path(d['path'])
+            jobs = await Job.from_path(path)
         except ValidationError as e:
             abort(json_response({'result': 'error', 'msg': e.msg}, status=400))
     elif source == 'yaml':

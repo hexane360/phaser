@@ -5,9 +5,12 @@ import { atom, PrimitiveAtom, useAtomValue, Provider, useStore } from 'jotai';
 
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
-import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text } from '@mantine/core';
+import '@mantine/dropzone/styles.css';
+import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text, ActionIcon, Autocomplete, Modal } from '@mantine/core';
+import { Dropzone, FileRejection } from '@mantine/dropzone';
 import { Notifications } from '@mantine/notifications';
-import { useDisclosure } from '@mantine/hooks';
+import { IconUpload, IconFileText, IconX } from '@tabler/icons-react';
+import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import TimeAgo from 'react-timeago';
 
 import './styles.css';
@@ -18,7 +21,8 @@ import { Section, Mono } from './components';
 import Header from './header';
 import { PubSubProvider, usePubSubConnection, usePubSubView, ViewState } from './pubsub';
 import { ConnectionStatus } from './connection';
-import { usePostAction } from './requests';
+import { useGetAction, usePostAction } from './requests';
+import { reportError } from './notify';
 import { rootPrefix } from './utils';
 
 
@@ -217,17 +221,228 @@ export function StartWorkers(props: {}) {
     </Box>
 }
 
-export function StartJobs(props: {}) {
-    const pathRef: React.RefObject<HTMLInputElement | null> = React.useRef(null);
+// A dropped file and what became of it. Ids come from a counter rather than the name, so a
+// row stays addressable while others are removed and the same file can be dropped twice.
+interface UploadedFile {
+    id: number
+    file: File
+    status: 'submitting' | 'submitted' | 'failed'
+}
 
-    const [submit, pending] = usePostAction("Couldn't submit job");
+let next_upload_id = 0;
 
-    const submit_job = () => submit("job/start", {source: 'path', path: pathRef.current!.value});
+const MAX_PLAN_BYTES = 5 * 1024 * 1024;
+const PLAN_INPUT_PROPS = {accept: '.yaml,.yml,text/yaml,text/json'};
+
+// A job submitted with no worker to run it just sits in the queue, which looks exactly like
+// a stuck one. Returns `[check, modal]`: call `check` once a job is queued, and render the
+// modal. Both tabs share a single instance, mounted by `StartJobs`.
+function useWorkerPrompt(): [() => void, React.ReactNode] {
+    const workers = usePubSubView<Array<WorkerState>>('workers');
+    const state = useAtomValue(workers);
+    const [opened, {open, close}] = useDisclosure(false);
+    const [start, pending] = usePostAction("Couldn't start worker");
+
+    // a stopped worker will never take the job; anything else either is running or is on
+    // its way to running
+    const available = state.status === 'ok' && state.data.some((w) => w.status !== 'stopped');
+
+    const start_worker = async () => {
+        // the new worker announces itself on the `workers` topic, so closing is all that's left
+        await start("worker/local/start");
+        close();
+    };
+
+    const modal = <Modal opened={opened} onClose={close} title="No workers running" centered>
+        <Text size="sm">
+            The job is queued, but no workers are currently running.
+            Start a local worker?
+        </Text>
+        <Group justify="right" mt="md">
+            <Button variant="default" onClick={close}>Not now</Button>
+            <Button onClick={start_worker} loading={pending}>Start local worker</Button>
+        </Group>
+    </Modal>;
+
+    return [() => { if (!available) open(); }, modal];
+}
+
+const MAX_COMPLETIONS = 50;
+
+// The directory part of a typed path, i.e. everything through the last separator. `''` is the
+// server's root.
+function dirOf(path: string): string {
+    return path.slice(0, path.lastIndexOf('/') + 1);
+}
+
+function SubmitPath({onQueued}: {onQueued: () => void}) {
+    // survives a reload: the same plan usually gets submitted several times in a sitting
+    const [path, setPath] = useLocalStorage({
+        key: 'phaser.manager.path', defaultValue: "", getInitialValueInEffect: false,
+    });
+    const [entries, setEntries] = React.useState<Array<string>>([]);
+    const [submit, pending] = usePostAction("Couldn't submit job", {block: true});
+    // quiet: a completion nobody asked for shouldn't raise a toast when it fails
+    const [ls] = useGetAction<{entries: Array<string>}>("Couldn't list directory", {quiet: true});
+
+    const dir = dirOf(path);
+
+    // Keyed on the directory rather than the path, so typing within a segment costs nothing
+    // and only crossing a `/` fetches. The server restricts what it will list to its root;
+    // a path typed past that simply completes to nothing.
+    //
+    // Nothing is remembered beyond the directory in the field. Someone retyping a path has
+    // usually just changed what's on disk, and a stale listing is worse than a re-fetch.
+    React.useEffect(() => {
+        // cleared first: options are built by prefixing these names with `dir`, so entries
+        // held over from the previous directory would render as plausible-looking paths
+        // under the new one -- including when the new one is refused as outside the root
+        setEntries([]);
+
+        let live = true;
+        ls(`ls_path?path=${encodeURIComponent(dir)}`).then((result) => {
+            if (result && live) setEntries(result.entries);
+        });
+        return () => { live = false; };
+    }, [dir, ls]);
+
+    // Full paths in the field's own spelling, which is what makes Mantine's default filter
+    // (label contains the search string) the right one -- the typed value is always a prefix.
+    // A directory keeps its trailing `/`, so picking one is itself the trigger to list it.
+    const options = React.useMemo(() => entries.map((entry) => dir + entry), [dir, entries]);
+
+    // a started job announces itself on the `jobs` topic, so there's nothing to report on success
+    const submit_job = async () => {
+        if (await submit("job/start", {source: 'path', path})) onQueued();
+    };
+
+    // Enter submits, except while the dropdown has an option highlighted -- that keypress
+    // belongs to the completion. Mantine publishes exactly that state as `aria-activedescendant`
+    // on the input, and this handler runs before the combobox's own, so the attribute is the
+    // only thing available to tell the two cases apart.
+    const key_down = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+        if (e.currentTarget.getAttribute('aria-activedescendant')) return;
+        submit_job();
+    };
 
     return <Box pos="relative">
         <LoadingOverlay visible={pending} zIndex={1000}/>
-        <input name="path" type="text" size={50} ref={pathRef}/>
-        <button type="submit" onClick={submit_job}>Submit</button>
+        <Stack>
+            <div>Runs a plan from a file on the server's filesystem</div>
+            <Group align="flex-start">
+                <Autocomplete
+                    name="path" value={path} onChange={setPath} data={options}
+                    onKeyDown={key_down} limit={MAX_COMPLETIONS} w={400}
+                    placeholder="path/to/plan.yaml"
+                />
+                <button type="submit" onClick={submit_job}>Submit</button>
+            </Group>
+        </Stack>
+    </Box>;
+}
+
+function SubmitUpload({onQueued}: {onQueued: () => void}) {
+    const [uploads, setUploads] = React.useState<Array<UploadedFile>>([]);
+    // no overlay: a drop submits immediately, and the per-row status is the progress display
+    const [submit] = usePostAction("Couldn't submit job", {block: true});
+
+    const setStatus = (id: number, status: UploadedFile['status']) =>
+        setUploads((s) => s.map((f) => f.id === id ? {...f, status} : f));
+
+    // Dropping submits. Each plan is its own job, posted one at a time so a failure in one
+    // doesn't stop the rest; the row carries the outcome, since the error toast names the
+    // action rather than the file.
+    const drop = async (files: Array<File>) => {
+        const added = files.map((file): UploadedFile => ({id: next_upload_id++, file, status: 'submitting'}));
+        setUploads((s) => [...s, ...added]);
+
+        let queued = false;
+        for (const {id, file} of added) {
+            const result = await submit("job/start", {source: 'yaml', data: await file.text()});
+            setStatus(id, result ? 'submitted' : 'failed');
+            queued ||= !!result;
+        }
+        // once for the batch, not once per file
+        if (queued) onQueued();
+    };
+
+    const reject = (rejections: Array<FileRejection>) => {
+        for (const {file, errors} of rejections)
+            reportError("Couldn't accept file", `${file.name}: ${errors.map((e) => e.message).join(', ')}`);
+    };
+
+    const retry = async ({id, file}: UploadedFile) => {
+        setStatus(id, 'submitting');
+        const result = await submit("job/start", {source: 'yaml', data: await file.text()});
+        setStatus(id, result ? 'submitted' : 'failed');
+    };
+
+    const status_of = (upload: UploadedFile) => {
+        switch (upload.status) {
+        case 'submitting':
+            return <Text size="sm" c="dimmed">submitting…</Text>;
+        case 'submitted':
+            return <Text size="sm" c="green">submitted</Text>;
+        case 'failed':
+            return <Group gap="xs">
+                <Text size="sm" c="red">failed</Text>
+                <Button size="compact-xs" variant="default" onClick={() => retry(upload)}>Retry</Button>
+            </Group>;
+        }
+    };
+
+    return <Stack>
+        <Dropzone
+            onDrop={drop} onReject={reject} maxSize={MAX_PLAN_BYTES}
+            inputProps={PLAN_INPUT_PROPS} activateOnClick
+        >
+            <Group justify="center" gap="lg" mih={100} style={{pointerEvents: 'none'}}>
+                <Dropzone.Accept><IconUpload size={40}/></Dropzone.Accept>
+                <Dropzone.Reject><IconX size={40}/></Dropzone.Reject>
+                <Dropzone.Idle><IconFileText size={40}/></Dropzone.Idle>
+                <Stack gap={0}>
+                    <Text size="lg">Drop reconstruction plans here</Text>
+                    <Text size="sm" c="dimmed">or click to browse.</Text>
+                </Stack>
+            </Group>
+        </Dropzone>
+        {uploads.length > 0 && <Stack gap="xs">
+            {...uploads.map((upload) =>
+                <Group key={upload.id} justify="space-between">
+                    <Group gap="xs">
+                        <Mono>{upload.file.name}</Mono>
+                        <Text size="sm" c="dimmed">{(upload.file.size / 1024).toFixed(1)} kB</Text>
+                        {status_of(upload)}
+                    </Group>
+                    <ActionIcon
+                        variant="subtle" onClick={() => setUploads((s) => s.filter((f) => f.id !== upload.id))}
+                    ><IconX size={16}/></ActionIcon>
+                </Group>
+            )}
+            <Group><Button variant="default" onClick={() => setUploads([])}>Clear</Button></Group>
+        </Stack>}
+    </Stack>;
+}
+
+export function StartJobs(props: {}) {
+    const [checkWorkers, workerModal] = useWorkerPrompt();
+
+    const panelStyle = {
+        padding: "10px",
+        minHeight: "100px",
+    };
+
+    return <Box style={{maxWidth: "600px"}}>
+        {workerModal}
+        <Tabs variant="pills" defaultValue="upload">
+            <Tabs.List>
+                <Tabs.Tab value="upload">Upload</Tabs.Tab>
+                <Tabs.Tab value="path">Server path</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="upload" style={panelStyle}><SubmitUpload onQueued={checkWorkers}/></Tabs.Panel>
+            <Tabs.Panel value="path" style={panelStyle}><SubmitPath onQueued={checkWorkers}/></Tabs.Panel>
+        </Tabs>
     </Box>;
 }
 

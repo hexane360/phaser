@@ -1,20 +1,34 @@
 import React from 'react';
 import { PrimitiveAtom, useAtomValue } from 'jotai';
 
-import { Button, Group, Modal, Text } from '@mantine/core';
+import { Button, Code, Group, Modal, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 
 import { ConnectionStatus } from './connection';
 
 const AUTO_CLOSE_MS = 8_000;
+// A block error is there to be read, not glanced at
+const BLOCK_AUTO_CLOSE_MS = 30_000;
 // How long the socket must stay down before the modal appears. Reconnects are usually far
 // quicker than this, and a blocking dialog for a blip nobody noticed is worse than the blip.
 const DISCONNECT_GRACE_MS = 5_000;
 
+export interface ReportOptions {
+    // Renders the message as a monospace block, keeping its line structure. For errors the
+    // server composes across several lines -- a plan validation report -- which collapse into
+    // an unreadable paragraph otherwise.
+    block?: boolean;
+}
+
 // Shows a failure as a red notification. `message` comes from `errorMessage` (`requests.tsx`).
-export function reportError(title: string, message: string): void {
+export function reportError(title: string, message: string, {block}: ReportOptions = {}): void {
     console.error(`${title}: ${message}`);
-    notifications.show({color: 'red', title, message, autoClose: AUTO_CLOSE_MS});
+    notifications.show({
+        color: 'red', title, autoClose: block ? BLOCK_AUTO_CLOSE_MS : AUTO_CLOSE_MS,
+        message: block
+            ? <Code block style={{whiteSpace: 'pre-wrap', maxHeight: '20em', overflow: 'auto'}}>{message}</Code>
+            : message,
+    });
 }
 
 // A page whose socket is down is *silently* stale: every view keeps rendering its last value

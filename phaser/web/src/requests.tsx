@@ -7,11 +7,11 @@ import ky, { HTTPError, TimeoutError } from 'ky';
 
 import { NotConnectedError } from './connection';
 import { usePubSubConnection } from './pubsub';
-import { reportError } from './notify';
+import { reportError, ReportOptions } from './notify';
 
 const REQUEST_TIMEOUT_MS = 5_000;
 
-export interface ActionOptions {
+export interface ActionOptions extends ReportOptions {
     // Suppresses the notification, leaving only the returned `error`. For a fetch the user
     // didn't ask for, where a toast would be noise.
     quiet?: boolean;
@@ -54,7 +54,7 @@ async function parse(response: Response): Promise<any> {
 // `run` is re-read through a ref rather than captured, so the returned callback stays stable
 // across renders even though every caller passes a fresh closure.
 function useAction<A extends Array<any>, T>(
-    title: string, {quiet}: ActionOptions, run: (...args: A) => Promise<T>,
+    title: string, {quiet, block}: ActionOptions, run: (...args: A) => Promise<T>,
 ): Action<A, T> {
     const [pending, setPending] = React.useState(0);
     const [error, setError] = React.useState<string | null>(null);
@@ -71,12 +71,12 @@ function useAction<A extends Array<any>, T>(
             const msg = await errorMessage(e);
             setError(msg);
             if (quiet) console.error(`${title}:`, e);
-            else reportError(title, msg);
+            else reportError(title, msg, {block});
             return null;
         } finally {
             setPending((n) => n - 1);
         }
-    }, [title, quiet]);
+    }, [title, quiet, block]);
 
     return [call, pending > 0, error];
 }
