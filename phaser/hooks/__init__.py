@@ -161,10 +161,22 @@ class CustomTiltProps(Dataclass):
     """Path to .npy file containing tilt array matching the size of the scan"""
 
 
+class TiltsFileProps(Dataclass):
+    path: Path
+    """Path to .tilts HDF5 file, containing 'scan/tilt_x' and 'scan/tilt_y' datasets [mrad]"""
+    scale: float = 1.0
+    """Scale factor applied to the loaded tilts. Tilt maps measured from diffraction shifts
+    are often only relative; use this to calibrate or flip their sign."""
+    flips: t.Optional[t.Tuple[bool, bool, bool]] = None
+    """Flips `(flip_y, flip_x, transpose)` applied to the tilt map, to match the scan orientation.
+    Flips rearrange the map spatially; they don't change the tilt values themselves."""
+
+
 class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):
     known = {
         'global': ('phaser.hooks.tilt:generate_global_tilt', GlobalTiltProps),
         'custom': ('phaser.hooks.tilt:load_custom_tilt', CustomTiltProps),
+        'tilts': ('phaser.hooks.tilt:load_tilts_file', TiltsFileProps),
     }
 
 
