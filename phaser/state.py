@@ -15,7 +15,7 @@ if t.TYPE_CHECKING:
 
 
 @tree_dataclass
-class Patterns():
+class Patterns:
     patterns: NDArray[numpy.floating]
     """Raw diffraction patterns, with 0-frequency sample in corner"""
     pattern_mask: NDArray[numpy.floating]
@@ -28,7 +28,7 @@ class Patterns():
 
 
 @tree_dataclass
-class IterState():
+class IterState:
     engine_num: int
     """Engine number. 1-indexed (0 means before any reconstruction)."""
     engine_iter: int
@@ -36,9 +36,9 @@ class IterState():
     total_iter: int
     """Total iteration number. 1-indexed (0 means before any iterations)."""
 
-    n_engine_iters: t.Optional[int] = None
+    n_engine_iters: int | None = None
     """Total number of iterations in this engine."""
-    n_total_iters: t.Optional[int] = None
+    n_total_iters: int | None = None
     """Total number of iterations in the reconstruction."""
 
     def to_numpy(self) -> Self:
@@ -58,7 +58,7 @@ class IterState():
 
 
 @tree_dataclass(static_fields=('sampling',))
-class ProbeState():
+class ProbeState:
     sampling: Sampling
     """Probe coordinate system. See `Sampling` for more details."""
     data: NDArray[numpy.complexfloating]
@@ -94,7 +94,7 @@ class ProbeState():
 
 
 @tree_dataclass(static_fields=('sampling',))
-class ObjectState():
+class ObjectState:
     sampling: ObjectSampling
     """Object coordinate system. See `ObjectSampling` for more details."""
     data: NDArray[numpy.complexfloating]
@@ -128,9 +128,9 @@ class ObjectState():
 
 @tree_dataclass
 class ProgressState:
-    iters: t.List[int] = field(default_factory=list)
+    iters: list[int] = field(default_factory=list)
     """Iterations error measurements were taken at."""
-    values: t.List[float] = field(default_factory=list)
+    values: list[float] = field(default_factory=list)
     """Detector error measurements at those iterations"""
 
     def copy(self) -> Self:
@@ -147,9 +147,9 @@ class ReconsState:
     object: ObjectState
     scan: NDArray[numpy.floating]
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
-    tilt: t.Optional[NDArray[numpy.floating]] = None
+    tilt: NDArray[numpy.floating] | None = None
     """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
-    progress: t.Dict[str, ProgressState] = field(default_factory=dict)
+    progress: dict[str, ProgressState] = field(default_factory=dict)
 
     def to_xp(self, xp: t.Any) -> Self:
         return self.__class__(
@@ -189,15 +189,15 @@ class ReconsState:
 
 @tree_dataclass(kw_only=True, static_fields=('progress',))
 class PartialReconsState:
-    iter: t.Optional[IterState] = None
-    wavelength: t.Optional[Float] = None
+    iter: IterState | None = None
+    wavelength: Float | None = None
 
-    probe: t.Optional[ProbeState] = None
-    object: t.Optional[ObjectState] = None
-    scan: t.Optional[NDArray[numpy.floating]] = None
+    probe: ProbeState | None = None
+    object: ObjectState | None = None
+    scan: NDArray[numpy.floating] | None = None
     """Scan coordinates (y, x), in length units. Shape (..., 2)"""
-    tilt: t.Optional[NDArray[numpy.floating]] = None
-    progress: t.Optional[t.Dict[str, ProgressState]] = None
+    tilt: NDArray[numpy.floating] | None = None
+    progress: dict[str, ProgressState] | None = None
 
     def to_numpy(self) -> Self:
         return self.__class__(

@@ -1,21 +1,27 @@
 import contextlib
-from pathlib import Path
 import typing as t
+from pathlib import Path
 
+import h5py
 import numpy
 from numpy.typing import NDArray
-import h5py
 
+from phaser.state import (
+    IterState,
+    ObjectState,
+    PartialReconsState,
+    ProbeState,
+    ProgressState,
+    ReconsState,
+)
 from phaser.utils.num import Sampling, to_numpy
 from phaser.utils.object import ObjectSampling
-from phaser.state import ReconsState, IterState, ProbeState, ObjectState, ProgressState, PartialReconsState
 
-
-HdfLike: t.TypeAlias = t.Union[h5py.File, str, Path]
+HdfLike: t.TypeAlias = h5py.File | str | Path
 OpenMode: t.TypeAlias = t.Literal['r', 'r+', 'w', 'w-', 'x', 'a']
 DTypeT = t.TypeVar('DTypeT', bound=numpy.generic)
 
-_DTYPE_CATEGORIES: t.Dict[t.Type[numpy.generic], t.Type[numpy.generic]] = {
+_DTYPE_CATEGORIES: dict[type[numpy.generic], type[numpy.generic]] = {
     numpy.bool_: numpy.bool_,
     numpy.float32: numpy.floating,
     numpy.float64: numpy.floating,
@@ -37,7 +43,7 @@ _DTYPE_CATEGORIES: t.Dict[t.Type[numpy.generic], t.Type[numpy.generic]] = {
     numpy.unsignedinteger: numpy.unsignedinteger,
 }
 
-_CATEGORY_MIN_DTYPE: t.Dict[t.Type[numpy.generic], t.Type[numpy.generic]] = {
+_CATEGORY_MIN_DTYPE: dict[type[numpy.generic], type[numpy.generic]] = {
     numpy.bool_: numpy.bool_,
     numpy.inexact: numpy.float32,
     numpy.floating: numpy.float32,
@@ -70,7 +76,7 @@ class OutputDir(contextlib.AbstractContextManager[Path]):
 
         return self.out_dir
 
-    def __exit__(self, exc_type: t.Optional[type], exc_value: t.Optional[BaseException], tb: t.Any):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, tb: object):
         if exc_value is None and self.any_output:
             # create finished file
             (self.out_dir / 'finished').touch(mode=0o664)
@@ -162,7 +168,7 @@ def hdf5_read_iter_state(group: h5py.Group) -> IterState:
     )
 
 
-def hdf5_read_progress_state(group: h5py.Group) -> t.Dict[str, ProgressState]:
+def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
     if 'iters' in group and 'detector_errors' in group:
         # read old-style, convert to new style
         iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
@@ -173,13 +179,13 @@ def hdf5_read_progress_state(group: h5py.Group) -> t.Dict[str, ProgressState]:
         return {'total_loss': ProgressState(iters.tolist(), values.tolist())}
 
     # read new-style
-    d: t.Dict[str, ProgressState] = {}
+    d: dict[str, ProgressState] = {}
 
-    for (k, group) in group.items():
-        if not isinstance(group, h5py.Group):
+    for (k, inner) in group.items():
+        if not isinstance(inner, h5py.Group):
             continue
-        iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
-        values = numpy.asarray(_hdf5_read_dataset(group, 'values', numpy.float64))
+        iters = numpy.asarray(_hdf5_read_dataset(inner, 'iters', numpy.int64))
+        values = numpy.asarray(_hdf5_read_dataset(inner, 'values', numpy.float64))
         assert iters.ndim == values.ndim == 1
         assert iters.shape == values.shape
 
@@ -188,7 +194,7 @@ def hdf5_read_progress_state(group: h5py.Group) -> t.Dict[str, ProgressState]:
     return d
 
 
-def hdf5_write_state(state: t.Union[ReconsState, PartialReconsState], file: HdfLike):
+def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
     file = open_hdf5(file, 'w')  # overwrite if existing
     file.create_dataset('type', (), h5py.string_dtype(), "phaser_state")
     file.create_dataset('version', (), h5py.string_dtype(), "0.1")
@@ -251,7 +257,7 @@ def hdf5_write_iter_state(state: IterState, group: h5py.Group):
     group.create_dataset("total_iter", (), numpy.uint64, data=state.total_iter)
 
 
-def hdf5_write_progress_state(state: t.Dict[str, ProgressState], group: h5py.Group):
+def hdf5_write_progress_state(state: dict[str, ProgressState], group: h5py.Group):
     for (k, v) in state.items():
         subgroup = group.require_group(k)
 
@@ -262,21 +268,21 @@ def hdf5_write_progress_state(state: t.Dict[str, ProgressState], group: h5py.Gro
         dataset.dims[0].attach_scale(iters)
 
 
-def _parse_version(version: str) -> t.Tuple[int, ...]:
+def _parse_version(version: str) -> tuple[int, ...]:
     try:
         return tuple(map(int, version.split(".")))
     except ValueError:
         raise ValueError(f"Unable to parse version '{version}'") from None
 
 
-def _assert_group(group: t.Union[h5py.Group, h5py.Dataset, h5py.Datatype]) -> h5py.Group:
+def _assert_group(group: h5py.Group | h5py.Dataset | h5py.Datatype) -> h5py.Group:
     if isinstance(group, h5py.Group):
         return group
     raise ValueError(f"While reading '{group.file.filename}':\n"
                      f"Expected a group at path '{group.name}', instead found {type(group)}.")
 
 
-def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: t.Type[DTypeT]) -> t.Union[DTypeT, NDArray[DTypeT]]:
+def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: type[DTypeT]) -> DTypeT | NDArray[DTypeT]:
     dtype_category = _DTYPE_CATEGORIES[dtype]
 
     if path not in group:
@@ -286,8 +292,8 @@ def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: t.Type[DTypeT]) -> t
     dataset = group[path]
 
     if not isinstance(dataset, h5py.Dataset):
-        raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Expected a dataset at path '{group.name}{path}', instead found {type(dataset)}.")
+        raise TypeError(f"While reading '{group.file.filename}':\n"
+                        f"Expected a dataset at path '{group.name}{path}', instead found {type(dataset)}.")
 
     if not numpy.issubdtype(dataset.dtype, dtype_category):
         raise ValueError(f"While reading '{group.file.filename}':\n"
@@ -298,7 +304,7 @@ def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: t.Type[DTypeT]) -> t
     return dataset[()].astype(out_dtype)
 
 
-def _hdf5_read_dataset_shape(group: h5py.Group, path: str, dtype: t.Type[DTypeT], shape: t.Tuple[int, ...]) -> NDArray[DTypeT]:
+def _hdf5_read_dataset_shape(group: h5py.Group, path: str, dtype: type[DTypeT], shape: tuple[int, ...]) -> NDArray[DTypeT]:
     arr = numpy.asarray(_hdf5_read_dataset(group, path, dtype))
     if arr.shape != shape:
         raise ValueError(f"While reading '{group.file.filename}':\n"
@@ -306,10 +312,10 @@ def _hdf5_read_dataset_shape(group: h5py.Group, path: str, dtype: t.Type[DTypeT]
     return arr
 
 
-def _hdf5_read_scalar(group: h5py.Group, path: str, dtype: t.Type[DTypeT]) -> DTypeT:
+def _hdf5_read_scalar(group: h5py.Group, path: str, dtype: type[DTypeT]) -> DTypeT:
     arr = _hdf5_read_dataset(group, path, dtype)
     if isinstance(arr, numpy.ndarray):
-        raise ValueError(f"While reading '{group.file.filename}':\n"
+        raise ValueError(f"While reading '{group.file.filename}':\n"  # noqa: TRY004
                          f"Expected a scalar dataset, instead got shape {arr.shape}.")
     return arr
 
@@ -322,12 +328,12 @@ def _hdf5_read_string(group: h5py.Group, path: str) -> str:
     dataset = group[path]
 
     if not isinstance(dataset, h5py.Dataset):
-        raise ValueError(f"While reading '{group.file.filename}':\n"
+        raise TypeError(f"While reading '{group.file.filename}':\n"
                          f"Expected a string at path '{group.name}{path}', instead found {type(dataset)}.")
 
     dataset = dataset[()]
     if not isinstance(dataset, bytes):
-        raise ValueError(f"While reading '{group.file.filename}':\n"
+        raise TypeError(f"While reading '{group.file.filename}':\n"
                          f"Expected a scalar string at path '{group.name}{path}', instead found {dataset} (type {type(dataset)}).")
 
     try:
@@ -337,7 +343,7 @@ def _hdf5_read_string(group: h5py.Group, path: str) -> str:
                          f"Invalid string at path '{group.name}{path}")
 
 
-def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: t.Optional[numpy.ndarray], dtype: t.Any):
+def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: numpy.ndarray | None, dtype: t.Any):
     if data is not None:
         group.create_dataset(name, data=to_numpy(data).astype(dtype))
     else:
@@ -345,12 +351,12 @@ def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: t.Optional[
 
 
 def tiff_write_opts(
-    sampling: t.Union[Sampling, ObjectSampling],
-    corner: t.Optional[NDArray[numpy.floating]] = None, *,
+    sampling: Sampling | ObjectSampling,
+    corner: NDArray[numpy.floating] | None = None, *,
     unit: t.Literal['angstrom'] = 'angstrom',  # other units not yet supported
     n_slices: int = 1,
-    zs: t.Union[t.Sequence[float], NDArray[numpy.floating], None] = None,
-) -> t.Dict[str, t.Any]:
+    zs: t.Sequence[float] | NDArray[numpy.floating] | None = None,
+) -> dict[str, t.Any]:
     if corner is None:
         corner = sampling.corner
 
@@ -383,11 +389,11 @@ def tiff_write_opts(
 
 
 def tiff_write_opts_recip(
-    sampling: t.Union[Sampling, ObjectSampling], *,
+    sampling: Sampling | ObjectSampling, *,
     unit: t.Literal['1/angstrom'] = '1/angstrom',  # other units not yet supported
     n_slices: int = 1,
-    zs: t.Union[t.Sequence[float], NDArray[numpy.floating], None] = None,
-) -> t.Dict[str, t.Any]:
+    zs: t.Sequence[float] | NDArray[numpy.floating] | None = None,
+) -> dict[str, t.Any]:
     z_dict = {}
     if zs is not None:
         n_slices = len(zs)
@@ -417,8 +423,11 @@ def tiff_write_opts_recip(
 
 
 __all__ = [
+    'HdfLike',
+    'OpenMode',
+    'hdf5_read_state',
+    'hdf5_write_state',
     'open_hdf5',
-    'hdf5_read_state', 'hdf5_write_state',
-    'tiff_write_opts', 'tiff_write_opts_recip',
-    'HdfLike', 'OpenMode',
+    'tiff_write_opts',
+    'tiff_write_opts_recip',
 ]
