@@ -123,6 +123,14 @@ def test_load_missing(tmp_path):
         _hook(tmp_path / "nonexistent.tilts")(_args((4, 5)))
 
 
+def test_load_unsupported_extension(tmp_path):
+    path = tmp_path / "tilt.txt"
+    path.write_text("not a tilt map")
+
+    with pytest.raises(ValueError, match="Unsupported tilt file extension '.txt'"):
+        _hook(path)(_args((4, 5)))
+
+
 def test_load_not_tilts(tmp_path):
     path = tmp_path / "other.tilts"
     with h5py.File(path, 'w') as f:

@@ -46,12 +46,13 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     if not path.exists():
         raise FileNotFoundError(f"Custom tilt file not found: {path}")
 
-    if path.suffix.lower() == '.tilts':
-        tilt_data = _load_tilts_hdf5(path)
-    else:
-        # flat data has no orientation of its own; unflatten so flips (incl. transpose) yield the scan shape
-        native_shape = shape[::-1] if props.flips is not None and props.flips[2] else shape
-        tilt_data = _load_tilts_npy(path, native_shape)
+    ext = path.suffix.lower()
+    if (loader := _TILT_LOADERS.get(ext)) is None:
+        raise ValueError(f"Unsupported tilt file extension '{ext}'. Supported extensions: {', '.join(sorted(_TILT_LOADERS))}")
+
+    # native shape of the map as stored in the file, such that flips (incl. transpose) yield the scan shape
+    native_shape = shape[::-1] if props.flips is not None and props.flips[2] else shape
+    tilt_data = loader(path, native_shape)
 
     if props.flips is not None:
         tilt_data = numpy.moveaxis(apply_flips(numpy.moveaxis(tilt_data, -1, 0), props.flips), 0, -1)
@@ -76,7 +77,7 @@ def _load_tilts_npy(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[nump
     return tilt_data
 
 
-def _load_tilts_hdf5(path: Path) -> NDArray[numpy.floating]:
+def _load_tilts_hdf5(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[numpy.floating]:
     with h5py.File(path, 'r') as f:
         try:
             tilt_x = numpy.asarray(f['scan/tilt_x'])
@@ -90,3 +91,10 @@ def _load_tilts_hdf5(path: Path) -> NDArray[numpy.floating]:
         raise ValueError(f"Tilt map shape mismatch in '{path}': tilt_x {tilt_x.shape} vs tilt_y {tilt_y.shape}")
 
     return numpy.stack([tilt_y, tilt_x], axis=-1)
+
+
+_TILT_LOADERS: t.Dict[str, t.Callable[[Path, t.Tuple[int, ...]], NDArray[numpy.floating]]] = {
+    '.npy': _load_tilts_npy,
+    '.tilts': _load_tilts_hdf5,
+}
+"""Tilt map loaders by file extension. Each takes (path, native_shape) and returns a (ny, nx, 2) array of [ty, tx] rows [mrad]."""
