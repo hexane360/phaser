@@ -167,6 +167,19 @@ class CustomTiltProps(Dataclass):
     flips: t.Optional[t.Tuple[bool, bool, bool]] = None
     """Flips `(flip_y, flip_x, transpose)` applied to the tilt map, to match the scan orientation.
     Flips rearrange the map spatially; they don't change the tilt values themselves."""
+    crop: t.Optional[t.Tuple[
+        # y_i, y_f, x_i, x_f
+        t.Optional[int], t.Optional[int], t.Optional[int], t.Optional[int],
+    ]] = None
+    """
+    Window `(y_i, y_f, x_i, x_f)` taken from the map after `flips`, with `None` running to
+    the edge -- the same convention as the `crop_data` post-load hook.
+
+    A tilt map is measured over the whole scan, so cropping the data crops the map too. A
+    `crop_data` hook sets this automatically, which is what lets a full-scan map line up
+    with a cropped reconstruction without being sliced by hand; set it explicitly only for a
+    map whose data isn't going through `crop_data`.
+    """
 
 
 class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):

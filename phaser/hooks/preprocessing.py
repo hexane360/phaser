@@ -31,6 +31,17 @@ def crop_data(raw_data: RawData, props: CropDataProps) -> RawData:
                 'shape': raw_data['patterns'].shape[:2],
             }
 
+    # A tilt map is measured over the whole scan, so cropping the data crops the map too.
+    # Hand the window down rather than making the user slice the file to match by hand --
+    # the two would drift apart the first time either was changed alone. An explicit crop on
+    # the hook wins, since that is someone saying they have already accounted for this.
+    if (tilt_hook := raw_data.get('tilt_hook', None)) is not None:
+        if tilt_hook['type'] == 'custom' and tilt_hook.get('crop', None) is None:
+            raw_data['tilt_hook'] = {
+                **tilt_hook,
+                'crop': (y_i, y_f, x_i, x_f),
+            }
+
     return raw_data
 
 

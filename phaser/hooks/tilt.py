@@ -37,7 +37,8 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     datasets (mrad, one value per probe position) are stacked into [ty, tx] rows.
 
     If specified, `props.flips` (flip_y, flip_x, transpose) is applied to the
-    map before it is checked against the scan shape.
+    map, then `props.crop` takes a window of it, before it is checked against
+    the scan shape.
     """
     xp = cast_array_module(args['xp'])
     shape = tuple(args['shape'])
@@ -50,24 +51,47 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     if (loader := _TILT_LOADERS.get(ext)) is None:
         raise ValueError(f"Unsupported tilt file extension '{ext}'. Supported extensions: {', '.join(sorted(_TILT_LOADERS))}")
 
-    # native shape of the map as stored in the file, such that flips (incl. transpose) yield the scan shape
-    native_shape = shape[::-1] if props.flips is not None and props.flips[2] else shape
+    # Native shape of the map as stored in the file, such that flips (incl. transpose) yield
+    # the scan shape. A crop makes this unknowable -- the file holds the whole scan while
+    # `shape` is only the window, and a window can't be run backwards to what it came from --
+    # so the loaders that need it are told there is no answer rather than given a wrong one.
+    if props.crop is not None:
+        native_shape = None
+    else:
+        native_shape = shape[::-1] if props.flips is not None and props.flips[2] else shape
     tilt_data = loader(path, native_shape)
 
     if props.flips is not None:
         tilt_data = numpy.moveaxis(apply_flips(numpy.moveaxis(tilt_data, -1, 0), props.flips), 0, -1)
 
+    if props.crop is not None:
+        uncropped = tilt_data.shape[:2]
+        (y_i, y_f, x_i, x_f) = props.crop
+        tilt_data = tilt_data[slice(y_i, y_f), slice(x_i, x_f)]
+
+        if 0 in tilt_data.shape[:2]:
+            raise ValueError(
+                f"Crop {tuple(props.crop)} selects nothing from the {uncropped} tilt map in '{path}'"
+            )
+
     if tilt_data.shape != (*shape, 2):
         extra = " (it matches the transposed scan; check scan orientation or the 'flips' prop)" if tilt_data.shape[:2] == shape[::-1] else ""
+        if props.crop is not None:
+            extra += f" (cropped to {tuple(props.crop)} from a {uncropped} map)"
         raise ValueError(f"Tilt map shape {tilt_data.shape[:2]} doesn't match scan shape {shape}{extra}")
 
     return xp.array(tilt_data * props.scale, dtype=xp.float32)
 
 
-def _load_tilts_npy(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[numpy.floating]:
+def _load_tilts_npy(path: Path, native_shape: t.Optional[t.Tuple[int, ...]]) -> NDArray[numpy.floating]:
     tilt_data = numpy.load(path)
 
     if tilt_data.ndim == 2:
+        if native_shape is None:
+            raise ValueError(
+                f"Can't crop the flat tilt map in '{path}': a (N, 2) array carries no scan "
+                f"dimensions to crop along. Save it with shape (ny, nx, 2) instead."
+            )
         if tilt_data.shape != (numpy.prod(native_shape), 2):
             raise ValueError(f"Loaded tilt data shape {tilt_data.shape} is incompatible with expected 2D shape {(numpy.prod(native_shape), 2)}")
         tilt_data = tilt_data.reshape((*native_shape, 2))
@@ -77,7 +101,7 @@ def _load_tilts_npy(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[nump
     return tilt_data
 
 
-def _load_tilts_hdf5(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[numpy.floating]:
+def _load_tilts_hdf5(path: Path, native_shape: t.Optional[t.Tuple[int, ...]]) -> NDArray[numpy.floating]:
     with h5py.File(path, 'r') as f:
         try:
             tilt_x = numpy.asarray(f['scan/tilt_x'])
@@ -93,7 +117,7 @@ def _load_tilts_hdf5(path: Path, native_shape: t.Tuple[int, ...]) -> NDArray[num
     return numpy.stack([tilt_y, tilt_x], axis=-1)
 
 
-_TILT_LOADERS: t.Dict[str, t.Callable[[Path, t.Tuple[int, ...]], NDArray[numpy.floating]]] = {
+_TILT_LOADERS: t.Dict[str, t.Callable[[Path, t.Optional[t.Tuple[int, ...]]], NDArray[numpy.floating]]] = {
     '.npy': _load_tilts_npy,
     '.tilts': _load_tilts_hdf5,
 }
