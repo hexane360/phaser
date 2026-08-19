@@ -11,7 +11,7 @@ from phaser.utils.num import Sampling
 from phaser.hooks import RawData
 from phaser.plan import ReconsPlan
 from phaser.execute import load_raw_data, initialize_reconstruction
-from phaser.state import PartialReconsState, ProbeState
+from phaser.state import PartialReconsState, ProbeState, ScanState
 
 
 def load_empty(args, props) -> RawData:
@@ -110,7 +110,7 @@ def test_load_raw_data_prev_state(caplog):
     }
 
     probe_state = ProbeState(Sampling((64, 64), sampling=(1.0, 1.0)), numpy.zeros((64, 64), dtype=numpy.complex64))
-    scan_state = numpy.zeros((32, 32, 2))
+    scan_state = ScanState(numpy.zeros((32, 32, 2)), numpy.zeros((32, 32, 2)))
 
     xp = numpy
     with caplog.at_level(logging.WARNING):
@@ -133,7 +133,7 @@ def test_load_raw_data_prev_state(caplog):
     # probe from state overrides probe from raw data
     assert numpy.all(numpy.isclose(recons.state.probe.data, probe_state.data))
     # but scan should be modeled
-    assert ~numpy.all(numpy.isclose(recons.state.scan, scan_state))
+    assert ~numpy.all(numpy.isclose(recons.state.scan.data, scan_state.data))
 
     plan['init'] = {
         'scan': {},
@@ -150,7 +150,7 @@ def test_load_raw_data_prev_state(caplog):
 
     # both should be modeled
     assert ~numpy.all(numpy.isclose(recons.state.probe.data, probe_state.data))
-    assert ~numpy.all(numpy.isclose(recons.state.scan, scan_state))
+    assert ~numpy.all(numpy.isclose(recons.state.scan.data, scan_state.data))
 
 
 def test_load_3d_raw_data():
@@ -180,5 +180,5 @@ def test_load_3d_raw_data():
     })
     recons = initialize_reconstruction(plan)
 
-    assert recons.state.scan.shape == (*scan_shape, 2)
+    assert recons.state.scan.data.shape == (*scan_shape, 2)
     assert recons.patterns.patterns.shape == (*scan_shape, *det_shape)

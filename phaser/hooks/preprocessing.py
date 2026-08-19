@@ -84,9 +84,12 @@ def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
 def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patterns, ReconsState]:
     xp = get_array_module(args['data'].patterns)
 
+    scan = args['state'].scan
+
     # flatten scan, tilt, and patterns
-    scan = args['state'].scan.reshape(-1, 2)
-    tilt = None if args['state'].tilt is None else args['state'].tilt.reshape(-1, 2)
+    scan_arr = scan.data.reshape(-1, 2)
+    initial_arr = scan.initial.reshape(-1, 2)
+    tilt_arr = None if scan.tilt is None else scan.tilt.reshape(-1, 2)
     patterns = args['data'].patterns.reshape(-1, *args['data'].patterns.shape[-2:])
 
     fraction_nan = xp.sum(xp.isnan(patterns), axis=(-1, -2)) / xp.prod(patterns.shape[-2:])
@@ -97,23 +100,25 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
         logger.info(f"Dropping {n}/{patterns.shape[0]} patterns which are at least {props.threshold:.1%} NaN values")
         patterns = patterns[~mask]
 
-        if scan.shape[0] == xp.size(mask):
+        if scan_arr.shape[0] == xp.size(mask):
             # apply mask to scan as well
-            scan = scan[~mask]
-        elif scan.shape[0] != patterns.shape[0]:
-            raise ValueError(f"# of scan positions {scan.shape[0]} doesn't match # of patterns"
+            scan_arr = scan_arr[~mask]
+            initial_arr = initial_arr[~mask]
+        elif scan_arr.shape[0] != patterns.shape[0]:
+            raise ValueError(f"# of scan positions {scan_arr.shape[0]} doesn't match # of patterns"
                              f" before ({mask.size}) or after ({patterns.shape[0]}) filtering")
         # otherwise, we assume the mask has already been applied to the scan
 
-        if tilt is not None:
-            if tilt.shape[0] == mask.size:
-                tilt = tilt[~mask]
-            elif tilt.shape[0] != patterns.shape[0]:
-                raise ValueError(f"# of tilt positions {tilt.shape[0]} doesn't match # of patterns"
+        if tilt_arr is not None:
+            if tilt_arr.shape[0] == mask.size:
+                tilt_arr = tilt_arr[~mask]
+            elif tilt_arr.shape[0] != patterns.shape[0]:
+                raise ValueError(f"# of tilt positions {tilt_arr.shape[0]} doesn't match # of patterns"
                                 f" before ({mask.size}) or after ({patterns.shape[0]}) filtering")
 
-    args['state'].scan = scan
-    args['state'].tilt = tilt
+    scan.data = scan_arr
+    scan.initial = initial_arr
+    scan.tilt = tilt_arr
     args['data'].patterns = patterns
 
     return (args['data'], args['state'])

@@ -1,9 +1,11 @@
 import contextlib
+import json
 import typing as t
 from pathlib import Path
 
 import h5py
 import numpy
+from frozendict import frozendict
 from numpy.typing import NDArray
 
 from phaser.state import (
@@ -13,6 +15,7 @@ from phaser.state import (
     ProbeState,
     ProgressState,
     ReconsState,
+    ScanState,
 )
 from phaser.utils.num import Sampling, to_numpy
 from phaser.utils.object import ObjectSampling
@@ -100,61 +103,97 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     file = open_hdf5(file, 'r')
 
     ty = _hdf5_read_string(file, 'type')
-    version = _hdf5_read_string(file, 'version')
+    version_str = _hdf5_read_string(file, 'version')
     if ty != 'phaser_state':
         raise ValueError(f"While reading file '{file.filename}':\nExpected a file of type 'phaser_state', instead got type '{ty}'")
 
-    if _parse_version(version) > (0, 1):
-        raise ValueError(f"While reading file '{file.filename}':\nUnsupported file version '{version}'. Maximum supported version is '0.1'.")
+    version = _parse_version(version_str)
+    # VERSION 0.2:
+    # - moved 'scan' into its own group
+    # - added 'meta' to probe, object, scan (backwards compatible)
+    if version > (0, 2):
+        raise ValueError(f"While reading file '{file.filename}':\nUnsupported file version '{version_str}'. Maximum supported version is '0.2'.")
+    read_scan_as_group = version >= (0, 2)
 
     wavelength = _hdf5_read_scalar(file, 'wavelength', numpy.float64) if 'wavelength' in file else None
 
     probe = hdf5_read_probe_state(_assert_group(file['probe'])) if 'probe' in file else None
     obj = hdf5_read_object_state(_assert_group(file['object'])) if 'object' in file else None
     iter = hdf5_read_iter_state(_assert_group(file['iter'])) if 'iter' in file else IterState.empty()
-    scan = numpy.asarray(_hdf5_read_dataset(file, 'scan', numpy.float64)) if 'scan' in file else None
-    tilt = numpy.asarray(_hdf5_read_dataset(file, 'tilt', numpy.float64)) if 'tilt' in file else None
 
-    if tilt is not None and scan is not None:
-        assert tilt.shape == scan.shape
+    if 'scan' not in file:
+        scan = None
+    elif read_scan_as_group:  # new behavior
+        scan = hdf5_read_scan_state(_assert_group(file['scan']))
+    else:  # old behavior
+        scan_arr = _hdf5_read_array(file, 'scan', numpy.float64)
+        tilt_arr = _hdf5_read_array(file, 'tilt', numpy.float64, nullable=True)
+        if tilt_arr is not None:
+            assert tilt_arr.shape == scan_arr.shape
+
+        # use current scan as initial
+        scan = ScanState(scan_arr, initial=scan_arr.copy(), tilt=tilt_arr)
+
     progress = hdf5_read_progress_state(_assert_group(file['progress'])) if 'progress' in file else None
 
     return PartialReconsState(
         wavelength=wavelength, iter=iter, probe=probe,
-        object=obj, scan=scan, tilt=tilt, progress=progress
+        object=obj, scan=scan, progress=progress
     )
 
 
 def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
-    probes = _hdf5_read_dataset(group, 'data', numpy.complexfloating)
+    probes = _hdf5_read_array(group, 'data', numpy.complexfloating)
     assert probes.ndim == 3
 
-    extent = _hdf5_read_dataset_shape(group, 'extent', numpy.float64, (2,))
+    extent = _hdf5_read_array_shape(group, 'extent', numpy.float64, (2,))
     (n_y, n_x) = probes.shape[-2:]
+
+    meta = hdf5_read_meta(group)
 
     return ProbeState(
         Sampling((n_y, n_x), extent=(extent[0], extent[1])),
-        data=probes
+        data=probes, meta=meta,
+    )
+
+
+def hdf5_read_scan_state(group: h5py.Group) -> ScanState:
+    scan = _hdf5_read_array(group, 'data', numpy.float64)
+
+    tilt = _hdf5_read_array(group, 'tilt', numpy.float64, nullable=True)
+    initial = _hdf5_read_array(group, 'initial', numpy.float64, nullable=True)
+
+    if tilt is not None:
+        assert tilt.shape == scan.shape
+    if initial is not None:
+        assert initial.shape == scan.shape
+
+    meta = hdf5_read_meta(group)
+
+    return ScanState(
+        scan, initial=scan.copy() if initial is None else initial, tilt=tilt, meta=meta,
     )
 
 
 def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
-    obj = numpy.asarray(_hdf5_read_dataset(group, 'data', numpy.complexfloating))
+    obj = _hdf5_read_array(group, 'data', numpy.complexfloating)
     (n_z, n_y, n_x) = obj.shape
-    
-    thicknesses = numpy.asarray(_hdf5_read_dataset(group, 'thicknesses', numpy.floating))
+
+    thicknesses = _hdf5_read_array(group, 'thicknesses', numpy.floating)
     assert thicknesses.ndim == 1
     assert thicknesses.size == n_z if n_z > 1 else thicknesses.size in (0, 1)
 
-    sampling = _hdf5_read_dataset_shape(group, 'sampling', numpy.float64, (2,))
-    corner = _hdf5_read_dataset_shape(group, 'corner', numpy.float64, (2,))
+    sampling = _hdf5_read_array_shape(group, 'sampling', numpy.float64, (2,))
+    corner = _hdf5_read_array_shape(group, 'corner', numpy.float64, (2,))
 
-    region_min = _hdf5_read_dataset_shape(group, 'region_min', numpy.float64, (2,)) if 'region_min' in group else None
-    region_max = _hdf5_read_dataset_shape(group, 'region_max', numpy.float64, (2,)) if 'region_max' in group else None
+    region_min = _hdf5_read_array_shape(group, 'region_min', numpy.float64, (2,), nullable=True)
+    region_max = _hdf5_read_array_shape(group, 'region_max', numpy.float64, (2,), nullable=True)
+
+    meta = hdf5_read_meta(group)
 
     return ObjectState(
         ObjectSampling((n_y, n_x), sampling, corner, region_min, region_max),
-        data=obj, thicknesses=thicknesses
+        data=obj, thicknesses=thicknesses, meta=meta,
     )
 
 
@@ -171,8 +210,8 @@ def hdf5_read_iter_state(group: h5py.Group) -> IterState:
 def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
     if 'iters' in group and 'detector_errors' in group:
         # read old-style, convert to new style
-        iters = numpy.asarray(_hdf5_read_dataset(group, 'iters', numpy.int64))
-        values = numpy.asarray(_hdf5_read_dataset(group, 'detector_errors', numpy.float64))
+        iters = _hdf5_read_array(group, 'iters', numpy.int64)
+        values = _hdf5_read_array(group, 'detector_errors', numpy.float64)
         assert iters.ndim == values.ndim == 1
         assert iters.shape == values.shape
 
@@ -184,8 +223,8 @@ def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
     for (k, inner) in group.items():
         if not isinstance(inner, h5py.Group):
             continue
-        iters = numpy.asarray(_hdf5_read_dataset(inner, 'iters', numpy.int64))
-        values = numpy.asarray(_hdf5_read_dataset(inner, 'values', numpy.float64))
+        iters = _hdf5_read_array(inner, 'iters', numpy.int64)
+        values = _hdf5_read_array(inner, 'values', numpy.float64)
         assert iters.ndim == values.ndim == 1
         assert iters.shape == values.shape
 
@@ -197,7 +236,7 @@ def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
 def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
     file = open_hdf5(file, 'w')  # overwrite if existing
     file.create_dataset('type', (), h5py.string_dtype(), "phaser_state")
-    file.create_dataset('version', (), h5py.string_dtype(), "0.1")
+    file.create_dataset('version', (), h5py.string_dtype(), "0.2")
     file.create_dataset('wavelength', (), numpy.float64, state.wavelength)
 
     if state.probe is not None:
@@ -205,9 +244,7 @@ def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
     if state.object is not None:
         hdf5_write_object_state(state.object, file.create_group("object"))
     if state.scan is not None:
-        file.create_dataset('scan', data=to_numpy(state.scan).astype(numpy.float64))
-    if state.tilt is not None:
-        file.create_dataset('tilt', data=to_numpy(state.tilt).astype(numpy.float64))
+        hdf5_write_scan_state(state.scan, file.create_group("scan"))
     if state.iter is not None:
         hdf5_write_iter_state(state.iter, file.create_group("iter"))
     if state.progress is not None:
@@ -223,6 +260,8 @@ def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
 
     group.create_dataset('sampling', data=state.sampling.sampling.astype(numpy.float64))
     group.create_dataset('extent', data=state.sampling.extent.astype(numpy.float64))
+
+    hdf5_write_meta(group, state.meta)
 
 
 def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
@@ -250,6 +289,27 @@ def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
     _hdf5_write_nullable_dataset(group, 'region_min', state.sampling.region_min, numpy.float64)
     _hdf5_write_nullable_dataset(group, 'region_max', state.sampling.region_max, numpy.float64)
 
+    hdf5_write_meta(group, state.meta)
+
+
+def hdf5_write_scan_state(state: ScanState, group: h5py.Group):
+    assert state.data.ndim >= 2
+    assert state.initial.shape == state.data.shape
+    if state.tilt is not None:
+        assert state.tilt.shape == state.data.shape
+
+    dataset = group.create_dataset('data', data=to_numpy(state.data).astype(numpy.float64))
+    dataset.dims[dataset.ndim - 1].label = 'yx'
+
+    dataset = group.create_dataset('initial', data=to_numpy(state.initial).astype(numpy.float64))
+    dataset.dims[dataset.ndim - 1].label = 'yx'
+
+    if state.tilt is not None:
+        dataset = group.create_dataset('tilt', data=to_numpy(state.tilt).astype(numpy.float64))
+        dataset.dims[dataset.ndim - 1].label = 'yx'
+
+    hdf5_write_meta(group, state.meta)
+
 
 def hdf5_write_iter_state(state: IterState, group: h5py.Group):
     group.create_dataset("engine_num", (), numpy.uint64, data=state.engine_num)
@@ -268,6 +328,52 @@ def hdf5_write_progress_state(state: dict[str, ProgressState], group: h5py.Group
         dataset.dims[0].attach_scale(iters)
 
 
+def hdf5_read_meta(group: h5py.Group, path: str = 'meta') -> frozendict[str, t.Any]:
+    if path not in group:
+        return frozendict()
+
+    dataset = group[path]
+    if not isinstance(dataset, h5py.Dataset):
+        raise TypeError(f"While reading '{group.file.filename}:\n"
+                        f"Expected a dataset at path '{group.name}/{path}', instead found {type(dataset)}")
+
+    if h5py.check_string_dtype(dataset.dtype) is None:
+        raise TypeError(f"While reading '{group.file.filename}:\n"
+                        f"Expected a string dataset at path '{group.name}/{path}', instead found {dataset.dtype}") from None
+
+    s = dataset[()]
+
+    if isinstance(s, numpy.ndarray):
+        assert s.shape == ()
+
+    try:
+        s = bytes(s).decode('utf-8')
+    except (TypeError, UnicodeDecodeError) as e:
+        e.add_note(f"While reading '{group.file.filename}', invalid string dataset '{group.name}/{path}'")
+        raise
+
+    def _freeze(obj: object) -> object:
+        if isinstance(obj, dict):
+            return frozendict((k, _freeze(v)) for (k, v) in obj.items())
+        if isinstance(obj, list):
+            return tuple(map(_freeze, obj))
+        return obj
+
+    try:
+        d = _freeze(json.loads(s))
+        assert isinstance(d, frozendict)  # config toplevel should be dict
+        return d
+    except (json.JSONDecodeError, AssertionError) as e:
+        e.add_note(f"While reading '{group.file.filename}', invalid JSON dataset '{group.name}/{path}'")
+        raise
+
+
+def hdf5_write_meta(group: h5py.Group, meta: frozendict[str, t.Any], path: str = 'meta'):
+    if len(meta):
+        s = json.dumps(meta, indent='', ensure_ascii=False).encode('utf-8')
+        group.create_dataset(path, data=s, dtype=h5py.string_dtype('utf-8'))
+
+
 def _parse_version(version: str) -> tuple[int, ...]:
     try:
         return tuple(map(int, version.split(".")))
@@ -282,33 +388,72 @@ def _assert_group(group: h5py.Group | h5py.Dataset | h5py.Datatype) -> h5py.Grou
                      f"Expected a group at path '{group.name}', instead found {type(group)}.")
 
 
-def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: type[DTypeT]) -> DTypeT | NDArray[DTypeT]:
+@t.overload
+def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: t.Literal[False] = ...) -> DTypeT | NDArray[DTypeT]: ...
+@t.overload
+def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: bool = ...) -> DTypeT | NDArray[DTypeT] | None: ...
+
+def _hdf5_read_dataset(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: bool = False) -> DTypeT | NDArray[DTypeT] | None:
     dtype_category = _DTYPE_CATEGORIES[dtype]
 
     if path not in group:
+        if nullable:
+            return None
         raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Path '{group.name}{path}' not found.")
+                         f"Path '{group.name}/{path}' not found.")
 
     dataset = group[path]
 
     if not isinstance(dataset, h5py.Dataset):
         raise TypeError(f"While reading '{group.file.filename}':\n"
-                        f"Expected a dataset at path '{group.name}{path}', instead found {type(dataset)}.")
+                        f"Expected a dataset at path '{group.name}/{path}', instead found {type(dataset)}.")
 
     if not numpy.issubdtype(dataset.dtype, dtype_category):
         raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Expected a dataset of dtype '{dtype_category}' at path '{group.name}{path}', instead found {dataset.dtype}.")
+                         f"Expected a dataset of dtype '{dtype_category}' at path '{group.name}/{path}', instead found {dataset.dtype}.")
+
+    if dataset.shape is None:
+        if nullable:
+            return None
+        raise ValueError(f"While reading '{group.file.filename}':\n"
+                         f"Dataset at path '{group.name}/{path}' is empty.")
 
     # ensure promotion is correct. eg dtype = numpy.floating promotes with numpy.float32
     out_dtype = numpy.promote_types(dataset.dtype, _CATEGORY_MIN_DTYPE.get(dtype_category, dtype))
     return dataset[()].astype(out_dtype)
 
 
-def _hdf5_read_dataset_shape(group: h5py.Group, path: str, dtype: type[DTypeT], shape: tuple[int, ...]) -> NDArray[DTypeT]:
-    arr = numpy.asarray(_hdf5_read_dataset(group, path, dtype))
+@t.overload
+def _hdf5_read_array(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: t.Literal[False] = ...) -> NDArray[DTypeT]: ...
+@t.overload
+def _hdf5_read_array(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: bool = ...) -> NDArray[DTypeT] | None: ...
+
+def _hdf5_read_array(group: h5py.Group, path: str, dtype: type[DTypeT], nullable: bool = False) -> NDArray[DTypeT] | None:
+    arr = _hdf5_read_dataset(group, path, dtype, nullable=nullable)
+    if arr is not None:
+        return numpy.asarray(arr)
+
+
+@t.overload
+def _hdf5_read_array_shape(
+    group: h5py.Group, path: str, dtype: type[DTypeT], shape: tuple[int, ...], nullable: t.Literal[False] = ...
+) -> NDArray[DTypeT]: ...
+@t.overload
+def _hdf5_read_array_shape(
+    group: h5py.Group, path: str, dtype: type[DTypeT], shape: tuple[int, ...], nullable: bool = ...
+) -> NDArray[DTypeT] | None: ...
+
+def _hdf5_read_array_shape(
+    group: h5py.Group, path: str, dtype: type[DTypeT], shape: tuple[int, ...], nullable: bool = False
+) -> NDArray[DTypeT] | None:
+    arr = _hdf5_read_dataset(group, path, dtype, nullable)
+    if arr is None:
+        return None
+    arr = numpy.asarray(arr)
+
     if arr.shape != shape:
         raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Expected a dataset of shape '{shape}' at path '{group.name}{path}', instead got shape {arr.shape}.")
+                         f"Expected a dataset of shape '{shape}' at path '{group.name}/{path}', instead got shape {arr.shape}.")
     return arr
 
 
@@ -323,24 +468,24 @@ def _hdf5_read_scalar(group: h5py.Group, path: str, dtype: type[DTypeT]) -> DTyp
 def _hdf5_read_string(group: h5py.Group, path: str) -> str:
     if path not in group:
         raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Path '{group.name}{path}' not found.")
+                         f"Path '{group.name}/{path}' not found.")
 
     dataset = group[path]
 
     if not isinstance(dataset, h5py.Dataset):
         raise TypeError(f"While reading '{group.file.filename}':\n"
-                         f"Expected a string at path '{group.name}{path}', instead found {type(dataset)}.")
+                         f"Expected a string at path '{group.name}/{path}', instead found {type(dataset)}.")
 
     dataset = dataset[()]
     if not isinstance(dataset, bytes):
         raise TypeError(f"While reading '{group.file.filename}':\n"
-                         f"Expected a scalar string at path '{group.name}{path}', instead found {dataset} (type {type(dataset)}).")
+                         f"Expected a scalar string at path '{group.name}/{path}', instead found {dataset} (type {type(dataset)}).")
 
     try:
         return dataset.decode('utf-8')
     except ValueError:
         raise ValueError(f"While reading '{group.file.filename}':\n"
-                         f"Invalid string at path '{group.name}{path}")
+                         f"Invalid string at path '{group.name}/{path}")
 
 
 def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: numpy.ndarray | None, dtype: t.Any):

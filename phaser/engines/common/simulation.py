@@ -249,7 +249,7 @@ def cutout_group(
     """Returns (probe, obj) in the cutout region"""
     probes = state.probe.data
 
-    group_scan = state.scan[tuple(group)]
+    group_scan = state.scan.data[tuple(group)]
     group_obj = state.object.sampling.get_view_at_pos(state.object.data, group_scan, probes.shape[-2:])
     # group probes in real space
     # shape (len(group), 1, Ny, Nx)

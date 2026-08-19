@@ -37,7 +37,7 @@ class AmplitudeNoiseModel(NoiseModel[None]):
         xp = get_array_module(model_wave, model_intensity, exp_patterns, mask)
         patterns = xp.maximum(exp_patterns, 0.0)
 
-        return ((
+        return (t.cast(numpy.floating,
             2. * xp.sum(mask * (
                 xp.sqrt(patterns + self.offset) - xp.sqrt(model_intensity + self.offset) - self.eps
             )**2) / self.var).astype(exp_patterns.dtype),

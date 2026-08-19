@@ -26,6 +26,7 @@ from ..common.simulation import GroupManager, make_propagators, tilt_propagators
 
 logger = logging.getLogger(__name__)
 _PER_ITER_VARS: t.FrozenSet[ReconsVar] = frozenset({'positions', 'tilt'})
+_PER_ITER_PATHS: t.FrozenSet[str] = frozenset({'initial'}) | _PER_ITER_VARS
 
 
 def process_solvers(
@@ -67,11 +68,12 @@ def process_solvers(
     )
 
 
-_PATH_MAP: t.Dict[t.Tuple[str, ...], ReconsVar] = {
+_PATH_MAP: t.Dict[t.Tuple[str, ...], str] = {
     ('object', 'data'): 'object',
     ('probe', 'data'): 'probe',
-    ('scan',): 'positions',
-    ('tilt',): 'tilt'
+    ('scan', 'data'): 'positions',
+    ('scan', 'tilt'): 'tilt',
+    ('scan', 'initial'): 'initial',  # not a solver variable, but need to apply group indexing
 }
 
 def _normalize_path(path: t.Tuple[tree.GetAttrKey, ...]) -> t.Tuple[str, ...]:
@@ -97,7 +99,7 @@ def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Opt
         if (var := _PATH_MAP.get(_normalize_path(path))):
             if var in vars:
                 return vars[var]
-            if var in _PER_ITER_VARS and val is not None and group is not None:
+            if var in _PER_ITER_PATHS and val is not None and group is not None:
                 return val[tuple(group)]
         return val
 
@@ -110,13 +112,13 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
     if 'object' in update:
         state.object.data += update['object']
     if 'tilt' in update:
-        state.tilt += update['tilt']
+        state.scan.tilt += update['tilt']
     if 'positions' in update:
         # subtract mean position update
         xp = get_array_module(update['positions'])
         update['positions'] -= xp.mean(update['positions'], tuple(range(update['positions'].ndim - 1)))
 
-        state.scan += update['positions']
+        state.scan.data += update['positions']
 
     return state
 
@@ -177,7 +179,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     }
     # shuffle_groups defaults to True for sparse groups, False for compact groups
     shuffle_groups = process_flag(props.shuffle_groups or not props.compact)
-    groups = GroupManager(state.scan, props.grouping, props.compact, seed)
+    groups = GroupManager(state.scan.data, props.grouping, props.compact, seed)
 
     observer.init_engine(
         state, recons_name=args['recons_name'],
@@ -210,7 +212,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
 
     # runs rescaling
     rescale_factors = []
-    for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan))):
+    for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan.data))):
         group_rescale_factors = dry_run(
             state, group, propagators, group_patterns,
             xp=xp, dtype=dtype,
@@ -274,7 +276,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             for (solver, solver_state) in zip(iter_solvers, iter_solver_states)
         ]
 
-        for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan, i, iter_shuffle_groups))):
+        for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan.data, i, iter_shuffle_groups))):
             # prevent the loop running ahead of the GPU stream
             block_until_ready(losses_gpu['total_loss'])
 
@@ -341,8 +343,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
 
         if 'positions' in iter_vars:
             # check positions are at least overlapping object
-            state.object.sampling.check_scan(state.scan, state.probe.sampling.extent / 2.)
-            assert_dtype(state.scan, dtype)
+            state.object.sampling.check_scan(state.scan.data, state.probe.sampling.extent / 2.)
+            assert_dtype(state.scan.data, dtype)
 
         state.progress = progress
         observer.update_iteration(state, i, props.niter, losses)
@@ -434,8 +436,8 @@ def run_model(
 ) -> t.Tuple[Float, t.Tuple[SolverStates, t.Dict[str, Float]]]:
     # apply vars to simulation
     sim = insert_vars(vars, sim, group)
-    group_scan = sim.scan
-    group_tilts = sim.tilt
+    group_scan = sim.scan.data
+    group_tilts = sim.scan.tilt
 
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     xp = get_array_module(sim.probe.data)
@@ -489,7 +491,8 @@ def dry_run(
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
-    group_scan = sim.scan[tuple(group)]
+    group_scan = sim.scan.data[tuple(group)]
+    group_tilt = sim.scan.tilt[tuple(group)] if sim.scan.tilt is not None else None
 
     probes = ifft2shift(sim.probe.data)
     group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:]))
@@ -501,7 +504,7 @@ def dry_run(
             return ifft2(fft2(psi * group_obj[:, slice_i, None], shift=False) * prop[:, None], shift=False)
         return psi * group_obj[:, slice_i, None]
 
-    t_props = tilt_propagators(ky, kx, sim, props, sim.tilt[tuple(group)] if sim.tilt is not None else None)
+    t_props = tilt_propagators(ky, kx, sim, props, group_tilt)
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice), shift=False)
     model_intensity = xp.sum(abs2(model_wave), axis=(1, -2, -1))
     exp_intensity = xp.sum(group_patterns, axis=(-2, -1))

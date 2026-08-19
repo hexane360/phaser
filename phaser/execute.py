@@ -14,7 +14,7 @@ from phaser.utils.object import ObjectSampling
 from phaser.utils.misc import unwrap
 from .hooks import EngineHook, Hook, ObjectHook, RawData
 from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
-from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons
+from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons, ScanState
 from .observer import Observer, LoggingObserver, PatienceObserver, SaveObserver, ObserverSet
 from .version import version_info
 
@@ -135,11 +135,13 @@ def _normalize_scan_shape(
     Normalizes 'patterns' and 'state' to share a common scan shape.
 
     Requires that there are an equal number of patterns and scan positions.
-    Reshapes 'state.scan' and 'patterns' to match shape, choosing the highest
-    dimensional shape of the two. 'state.tilt' is reshaped as well.
+    Reshapes 'state.scan' (scan and tilt) and 'patterns' to match shape,
+    choosing the highest dimensional shape of the two.
     """
+    scan = state.scan
+
     patterns_shape = patterns.patterns.shape[:-2]
-    scan_shape = state.scan.shape[:-1]
+    scan_shape = scan.data.shape[:-1]
 
     n_patterns = math.prod(patterns_shape)
     n_scan = math.prod(scan_shape)
@@ -150,14 +152,15 @@ def _normalize_scan_shape(
     new_shape = scan_shape if len(scan_shape) > len(patterns_shape) else patterns_shape
 
     patterns.patterns = patterns.patterns.reshape((*new_shape, *patterns.patterns.shape[-2:]))
-    state.scan = state.scan.reshape((*new_shape, 2))
+    scan.data = scan.data.reshape((*new_shape, 2))
+    scan.initial = scan.initial.reshape((*new_shape, 2))
 
-    if state.tilt is not None:
-        n_tilt = math.prod(state.tilt.shape[:-1])
+    if scan.tilt is not None:
+        n_tilt = math.prod(scan.tilt.shape[:-1])
         if n_tilt != n_patterns:
             raise ValueError(f"# of tilt positions {n_scan} doesn't match # of patterns {n_patterns}")
 
-        state.tilt = state.tilt.reshape((*new_shape, 2))
+        scan.tilt = scan.tilt.reshape((*new_shape, 2))
 
     return patterns, state
 
@@ -309,27 +312,28 @@ def initialize_reconstruction(
 
     if init_state.scan is not None and plan.init.scan is None:
         logging.info("Re-using scan from initial state...")
-        scan = init_state.scan
+        scan = init_state.scan.copy()
+        scan.data = scan.data.astype(dtype)
+        scan.initial = scan.initial.astype(dtype)
     else:
         logging.info("Initializing scan...")
-        scan = pane.from_data(scan_hook, ScanHook)(  # type: ignore
+        scan_arr = pane.from_data(scan_hook, ScanHook)(  # type: ignore
             {'dtype': dtype, 'seed': seed, 'xp': xp}
         )
+        scan = ScanState(scan_arr, scan_arr.copy())
 
-    if init_state.tilt is not None and plan.init.tilt is None:
+    if init_state.scan is not None and init_state.scan.tilt is not None and plan.init.tilt is None:
         logging.info("Re-using tilt from initial state...")
-        tilt = init_state.tilt
+        scan.tilt = init_state.scan.tilt.astype(dtype)
     elif tilt_hook is not None:
         logging.info("Initializing tilt...")
-        tilt = pane.from_data(tilt_hook, TiltHook)(  # type: ignore
-            {'dtype': dtype, 'xp': xp, 'shape': scan.shape[:-1]}
+        scan.tilt = pane.from_data(tilt_hook, TiltHook)(  # type: ignore
+            {'dtype': dtype, 'xp': xp, 'shape': scan.data.shape[:-1]}
         )
-    else:
-        tilt = None
 
     obj_pad_px: float = plan.engines[0].obj_pad_px if len(plan.engines) > 0 else 5.0  # type: ignore
     obj_sampling = ObjectSampling.from_scan(
-        scan, sampling.sampling, sampling.extent / 2. + obj_pad_px * sampling.sampling
+        scan.data, sampling.sampling, sampling.extent / 2. + obj_pad_px * sampling.sampling
     )
 
     if init_state.object is not None and plan.init.object is None:
@@ -352,7 +356,6 @@ def initialize_reconstruction(
         probe=probe,
         object=obj,
         scan=scan,
-        tilt=tilt,
         wavelength=wavelength
     )
     state = state.to_xp(xp)  # TODO: figure out why this isn't already the case
@@ -414,7 +417,7 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
         obj_sampling = obj_sampling.with_sampling(state.probe.sampling.sampling)
 
     obj_sampling_pad = obj_sampling.expand_to_scan(
-        state.scan, state.probe.sampling.extent / 2. + engine.obj_pad_px * state.probe.sampling.sampling
+        state.scan.data, state.probe.sampling.extent / 2. + engine.obj_pad_px * state.probe.sampling.sampling
     )
 
     if obj_sampling_pad != obj_sampling:
@@ -448,9 +451,9 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
 
     if isinstance(engine, GradientEnginePlan):
         solver_vars = set(itertools.chain.from_iterable(engine.solvers.keys()))
-        if 'tilt' in solver_vars and state.tilt is None:
+        if 'tilt' in solver_vars and state.scan.tilt is None:
             logging.info("Creating new, zeroed tilt map...")
-            state.tilt = xp.zeros_like(state.scan)
+            state.scan.tilt = xp.zeros_like(state.scan.data)
 
     return patterns, state
 

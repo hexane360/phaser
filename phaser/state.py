@@ -1,6 +1,7 @@
 import typing as t
 
 import numpy
+from frozendict import frozendict
 from numpy.typing import NDArray
 from typing_extensions import Self
 
@@ -57,12 +58,14 @@ class IterState:
         return IterState(0, 0, 0)
 
 
-@tree_dataclass(static_fields=('sampling',))
+@tree_dataclass(static_fields=('sampling', 'meta'))
 class ProbeState:
     sampling: Sampling
     """Probe coordinate system. See `Sampling` for more details."""
     data: NDArray[numpy.complexfloating]
     """Probe wavefunction, in realspace. Shape (modes, y, x)"""
+
+    meta: frozendict[str, t.Any] = field(default_factory=frozendict)
 
     def resample(
         self, new_samp: Sampling,
@@ -76,16 +79,16 @@ class ProbeState:
             order=order,
             mode=mode,
         )
-        return self.__class__(new_samp, new_data)
+        return self.__class__(new_samp, new_data, self.meta)
 
     def to_xp(self, xp: t.Any) -> Self:
         return self.__class__(
-            self.sampling, xp.asarray(self.data)
+            self.sampling, xp.asarray(self.data), self.meta
         )
 
     def to_numpy(self) -> Self:
         return self.__class__(
-            self.sampling, to_numpy(self.data)
+            self.sampling, to_numpy(self.data), self.meta
         )
 
     def copy(self) -> Self:
@@ -93,7 +96,7 @@ class ProbeState:
         return copy.deepcopy(self)
 
 
-@tree_dataclass(static_fields=('sampling',))
+@tree_dataclass(static_fields=('sampling', 'meta'))
 class ObjectState:
     sampling: ObjectSampling
     """Object coordinate system. See `ObjectSampling` for more details."""
@@ -105,14 +108,16 @@ class ObjectState:
     Length < 2 for single slice, equal to the number of slices otherwise.
     """
 
+    meta: frozendict[str, t.Any] = field(default_factory=frozendict)
+
     def to_xp(self, xp: t.Any) -> Self:
         return self.__class__(
-            self.sampling, xp.asarray(self.data), xp.asarray(self.thicknesses)
+            self.sampling, xp.asarray(self.data), xp.asarray(self.thicknesses), self.meta,
         )
 
     def to_numpy(self) -> Self:
         return self.__class__(
-            self.sampling, to_numpy(self.data), to_numpy(self.thicknesses)
+            self.sampling, to_numpy(self.data), to_numpy(self.thicknesses), self.meta,
         )
 
     def zs(self) -> NDArray[numpy.floating]:
@@ -120,6 +125,38 @@ class ObjectState:
         if len(self.thicknesses) < 2:
             return xp.asarray([0.], dtype=self.thicknesses.dtype)
         return xp.cumsum(self.thicknesses) - self.thicknesses
+
+    def copy(self) -> Self:
+        import copy
+        return copy.deepcopy(self)
+
+
+@tree_dataclass(static_fields=('meta',))
+class ScanState:
+    data: NDArray[numpy.floating]
+    """Scan coordinates (y, x), in length units. Shape (..., 2)"""
+    initial: NDArray[numpy.floating]
+    """Inital scan coordinates (y, x), in length units."""
+    tilt: NDArray[numpy.floating] | None = None
+    """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
+
+    meta: frozendict[str, t.Any] = field(default_factory=frozendict)
+
+    def to_xp(self, xp: t.Any) -> Self:
+        return self.__class__(
+            xp.asarray(self.data),
+            xp.asarray(self.initial),
+            None if self.tilt is None else xp.asarray(self.tilt),
+            self.meta,
+        )
+
+    def to_numpy(self) -> Self:
+        return self.__class__(
+            to_numpy(self.data),
+            to_numpy(self.initial),
+            None if self.tilt is None else to_numpy(self.tilt),
+            self.meta,
+        )
 
     def copy(self) -> Self:
         import copy
@@ -145,10 +182,8 @@ class ReconsState:
 
     probe: ProbeState
     object: ObjectState
-    scan: NDArray[numpy.floating]
-    """Scan coordinates (y, x), in length units. Shape (..., 2)"""
-    tilt: NDArray[numpy.floating] | None = None
-    """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
+    scan: ScanState
+
     progress: dict[str, ProgressState] = field(default_factory=dict)
 
     def to_xp(self, xp: t.Any) -> Self:
@@ -156,8 +191,7 @@ class ReconsState:
             iter=self.iter,
             probe=self.probe.to_xp(xp),
             object=self.object.to_xp(xp),
-            scan=xp.asarray(self.scan),
-            tilt=None if self.tilt is None else xp.asarray(self.tilt),
+            scan=self.scan.to_xp(xp),
             progress=self.progress,
             wavelength=self.wavelength,
         )
@@ -167,8 +201,7 @@ class ReconsState:
             iter=self.iter.to_numpy(),
             probe=self.probe.to_numpy(),
             object=self.object.to_numpy(),
-            scan=to_numpy(self.scan),
-            tilt=None if self.tilt is None else to_numpy(self.tilt),
+            scan=self.scan.to_numpy(),
             progress=self.progress,
             wavelength=float(self.wavelength),
         )
@@ -194,9 +227,7 @@ class PartialReconsState:
 
     probe: ProbeState | None = None
     object: ObjectState | None = None
-    scan: NDArray[numpy.floating] | None = None
-    """Scan coordinates (y, x), in length units. Shape (..., 2)"""
-    tilt: NDArray[numpy.floating] | None = None
+    scan: ScanState | None = None
     progress: dict[str, ProgressState] | None = None
 
     def to_numpy(self) -> Self:
@@ -204,8 +235,7 @@ class PartialReconsState:
             iter=self.iter.to_numpy() if self.iter is not None else None,
             probe=self.probe.to_numpy() if self.probe is not None else None,
             object=self.object.to_numpy() if self.object is not None else None,
-            scan=to_numpy(self.scan) if self.scan is not None else None,
-            tilt=to_numpy(self.tilt) if self.tilt is not None else None,
+            scan=self.scan.to_numpy() if self.scan is not None else None,
             wavelength=float(self.wavelength) if self.wavelength is not None else None,
             progress=self.progress,
         )
@@ -222,8 +252,8 @@ class PartialReconsState:
             wavelength=t.cast(Float, self.wavelength),
             probe=t.cast(ProbeState, self.probe),
             object=t.cast(ObjectState, self.object),
-            scan=t.cast(NDArray[numpy.floating], self.scan),
-            tilt=self.tilt, progress=progress, iter=iter,
+            scan=t.cast(ScanState, self.scan),
+            progress=progress, iter=iter,
         )
 
     def write_hdf5(self, file: 'HdfLike'):

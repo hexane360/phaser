@@ -51,7 +51,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
     solver = props.solver(props)
     sim = solver.init(sim)
-    groups = GroupManager(sim.state.scan, props.grouping, props.compact, seed=seed)
+    groups = GroupManager(sim.state.scan.data, props.grouping, props.compact, seed=seed)
 
     calc_error_mask = mask_fraction_of_groups(len(groups), props.calc_error_fraction)
 
@@ -79,7 +79,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
     # runs rescaling
     sim = solver.presolve(
-        sim, groups.iter(sim.state.scan),
+        sim, groups.iter(sim.state.scan.data),
         patterns=patterns, pattern_mask=pattern_mask,
         propagators=propagators
     )
@@ -95,7 +95,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         iter_shuffle_groups = shuffle_groups({'state': sim.state, 'niter': props.niter})
 
         sim, pos_update, group_errors = solver.run_iteration(
-            sim, groups.iter(sim.state.scan, i, iter_shuffle_groups),
+            sim, groups.iter(sim.state.scan.data, i, iter_shuffle_groups),
             patterns=patterns, pattern_mask=pattern_mask, propagators=propagators,
             update_object=update_object({'state': sim.state, 'niter': props.niter}),
             update_probe=update_probe({'state': sim.state, 'niter': props.niter}),
@@ -116,16 +116,16 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
             # subtract mean position update
             pos_update -= xp.mean(pos_update, tuple(range(pos_update.ndim - 1)))
-            pos_update, position_solver_state = position_solver.perform_update(sim.state.scan, pos_update, position_solver_state)
+            pos_update, position_solver_state = position_solver.perform_update(sim.state.scan.data, pos_update, position_solver_state)
             # subtract mean again (this can change with momentum)
             pos_update -= xp.mean(pos_update, tuple(range(pos_update.ndim - 1)))
             pos_update_rms = float(xp.mean(xp.linalg.norm(pos_update, axis=-1, keepdims=True)))
             logger.info(f"Position update: mean {pos_update_rms}")
-            sim.state.scan += pos_update
-            assert_dtype(sim.state.scan, dtype)
+            sim.state.scan.data += pos_update
+            assert_dtype(sim.state.scan.data, dtype)
 
             # check positions are at least overlapping object
-            sim.state.object.sampling.check_scan(sim.state.scan, sim.state.probe.sampling.extent / 2.)
+            sim.state.object.sampling.check_scan(sim.state.scan.data, sim.state.probe.sampling.extent / 2.)
 
             progress['pos_update_rms'].iters.append(i + start_i)
             progress['pos_update_rms'].values.append(pos_update_rms)
@@ -139,7 +139,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
                 progress[k].values.append(error)
 
         sim.state.progress = progress
-        observer.update_iteration(sim.state, i, props.niter, {'total_loss': error})
+        observer.update_iteration(sim.state, i, props.niter, {'total_loss': error} if error is not None else {})
 
     observer.finish_engine(sim.state)
     return sim.state
