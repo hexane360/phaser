@@ -34,9 +34,11 @@ def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def _positions_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    # `ReconsState.scan`, wire-form as sent (shape (..., 2), in length units). Passed
+    # `ScanState.data`, wire-form as sent (shape (..., 2), in length units). Passed
     # through verbatim like `_probes_view`; the client flattens the leading axes.
-    return cache.raw.get('scan')
+    # `initial` and `tilt` ride along in the same payload, unused by this view.
+    scan = cache.raw.get('scan')
+    return scan['data'] if scan is not None else None
 
 
 def _recip_probes(cache: Cache) -> t.Any:
