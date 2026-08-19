@@ -1,14 +1,17 @@
 
 import logging
-import numpy
-from numpy.typing import NDArray
 
+import numpy
+from frozendict import frozendict
+
+from phaser.state import ScanState
 from phaser.utils.num import cast_array_module
 from phaser.utils.scan import make_raster_scan
-from . import ScanHookArgs, RasterScanProps
+
+from . import RasterScanProps, ScanHookArgs
 
 
-def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> NDArray[numpy.floating]:
+def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> ScanState:
     xp = cast_array_module(args['xp'])
     logger = logging.getLogger(__name__)
 
@@ -33,5 +36,13 @@ def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> NDArray[numpy.flo
         props.shape, step_size, rot, affine,
         dtype=args['dtype'], xp=xp,
     )
+    ii, jj = numpy.indices(props.shape, dtype=numpy.int64)
+    assert ii.shape == jj.shape == scan.shape[:-1]
 
-    return scan
+    return ScanState(
+        scan, scan.copy(), tilt=None, meta=frozendict(
+            type='raster',
+            raster_rows=tuple(map(tuple, ii.tolist())),
+            raster_cols=tuple(map(tuple, jj.tolist())),
+        )
+    )

@@ -17,7 +17,7 @@ from phaser.state import (
     ScanState,
 )
 from phaser.utils.io import hdf5_read_state
-from phaser.utils.num import Sampling
+from phaser.utils.num import Sampling, get_backend_module
 from phaser.utils.object import ObjectSampling
 
 from .utils import INPUT_FILES_PATH
@@ -66,9 +66,15 @@ def test_state_hdf5_roundtrip(tmp_path: Path, region: bool):
     state = make_state(region=region)
     path = tmp_path / 'state.h5'
     state.write_hdf5(path)
+
+    with h5py.File(path) as f:
+        assert f['probe']['type'][()] == b'pixelated'
+        assert f['object']['type'][()] == b'pixelated'
+
     read = ReconsState.read_hdf5(path)
 
     assert read.wavelength == state.wavelength
+    assert read.probe.ty == read.object.ty == 'pixelated'
     assert (read.iter.engine_num, read.iter.engine_iter, read.iter.total_iter) == (2, 5, 15)
     assert read.progress['total_loss'].iters == [1, 2]
     assert read.progress['total_loss'].values == [3., 2.]
@@ -146,6 +152,23 @@ def test_state_hdf5_meta_empty(tmp_path: Path):
     assert ReconsState.read_hdf5(path).scan.meta == frozendict()
 
 
+@pytest.mark.jax
+def test_state_pytree_leaves_are_numeric():
+    # `tree` dispatches to jax directly, so the backend must be loaded before
+    # the state classes are registered as pytree nodes
+    try:
+        get_backend_module('jax')
+    except ValueError as e:
+        pytest.skip(str(e))
+
+    from phaser.utils import tree
+
+    # every non-static field is an array; discriminators and metadata are static
+    for (path, leaf) in tree.leaves_with_path(make_state()):
+        assert numpy.issubdtype(numpy.asarray(leaf).dtype, numpy.number), \
+            f"non-numeric pytree leaf at '{''.join(map(str, path))}'"
+
+
 def test_state_meta_survives_backend_roundtrip():
     state = make_state()
     round_tripped = state.to_xp(numpy).to_numpy()
@@ -178,11 +201,30 @@ def test_read_state_v0_1(name: str, has_tilt: bool):
 
     assert state.scan.meta == frozendict()
     assert state.probe is not None and state.probe.meta == frozendict()
+    # v0.1 has no 'type', which reads back as pixelated
+    assert state.probe.ty == 'pixelated'
 
     # v0.1 wrote absent regions as empty datasets
     assert state.object is not None
+    assert state.object.ty == 'pixelated'
     assert state.object.sampling.region_min is None
     assert state.object.sampling.region_max is None
+
+
+@pytest.mark.parametrize(('group', 'ty'), (
+    ('probe', 'fake_type'),
+    ('object', 'fake_type'),
+))
+def test_read_state_unsupported_type(tmp_path: Path, group: str, ty: str):
+    path = tmp_path / 'state.h5'
+    make_state().write_hdf5(path)
+
+    with h5py.File(path, 'r+') as f:
+        del f[group]['type']
+        f[group].create_dataset('type', data=ty, dtype=h5py.string_dtype('utf-8'))
+
+    with pytest.raises(ValueError, match=re.escape(f"Unsupported {group} type '{ty}'")):
+        hdf5_read_state(path)
 
 
 def test_read_state_unsupported_version(tmp_path: Path):

@@ -7,21 +7,21 @@ import typing as t
 import numpy
 from numpy.typing import ArrayLike, DTypeLike, NDArray
 
-from .num import get_array_module, cast_array_module, NumT
+from .num import FloatT, cast_array_module, get_array_module
 
 
 @t.overload
-def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,  # pyright: ignore[reportOverlappingOverload]
-                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: NumT, xp: t.Any = None) -> NDArray[NumT]:
+def make_raster_scan(shape: tuple[int, int], scan_step: ArrayLike,
+                     rotation: float = 0., affine: None | ArrayLike = None, *, dtype: FloatT, xp: t.Any = None) -> NDArray[FloatT]:
     ...
 
 @t.overload
-def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
-                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: t.Optional[DTypeLike] = None, xp: t.Any = None) -> NDArray[numpy.floating]:
+def make_raster_scan(shape: tuple[int, int], scan_step: ArrayLike,
+                     rotation: float = 0., affine: None | ArrayLike = None, *, dtype: DTypeLike | None = None, xp: t.Any = None) -> NDArray[numpy.floating]:
     ...
 
-def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
-                     rotation: float = 0., affine: t.Union[None, ArrayLike] = None, *, dtype: t.Any = None, xp: t.Any = None) -> NDArray[numpy.number]:
+def make_raster_scan(shape: tuple[int, int], scan_step: ArrayLike,
+                     rotation: float = 0., affine: None | ArrayLike = None, *, dtype: t.Any = None, xp: t.Any = None) -> NDArray[numpy.floating]:
     """
     Make a raster scan, centered around the origin.
 
@@ -56,7 +56,7 @@ def make_raster_scan(shape: t.Tuple[int, int], scan_step: ArrayLike,
         mat = xp2.asarray([[numpy.cos(theta), -numpy.sin(theta)], [numpy.sin(theta), numpy.cos(theta)]], dtype=dtype)
         pts = (pts @ mat.T)
 
-    return t.cast(NDArray[numpy.number], pts)
+    return t.cast(NDArray[numpy.floating], pts)
 
 
 __all__ = [

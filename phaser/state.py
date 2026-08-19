@@ -58,14 +58,15 @@ class IterState:
         return IterState(0, 0, 0)
 
 
-@tree_dataclass(static_fields=('sampling', 'meta'))
-class ProbeState:
+@tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
+class PixelatedProbeState:
     sampling: Sampling
     """Probe coordinate system. See `Sampling` for more details."""
     data: NDArray[numpy.complexfloating]
     """Probe wavefunction, in realspace. Shape (modes, y, x)"""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
+    ty: t.Literal['pixelated'] = 'pixelated'
 
     def resample(
         self, new_samp: Sampling,
@@ -96,8 +97,12 @@ class ProbeState:
         return copy.deepcopy(self)
 
 
-@tree_dataclass(static_fields=('sampling', 'meta'))
-class ObjectState:
+# discriminated union of probe state types
+ProbeState: t.TypeAlias = PixelatedProbeState
+
+
+@tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
+class PixelatedObjectState:
     sampling: ObjectSampling
     """Object coordinate system. See `ObjectSampling` for more details."""
     data: NDArray[numpy.complexfloating]
@@ -109,6 +114,7 @@ class ObjectState:
     """
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
+    ty: t.Literal['pixelated'] = 'pixelated'
 
     def to_xp(self, xp: t.Any) -> Self:
         return self.__class__(
@@ -129,6 +135,10 @@ class ObjectState:
     def copy(self) -> Self:
         import copy
         return copy.deepcopy(self)
+
+
+# discriminated union of object state types
+ObjectState: t.TypeAlias = PixelatedObjectState
 
 
 @tree_dataclass(static_fields=('meta',))
@@ -295,3 +305,18 @@ class PreparedRecons:
             observers.extend(observer)
 
         return self.__class__(self.patterns, self.state, self.name, ObserverSet(observers))
+
+
+__all__ = [
+    'IterState',
+    'ObjectState',
+    'PartialReconsState',
+    'Patterns',
+    'PixelatedObjectState',
+    'PixelatedProbeState',
+    'PreparedRecons',
+    'ProbeState',
+    'ProgressState',
+    'ReconsState',
+    'ScanState',
+]

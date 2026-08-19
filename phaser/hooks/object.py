@@ -3,11 +3,12 @@ import numpy
 
 from phaser.utils.num import cast_array_module, to_complex_dtype
 from phaser.utils.object import random_phase_object
-from ..state import ObjectState
+
+from ..state import PixelatedObjectState
 from . import ObjectHookArgs, RandomObjectProps
 
 
-def random_object(args: ObjectHookArgs, props: RandomObjectProps) -> ObjectState:
+def random_object(args: ObjectHookArgs, props: RandomObjectProps) -> PixelatedObjectState:
     sampling = args['sampling']
 
     if args['slices'] is not None:
@@ -22,4 +23,4 @@ def random_object(args: ObjectHookArgs, props: RandomObjectProps) -> ObjectState
         dtype=to_complex_dtype(args['dtype']),
         xp=cast_array_module(args['xp'])
     )
-    return ObjectState(sampling, obj, thicknesses)
+    return PixelatedObjectState(sampling, obj, thicknesses)

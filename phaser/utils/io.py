@@ -12,6 +12,8 @@ from phaser.state import (
     IterState,
     ObjectState,
     PartialReconsState,
+    PixelatedObjectState,
+    PixelatedProbeState,
     ProbeState,
     ProgressState,
     ReconsState,
@@ -111,6 +113,7 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
     # VERSION 0.2:
     # - moved 'scan' into its own group
     # - added 'meta' to probe, object, scan (backwards compatible)
+    # - added 'type' to probe, object (backwards compatible)
     if version > (0, 2):
         raise ValueError(f"While reading file '{file.filename}':\nUnsupported file version '{version_str}'. Maximum supported version is '0.2'.")
     read_scan_as_group = version >= (0, 2)
@@ -143,6 +146,11 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
 
 
 def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
+    ty = _hdf5_read_string(group, 'type', nullable=True)
+    if ty not in (None, 'pixelated'):
+        # currently we only support pixelated probes
+        raise ValueError(f"While reading file '{group.file.filename}':\nUnsupported probe type '{ty}'")
+
     probes = _hdf5_read_array(group, 'data', numpy.complexfloating)
     assert probes.ndim == 3
 
@@ -151,7 +159,7 @@ def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
 
     meta = hdf5_read_meta(group)
 
-    return ProbeState(
+    return PixelatedProbeState(
         Sampling((n_y, n_x), extent=(extent[0], extent[1])),
         data=probes, meta=meta,
     )
@@ -176,6 +184,11 @@ def hdf5_read_scan_state(group: h5py.Group) -> ScanState:
 
 
 def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
+    ty = _hdf5_read_string(group, 'type', nullable=True)
+    if ty not in (None, 'pixelated'):
+        # currently we only support pixelated objects
+        raise ValueError(f"While reading file '{group.file.filename}':\nUnsupported object type '{ty}'")
+
     obj = _hdf5_read_array(group, 'data', numpy.complexfloating)
     (n_z, n_y, n_x) = obj.shape
 
@@ -191,7 +204,7 @@ def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
 
     meta = hdf5_read_meta(group)
 
-    return ObjectState(
+    return PixelatedObjectState(
         ObjectSampling((n_y, n_x), sampling, corner, region_min, region_max),
         data=obj, thicknesses=thicknesses, meta=meta,
     )
@@ -235,8 +248,8 @@ def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
 
 def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
     file = open_hdf5(file, 'w')  # overwrite if existing
-    file.create_dataset('type', (), h5py.string_dtype(), "phaser_state")
-    file.create_dataset('version', (), h5py.string_dtype(), "0.2")
+    _hdf5_write_string(file, 'type', "phaser_state")
+    _hdf5_write_string(file, 'version', "0.2")
     file.create_dataset('wavelength', (), numpy.float64, state.wavelength)
 
     if state.probe is not None:
@@ -252,7 +265,11 @@ def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
 
 
 def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
+    # we only support pixelated probes currently
+    assert state.ty == 'pixelated'
     assert state.data.ndim == 3
+
+    _hdf5_write_string(group, 'type', state.ty)
     dataset = group.create_dataset('data', data=to_numpy(state.data))
     dataset.dims[0].label = 'mode'
     dataset.dims[1].label = 'y'
@@ -265,13 +282,17 @@ def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
 
 
 def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
+    # we only support pixelated objects currently
+    assert state.ty == 'pixelated'
     assert state.data.ndim == 3
     assert state.thicknesses.ndim == 1
-    n_z = state.data.shape[0]
 
+    n_z = state.data.shape[0]
     thick = to_numpy(state.thicknesses)
     assert thick.ndim == 1
     assert thick.size == n_z if n_z > 1 else thick.size in (0, 1)
+
+    _hdf5_write_string(group, 'type', state.ty)
     group.create_dataset('thicknesses', data=thick)
     zs = group.create_dataset('zs', data=to_numpy(state.zs()))
     zs.make_scale("z")
@@ -465,8 +486,16 @@ def _hdf5_read_scalar(group: h5py.Group, path: str, dtype: type[DTypeT]) -> DTyp
     return arr
 
 
-def _hdf5_read_string(group: h5py.Group, path: str) -> str:
+@t.overload
+def _hdf5_read_string(group: h5py.Group, path: str, nullable: t.Literal[False] = ...) -> str: ...
+
+@t.overload
+def _hdf5_read_string(group: h5py.Group, path: str, nullable: bool = ...) -> str | None: ...
+
+def _hdf5_read_string(group: h5py.Group, path: str, nullable: bool = False) -> str | None:
     if path not in group:
+        if nullable:
+            return None
         raise ValueError(f"While reading '{group.file.filename}':\n"
                          f"Path '{group.name}/{path}' not found.")
 
@@ -475,6 +504,12 @@ def _hdf5_read_string(group: h5py.Group, path: str) -> str:
     if not isinstance(dataset, h5py.Dataset):
         raise TypeError(f"While reading '{group.file.filename}':\n"
                          f"Expected a string at path '{group.name}/{path}', instead found {type(dataset)}.")
+
+    if dataset.shape is None:
+        if nullable:
+            return None
+        raise ValueError(f"While reading '{group.file.filename}':\n"
+                         f"Dataset at path '{group.name}/{path}' is empty.")
 
     dataset = dataset[()]
     if not isinstance(dataset, bytes):
@@ -486,6 +521,10 @@ def _hdf5_read_string(group: h5py.Group, path: str) -> str:
     except ValueError:
         raise ValueError(f"While reading '{group.file.filename}':\n"
                          f"Invalid string at path '{group.name}/{path}")
+
+
+def _hdf5_write_string(group: h5py.Group, name: str, data: str):
+    group.create_dataset(name, (), h5py.string_dtype('utf-8'), data)
 
 
 def _hdf5_write_nullable_dataset(group: h5py.Group, name: str, data: numpy.ndarray | None, dtype: t.Any):
