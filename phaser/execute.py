@@ -5,13 +5,14 @@ import math
 import sys
 import typing as t
 
+from frozendict import frozendict
 import numpy
 import pane
 
 from phaser.types import EarlyTermination
 from phaser.utils.num import Device, cast_array_module, get_array_module, get_backend_devices, get_backend_module, set_default_device, to_device, xp_is_jax, Sampling, to_complex_dtype, xp_is_torch
 from phaser.utils.object import ObjectSampling
-from phaser.utils.misc import unwrap
+from phaser.utils.misc import freeze, unwrap
 from .hooks import EngineHook, Hook, ObjectHook, RawData
 from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
 from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons, ScanState
@@ -161,6 +162,13 @@ def _normalize_scan_shape(
             raise ValueError(f"# of tilt positions {n_scan} doesn't match # of patterns {n_patterns}")
 
         scan.tilt = scan.tilt.reshape((*new_shape, 2))
+
+    # also normalize raster_rows and raster_cols metadata
+    scan.meta = frozendict(
+        scan.meta,
+        **({'raster_rows': freeze(numpy.array(scan.meta['raster_rows']).reshape(new_shape))} if 'raster_rows' in scan.meta else {}),
+        **({'raster_cols': freeze(numpy.array(scan.meta['raster_cols']).reshape(new_shape))} if 'raster_cols' in scan.meta else {}),
+    )
 
     return patterns, state
 

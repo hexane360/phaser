@@ -21,6 +21,7 @@ from phaser.state import (
 )
 from phaser.utils.num import Sampling, to_numpy
 from phaser.utils.object import ObjectSampling
+from phaser.utils.misc import freeze
 
 HdfLike: t.TypeAlias = h5py.File | str | Path
 OpenMode: t.TypeAlias = t.Literal['r', 'r+', 'w', 'w-', 'x', 'a']
@@ -373,15 +374,8 @@ def hdf5_read_meta(group: h5py.Group, path: str = 'meta') -> frozendict[str, t.A
         e.add_note(f"While reading '{group.file.filename}', invalid string dataset '{group.name}/{path}'")
         raise
 
-    def _freeze(obj: object) -> object:
-        if isinstance(obj, dict):
-            return frozendict((k, _freeze(v)) for (k, v) in obj.items())
-        if isinstance(obj, list):
-            return tuple(map(_freeze, obj))
-        return obj
-
     try:
-        d = _freeze(json.loads(s))
+        d = freeze(json.loads(s))
         assert isinstance(d, frozendict)  # config toplevel should be dict
         return d
     except (json.JSONDecodeError, AssertionError) as e:

@@ -3,6 +3,7 @@ import math
 from types import ModuleType
 import typing as t
 
+from frozendict import frozendict
 import numpy
 from numpy.typing import NDArray
 from numpy.random import SeedSequence, PCG64, BitGenerator, Generator
@@ -222,6 +223,35 @@ def unwrap(val: t.Optional[T]) -> T:
     return val
 
 
+def freeze(obj: object) -> t.Any:
+    """Attempt to freeze an object, making it immutable."""
+    # handle numpy types
+    if isinstance(obj, numpy.generic):
+        return freeze(obj.item())
+    if isinstance(obj, numpy.ndarray):
+        return freeze(obj.tolist())
+
+    # sequences
+    if isinstance(obj, (list, tuple, t.Sequence)):
+        # immutable sequence types
+        if isinstance(obj, (str, bytes, range)):
+            return obj
+        # byte arrays
+        if isinstance(obj, bytearray):
+            return bytes(obj)
+        return tuple(map(freeze, obj))
+
+    # mappings
+    if isinstance(obj, (dict, frozendict, t.Mapping)):
+        return frozendict((k, freeze(v)) for (k, v) in obj.items())
+
+    try:
+        hash(obj)
+        return obj
+    except TypeError as e:
+        raise TypeError(f"Don't know how to freeze type '{type(obj)}'") from e
+
+
 class _MockModule:
     def __init__(self, module: ModuleType, rewrites: t.Dict[str, t.Callable], wrap: t.Callable):
         self._inner: ModuleType = module
@@ -269,5 +299,5 @@ __all__ = [
     'create_rng', 'create_rng_group',
     'create_sparse_groupings', 'create_compact_groupings',
     'mask_fraction_of_groups', 'FloatKey',
-    'unwrap',
+    'unwrap', 'freeze',
 ]

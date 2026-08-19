@@ -4,10 +4,10 @@ import logging
 import re
 
 import numpy
-import pane
 import pytest
 from numpy.testing import assert_allclose
 
+import pane
 from phaser.execute import (
     _normalize_scan_shape,
     initialize_reconstruction,
