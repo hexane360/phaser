@@ -1,17 +1,25 @@
 # type: ignore
 
-import re
 import logging
+import re
 
 import numpy
 import pane
 import pytest
+from numpy.testing import assert_allclose
 
-from phaser.utils.num import Sampling
-from phaser.hooks import RawData
+from phaser.execute import (
+    _normalize_scan_shape,
+    initialize_reconstruction,
+    load_raw_data,
+)
+from phaser.hooks import DropNanProps, RawData
+from phaser.hooks.preprocessing import drop_nan_patterns
 from phaser.plan import ReconsPlan
-from phaser.execute import load_raw_data, initialize_reconstruction
-from phaser.state import PartialReconsState, ProbeState, ScanState
+from phaser.state import PartialReconsState, Patterns, ProbeState, ScanState
+from phaser.utils.num import Sampling
+
+from .utils import make_recons_state
 
 
 def load_empty(args, props) -> RawData:
@@ -182,3 +190,105 @@ def test_load_3d_raw_data():
 
     assert recons.state.scan.data.shape == (*scan_shape, 2)
     assert recons.patterns.patterns.shape == (*scan_shape, *det_shape)
+
+def _plan_with_scan(**init: object) -> ReconsPlan:
+    return ReconsPlan.from_data({
+        'name': 'test',
+        'raw_data': {
+            'type': 'tests.test_initialization:load_empty',
+            'scan_shape': (8, 8),
+            'det_shape': (32, 32),
+        },
+        'engines': [],
+        'init': init,
+    })
+
+
+def test_initialize_scan_initial_independent():
+    plan = _plan_with_scan(
+        scan={'type': 'raster', 'shape': (8, 8), 'step_size': (1., 1.)},
+        probe={'type': 'focused', 'conv_angle': 20.0, 'defocus': 100.0},
+    )
+    scan = initialize_reconstruction(plan, xp=numpy).state.scan
+
+    assert not numpy.shares_memory(scan.data, scan.initial)
+
+    initial = scan.initial.copy()
+    scan.data += 1.
+    assert numpy.array_equal(scan.initial, initial)
+
+
+def test_initialize_reuses_scan_state():
+    plan = _plan_with_scan()
+
+    probe = ProbeState(
+        Sampling((32, 32), sampling=(1.0, 1.0)),
+        numpy.zeros((1, 32, 32), dtype=numpy.complex64),
+    )
+    # a previous state, as read back from disk
+    prev = ScanState(
+        numpy.arange(128.).reshape(8, 8, 2),
+        numpy.arange(128.).reshape(8, 8, 2) + 100.,
+        numpy.arange(128.).reshape(8, 8, 2) * 0.01,
+    )
+
+    scan = initialize_reconstruction(plan, xp=numpy, init_state=PartialReconsState(
+        wavelength=1.0, probe=probe, scan=prev,
+    )).state.scan
+
+    # `initial` is carried over, not reset to `data`
+    assert_allclose(scan.data, prev.data, rtol=1e-6)
+    assert_allclose(scan.initial, prev.initial, rtol=1e-6)
+    assert_allclose(scan.tilt, prev.tilt, rtol=1e-6)
+
+    assert scan.data.dtype == scan.initial.dtype == scan.tilt.dtype == numpy.float32
+
+    # the caller's state is left untouched
+    assert prev.data.dtype == numpy.float64
+    assert not numpy.shares_memory(scan.data, prev.data)
+    assert not numpy.shares_memory(scan.initial, prev.initial)
+
+
+@pytest.mark.parametrize('flat_scan', (True, False))
+def test_normalize_scan_shape_keeps_initial(flat_scan: bool):
+    flat = numpy.arange(128.).reshape(64, 2)
+    shape = (64, 2) if flat_scan else (8, 8, 2)
+    scan = ScanState(flat.reshape(shape), (flat + 100.).reshape(shape), (flat * 0.01).reshape(shape))
+
+    patterns_shape = (8, 8, 4, 4) if flat_scan else (64, 4, 4)
+    patterns = Patterns(
+        numpy.zeros(patterns_shape, dtype=numpy.float32),
+        numpy.ones((4, 4), dtype=numpy.float32),
+    )
+
+    (patterns, state) = _normalize_scan_shape(patterns, make_recons_state(scan))
+
+    assert patterns.patterns.shape == (8, 8, 4, 4)
+    assert state.scan.data.shape == (8, 8, 2)
+    assert state.scan.initial.shape == (8, 8, 2)
+    assert state.scan.tilt.shape == (8, 8, 2)
+
+    assert numpy.array_equal(state.scan.initial, (flat + 100.).reshape(8, 8, 2))
+
+
+def test_drop_nan_patterns_filters_initial():
+    patterns = numpy.zeros((4, 4, 2, 2), dtype=numpy.float32)
+    patterns[0, 0] = numpy.nan
+    patterns[2, 3] = numpy.nan
+
+    flat = numpy.arange(32.).reshape(16, 2)
+    scan = ScanState(flat.reshape(4, 4, 2), flat.reshape(4, 4, 2) + 100., flat.reshape(4, 4, 2) * 0.01)
+
+    (data, state) = drop_nan_patterns({
+        'data': Patterns(patterns, numpy.ones((2, 2), dtype=numpy.float32)),
+        'state': make_recons_state(scan),
+        'seed': None, 'dtype': numpy.float32, 'xp': numpy,
+    }, DropNanProps(threshold=0.5))
+
+    kept = numpy.ones(16, dtype=numpy.bool_)
+    kept[[0, 11]] = False
+
+    assert data.patterns.shape == (14, 2, 2)
+    assert numpy.array_equal(state.scan.data, flat[kept])
+    assert numpy.array_equal(state.scan.initial, flat[kept] + 100.)
+    assert numpy.array_equal(state.scan.tilt, flat[kept] * 0.01)
