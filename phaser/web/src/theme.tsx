@@ -1,8 +1,7 @@
-import { AppShell, AppShellStylesNames, createTheme, Tabs, TabsStylesNames } from "@mantine/core"
-import * as tabs_classes from './Tabs.module.css'
-import * as appshell_classes from './AppShell.module.css'
-
-console.log(`tabs_classes: ${JSON.stringify(tabs_classes)}`);
+import { AppShell, AppShellStylesNames, Button, ButtonStylesNames, createTheme, Tabs, TabsStylesNames } from "@mantine/core"
+import tabs_classes from './Tabs.module.css'
+import appshell_classes from './AppShell.module.css'
+import button_classes from './Button.module.css'
 
 export const makeTheme = () => createTheme({
     //fontFamily: 'Open Sans, sans-serif',
@@ -12,6 +11,9 @@ export const makeTheme = () => createTheme({
         }),
         AppShell: AppShell.extend({
             classNames: appshell_classes as Partial<Record<AppShellStylesNames, string>>,
+        }),
+        Button: Button.extend({
+            classNames: button_classes as Partial<Record<ButtonStylesNames, string>>,
         }),
     },
     defaultRadius: 'md',
@@ -31,6 +33,7 @@ export const makeTheme = () => createTheme({
             '#141414',  // dark filled hover
         ],
     },
+    //--mantine-color-default-border
 });
 
 export const cssVariableResolver = (theme: ReturnType<typeof makeTheme>) => ({

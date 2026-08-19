@@ -1,0 +1,319 @@
+:root {
+    --border-width: 2px;
+
+    &[data-mantine-color-scheme="light"] {
+        --mantine-color-default-border: var(--mantine-color-gray-6);
+    }
+
+    &[data-mantine-color-scheme="dark"] {
+        --mantine-color-default-border: var(--mantine-color-gray-3);
+
+        /* Mantine ships these as opaque dark blends, baked against its *default* dark
+           body rather than ours (`--mantine-color-dark-7`), which reads muddy. A
+           translucent tint of a bright shade composites against the real background
+           instead. Covers the palettes in use; extend as needed. */
+        --mantine-color-red-light: alpha(var(--mantine-color-red-5), 0.2);
+        --mantine-color-red-light-color: var(--mantine-color-red-2);
+        --mantine-color-red-light-hover: alpha(var(--mantine-color-red-5), 0.28);
+
+        --mantine-color-yellow-light: alpha(var(--mantine-color-yellow-5), 0.2);
+        --mantine-color-yellow-light-color: var(--mantine-color-yellow-2);
+        --mantine-color-yellow-light-hover: alpha(var(--mantine-color-yellow-5), 0.28);
+
+        --mantine-color-blue-light: alpha(var(--mantine-color-blue-5), 0.2);
+        --mantine-color-blue-light-color: var(--mantine-color-blue-2);
+        --mantine-color-blue-light-hover: alpha(var(--mantine-color-blue-5), 0.28);
+
+        --mantine-color-gray-light: alpha(var(--mantine-color-gray-5), 0.2);
+        --mantine-color-gray-light-color: var(--mantine-color-gray-2);
+        --mantine-color-gray-light-hover: alpha(var(--mantine-color-gray-5), 0.28);
+    }
+}
+
+.section-header {
+    display: block;
+    font-size: x-large;
+    border-bottom: 2px solid;
+    padding: 10px;
+    margin: 10px 10px;
+}
+
+.section-header:hover {
+    background-color: var(--mantine-color-gray-0);
+    border-radius: 5px;
+}
+
+[data-mantine-color-scheme="dark"] .section-header:hover {
+    background-color: var(--mantine-color-dark-6);
+}
+
+.section {
+    container-type: inline-size;
+
+    transition: max-height 0.3s ease-out;
+    max-height: 100em;
+    overflow: hidden;
+    margin: 15px 15px;
+}
+
+.section-header + .section.collapsed {
+    transition: max-height 0.3s ease-in;
+    max-height: 0;
+}
+
+.section > * {
+    margin: auto;
+}
+
+.mantine-active.disable-active:active {
+    transform: none;
+}
+
+.hbox, .vbox {
+    display: flex;
+    justify-content: center;
+}
+
+.hbox > *, .vbox > * {
+    flex: 0 0 auto;
+}
+
+.mono {
+    font-family: var(--mantine-font-family-monospace);
+}
+
+/* The log view (`views/logs.tsx`). `.log-cont` is the bordered frame marking the
+   scrollable region; `.log-scroll` (Virtuoso's own root) is what actually scrolls, and
+   fills the frame via its own inline `height: 100%`. */
+.log-cont {
+    margin: 0 5px;
+    border: var(--border-width) solid var(--mantine-color-default-border);
+    border-radius: var(--mantine-radius-md);
+    background-color: var(--mantine-color-body);
+    overflow: hidden;
+
+    /* fallback */
+    height: clamp(20rem, 70vh, 80rem);
+    height: clamp(20rem, 70lvh, 80rem);
+}
+
+.log-scroll {
+    /* scrollbar sits inside the frame's rounded corners */
+    scrollbar-gutter: stable;
+}
+
+/* one record: the clickable line, plus its expandable detail */
+/* separators are `border-top`: Virtuoso wraps each item in its own element, so a row is
+   always an only-child and `:last-child` can't single out the final one */
+.log-row {
+    border-left: 3px solid var(--level, transparent);
+    border-top: 1px solid var(--mantine-color-default-border);
+}
+
+.log-line {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-items: baseline;
+    gap: 10px;
+
+    padding: 4px 10px;
+    cursor: pointer;
+
+    &:hover {
+        background-color: var(--mantine-color-default-hover);
+    }
+}
+
+.log-time {
+    font-family: var(--mantine-font-family-monospace);
+    font-size: var(--mantine-font-size-xs);
+    font-variant-numeric: tabular-nums;
+    color: var(--mantine-color-dimmed);
+    text-align: right;
+}
+
+.log-level {
+    justify-self: start;
+    margin-right: 1em;
+}
+
+.log-msg {
+    font-size: var(--mantine-font-size-sm);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.log-detail {
+    padding: 0 10px 8px 10px;
+}
+
+.log-meta {
+    font-size: var(--mantine-font-size-xs);
+}
+
+.log-stack {
+    margin-top: 6px;
+    font-size: var(--mantine-font-size-xs);
+}
+
+/* top of the list: loading older records, or the start of the log */
+.log-edge {
+    display: flex;
+    justify-content: center;
+    padding: 6px;
+}
+
+.grid {
+    display: grid;
+    row-gap: 1em;
+}
+
+.card-list {
+    display: grid;
+    row-gap: 0em;
+
+    border: var(--border-width) solid var(--mantine-color-default-border);
+    border-radius: var(--mantine-radius-md);
+    background-color: var(--mantine-color-body);
+
+    /* header */
+    & > div:first-of-type {
+        display: grid;
+        grid-template-columns: subgrid;
+        grid-column: 1 / -1;
+
+        padding: 10px 10px 8px;
+        /*font-size: 0.8em;
+        font-weight: bold;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--mantine-color-dimmed);*/
+        border-bottom: var(--border-width) solid;
+
+        & > div {
+            align-content: baseline;
+        }
+    }
+
+    & > div > div {
+        align-content: center;
+    }
+}
+
+/* collapses a .card-list from a grid table into standalone stacked cards, once its
+   containing .section drops below $width */
+@define-mixin collapse-card-list-below $width {
+    @container (max-width: $width) {
+        & {
+            display: block;
+            border: 0;
+            background-color: transparent;
+            max-width: none;
+        }
+        & > div:first-of-type {
+            display: none;
+        }
+        & .row-group {
+            display: block;
+            border: var(--border-width) solid var(--mantine-color-default-border);
+            border-radius: var(--mantine-radius-md);
+        }
+        & .row-group + .row-group {
+            border-top: var(--border-width) solid var(--mantine-color-default-border);
+            margin-top: 10px;
+        }
+        & .card {
+            display: flex;
+            flex-wrap: wrap;
+            flex-direction: row;
+            gap: 15px;
+            border-left-width: 4px;
+            justify-content: space-evenly;
+
+            & > div:last-of-type {
+                flex-grow: 1;
+            }
+        }
+    }
+}
+
+.workers-table {
+    max-width: 800px;
+    grid-template-columns:
+        minmax(140px, 1fr)   /* worker id */
+        minmax(90px, 1fr)    /* type */
+        minmax(110px, 1fr)   /* status */
+        minmax(220px, 2fr);  /* actions */
+
+    @mixin collapse-card-list-below 650px;
+}
+
+.jobs-table {
+    max-width: 1000px;
+    grid-template-columns:
+        minmax(140px, 1fr)   /* job id */
+        minmax(140px, 4fr)   /* name */
+        minmax(110px, 1fr)   /* status */
+        minmax(140px, 1fr)   /* engine iter */
+        minmax(140px, 1fr)   /* total iter */
+        minmax(200px, 1fr);  /* actions */
+
+    @mixin collapse-card-list-below 900px;
+}
+
+/* wraps a .card + its .card-body Collapse, so rows can be divided/gapped as units */
+.row-group {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
+}
+
+.row-group + .row-group {
+    border-top: var(--border-width) solid var(--mantine-color-default-border);
+}
+
+.card {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
+    align-items: center;
+
+    padding: 10px;
+    cursor: pointer;
+    border-left: 3px solid var(--status, transparent);
+
+    &:hover {
+        background-color: var(--mantine-color-default-hover);
+    }
+}
+
+.card-body {
+    grid-column: 1 / -1;
+    padding: 0 20px 20px 13px;
+    /*color: var(--mantine-color-dimmed);*/
+    border-left: 3px solid var(--status, transparent);
+}
+
+.progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--status);
+
+    &::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: currentColor;
+    }
+}
+
+

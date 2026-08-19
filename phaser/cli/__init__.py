@@ -111,7 +111,8 @@ def run(path: t.Union[str, Path]):
 @click.option('--host', type=str, default='localhost', help="Host to serve on")
 @click.option('--port', type=int, help="Port to serve on")
 @click.option('-v', '--verbose', count=True, help="Increase verbosity")
-def serve(host: str = 'localhost', port: t.Optional[int] = None, verbose: int = 0):
+@click.option('--debug', is_flag=True, help="Enable debug routes (/debug/*), for testing the web interface")
+def serve(host: str = 'localhost', port: t.Optional[int] = None, verbose: int = 0, debug: bool = False):
     """Run phaser server"""
     from phaser.web.server import server
 
@@ -125,7 +126,7 @@ def serve(host: str = 'localhost', port: t.Optional[int] = None, verbose: int = 
 
         port = port or port_from_host
 
-    server.run(hostname=host, port=port, verbosity=verbose)
+    server.run(hostname=host, port=port, verbosity=verbose, debug=debug)
 
 
 @click.command()

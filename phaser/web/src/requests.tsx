@@ -1,115 +1,106 @@
-import { HTTPError, TimeoutError, ResponsePromise } from 'ky';
+// The one way the UI talks to the server. `usePostAction` and `useGetAction` differ only in
+// what they do around the request -- a mutation waits for a live socket first, a read doesn't --
+// and share the pending flag, the error normalization, and the reporting.
 
-type RequestSuccess<T> = {type: 'success', response: Response, body: T};
-type RequestError = {type: 'error', response: Response | null, msg: any, error: Error};
+import React from 'react';
+import ky, { HTTPError, TimeoutError } from 'ky';
 
-// TODO this needs a big cleanup
-export async function handleRequest(verb: string, fetchFn: () => ResponsePromise): Promise<RequestSuccess<any> | RequestError> {
-    let resp: Response;
-    try {
-        resp = await fetchFn();
-    } catch (error) {
-        if (error instanceof HTTPError) {
-            const resp = error.response;
-            let msg: string;
-            let json: any;
-            let text: string;
-            try {
-                text = await resp.text();
-                try {
-                    msg = processJSONError(JSON.parse(text));
-                } catch (e) {
-                    msg = text;
-                }
-            } catch (e) {
-                msg = "Couldn't read response text";
-            }
-            console.error(`HTTP ${resp.status} ${resp.statusText} ${verb}, ${json === undefined ? msg : JSON.stringify(json)}:`, error);
-            return {
-                type: 'error', response: resp, msg, error
-            }
-        } else if (error instanceof TimeoutError) {
-            console.error(`Request timeout ${verb}: `, error);
-            return {
-                type: 'error', response: null, msg: "Request timeout", error
-            }
-        } else {
-            console.error(`Unknown error ${verb}: `, error);
-            return {
-                type: 'error', response: null, msg: "Unknown error", error: error as Error
-            }
-        }
-    }
+import { NotConnectedError } from './connection';
+import { usePubSubConnection } from './pubsub';
+import { reportError, ReportOptions } from './notify';
 
-    let body: any;
+const REQUEST_TIMEOUT_MS = 5_000;
 
-    if (resp.headers.get('content-type') == 'application/json') {
-        try {
-            body = await resp.json();
-        } catch (e) {
-            const msg = "Invalid JSON in response";
-            console.error(`HTTP ${resp.status} ${resp.statusText} ${verb}, ${msg}:`, e);
-            return {
-                type: 'error', response: resp, msg: "Invalid JSON in response", error: e as Error
-            }
-        }
-    } else {
-        try {
-            body = await resp.text();
-        } catch (e) {
-            const msg = "Couldn't read response text";
-            console.error(`HTTP ${resp.status} ${resp.statusText} ${verb}, ${msg}:`, e);
-            return {
-                type: 'error', response: resp, msg: "Couldn't read response body", error: e as Error
-            }
-        }
-    }
-
-    console.log(`HTTP ${resp.status} ${resp.statusText} ${verb}`);
-    return {
-        type: 'success', response: resp, body
-    }
+export interface ActionOptions extends ReportOptions {
+    // Suppresses the notification, leaving only the returned `error`. For a fetch the user
+    // didn't ask for, where a toast would be noise.
+    quiet?: boolean;
 }
 
-/* somewhat equivalent plain fetch method
-    const controller = new AbortController();
-    setSubmitting();
+// `[run, pending, error]`. `run` never throws: a failure is reported and returned as `null`.
+export type Action<A extends Array<any>, T> = [
+    (...args: A) => Promise<T | null>, boolean, string | null,
+];
 
-    setTimeout(() => controller.abort(), 5000);
-    try {
-        const resp = await fetch(`worker/${worker_type}/start`, {
-            method: "POST",
-            body: "",
-            signal: controller.signal,
-        });
+// What the server said, in a form worth showing someone. Every HTTP error from `routes.py`
+// carries `{'result': 'error', 'msg'}`, which is far more use than its status line.
+export async function errorMessage(error: unknown): Promise<string> {
+    if (error instanceof HTTPError) {
+        const status = `HTTP ${error.response.status} ${error.response.statusText}`;
         let text: string;
         try {
-            text = await resp.text();
-        } catch (e) {
-            console.error("Error submitting worker (couldn't read response body):", e);
-            finishSubmitting();
-            return;
+            text = await error.response.text();
+        } catch {
+            return status;
         }
         try {
             const json = JSON.parse(text);
-            setError(`HTTP ${resp.status} ${resp.statusText}\nJSON: ${JSON.stringify(json)}`);
-        } catch (e) {
-            setError(`HTTP ${resp.status} ${resp.statusText}\ntext: ${text}`);
-        }
-    } catch (error) {
-        if (error instanceof DOMException && error.name == "AbortError") {
-            setError("Request Timeout");
-        } else {
-            console.error("Error submitting worker: ", error);
-            setError("Unknown error");
+            return json.result === 'error' && json.msg ? json.msg : JSON.stringify(json);
+        } catch {
+            return text || status;
         }
     }
-    finishSubmitting();
-*/
+    if (error instanceof TimeoutError) return "Request timed out";
+    // includes `NotConnectedError`, whose message is already the thing to show
+    if (error instanceof Error) return error.message;
+    return String(error);
+}
 
-function processJSONError(msg: any): string {
-    if (msg.result == 'error') {
-        return msg.msg;
-    }
-    return JSON.stringify(msg);
+async function parse(response: Response): Promise<any> {
+    const type = response.headers.get('content-type') ?? '';
+    return type.includes('application/json') ? await response.json() : await response.text();
+}
+
+// `run` is re-read through a ref rather than captured, so the returned callback stays stable
+// across renders even though every caller passes a fresh closure.
+function useAction<A extends Array<any>, T>(
+    title: string, {quiet, block}: ActionOptions, run: (...args: A) => Promise<T>,
+): Action<A, T> {
+    const [pending, setPending] = React.useState(0);
+    const [error, setError] = React.useState<string | null>(null);
+    const latest = React.useRef(run);
+    latest.current = run;
+
+    const call = React.useCallback(async (...args: A) => {
+        setPending((n) => n + 1);
+        try {
+            const result = await latest.current(...args);
+            setError(null);
+            return result;
+        } catch (e) {
+            const msg = await errorMessage(e);
+            setError(msg);
+            if (quiet) console.error(`${title}:`, e);
+            else reportError(title, msg, {block});
+            return null;
+        } finally {
+            setPending((n) => n - 1);
+        }
+    }, [title, quiet, block]);
+
+    return [call, pending > 0, error];
+}
+
+// A mutation. Gated on a live websocket: its result arrives as a pub/sub update rather than in
+// the response, so one POSTed while the socket is down succeeds *invisibly* -- the server acts
+// on it and the page never hears. `title` names the failed action ("Couldn't cancel job").
+//
+// `body` is sent as-is if a string, as JSON otherwise. Mutations are never retried (`ky`
+// excludes POST by default), so a cancel can't fire twice.
+export function usePostAction(title: string, options: ActionOptions = {}): Action<[url: string, body?: unknown], any> {
+    const conn = usePubSubConnection();
+
+    return useAction(title, options, async (url: string, body?: unknown) => {
+        if (!conn) throw new NotConnectedError();
+        await conn.ensureConnected();
+
+        const payload = body === undefined ? {body: ""} : typeof body === 'string' ? {body} : {json: body};
+        return await parse(await ky(url, {method: "post", timeout: REQUEST_TIMEOUT_MS, ...payload}));
+    });
+}
+
+// A read. No connectivity gate -- a GET carries its own answer, so a dead socket doesn't make
+// it invisible the way it does a mutation.
+export function useGetAction<T>(title: string, options: ActionOptions = {}): Action<[url: string], T> {
+    return useAction(title, options, async (url: string) => await ky(url, {timeout: REQUEST_TIMEOUT_MS}).json<T>());
 }

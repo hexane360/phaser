@@ -1,0 +1,16 @@
+.root {
+    font-weight: 600;
+    flex-shrink: 0; /* prevent shrinking in header */
+
+    @mixin hover {
+        border-color: var(--mantine-color-blue-text);
+        color: var(--mantine-color-blue-text);
+    }
+
+    &[data-danger] {
+        @mixin hover {
+            border-color: var(--mantine-color-red-text);
+            color: var(--mantine-color-red-text);
+        }
+    }
+}

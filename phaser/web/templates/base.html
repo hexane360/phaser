@@ -2,8 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    {# app root, including any root_path/SCRIPT_NAME mount prefix; read by `rootPrefix()` #}
+    <meta name="phaser-root" content="{{ url_for('index') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="32x32">
+    <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
     <title>{% block title %}Phaser{% endblock %}</title>
-    <!--<link href="{{ url_for('static', filename='style.css') }}" rel='stylesheet'>-->
+    <script type="text/javascript" src="{{ url_for('static', filename='dist/runtime.js') }}" defer></script>
+    <script type="text/javascript" src="{{ url_for('static', filename='dist/shared.js') }}" defer></script>
     {% block head %}{% endblock %}
   </head>
   <body>

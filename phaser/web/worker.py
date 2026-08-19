@@ -1,26 +1,57 @@
 import dataclasses
+import datetime
 import logging
-import signal
 import socket
 import sys
-import traceback
 import time
+import traceback
 import typing as t
 
 import backoff
 import requests
 
 import pane
-
-from phaser.execute import execute_plan, Observer, ReconsPlan, EnginePlan
-from phaser.state import ReconsState, PartialReconsState
+from phaser.execute import EnginePlan, Observer, ReconsPlan, execute_plan
+from phaser.state import PartialReconsState, ReconsState
 from phaser.utils.num import get_devices, repr_device
 
 from .types import (
-    ConnectMessage, PollMessage, PingMessage, UpdateMessage, LogMessage, JobResultMessage,
-    WorkerShutdownMessage, WorkerMessage, ServerResponse
+    RELOAD_EXIT_CODE,
+    ConnectMessage,
+    JobID,
+    JobResultMessage,
+    JobStartMessage,
+    LogMessage,
+    PingMessage,
+    PollMessage,
+    ServerResponse,
+    SignalException,
+    UpdateMessage,
+    WorkerMessage,
+    WorkerShutdownMessage,
 )
-from .types import JobID, SignalException
+
+
+def failure_log(job_id: JobID, e: BaseException, formatted: str) -> LogMessage:
+    """The failure's log record, pointing at the frame that *raised* rather than the one
+    that caught -- the same module/function/line a `logger.error` at the raise site would
+    have carried. The server appends this to the job's log as-is."""
+    frame, lineno = None, 0
+    tb = e.__traceback__
+    while tb is not None:
+        frame, lineno = tb.tb_frame, tb.tb_lineno
+        tb = tb.tb_next
+
+    return LogMessage(
+        job_id=job_id,
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        log=f"Job failed: {type(e).__name__}: {e}",
+        logger_name=frame.f_globals.get('__name__', '?') if frame is not None else __name__,
+        log_level=logging.ERROR,
+        line_number=lineno,
+        func_name=frame.f_code.co_name if frame is not None else None,
+        stack_info=formatted,
+    )
 
 
 class LogHandler(logging.Handler):
@@ -36,7 +67,7 @@ class LogHandler(logging.Handler):
             return
         try:
             self.send_message(LogMessage.from_logrecord(self.job_id, record))
-        except Exception:
+        except Exception:  # noqa: BLE001
             self.handleError(record)
 
 
@@ -52,7 +83,7 @@ class WorkerObserver(Observer):
         try:
             resp = self._send_message(msg)
         except (requests.RequestException, pane.ConvertError):
-            logging.error("Failed to update server", exc_info=sys.exc_info(), extra={'local': True})
+            logging.exception("Failed to update server", extra={'local': True})
             return
 
         self.msg_time = time.monotonic()
@@ -131,6 +162,12 @@ def run_worker(url: str, quiet: bool = False):
     def send_result(msg: JobResultMessage) -> ServerResponse:
         return send_message(msg)
 
+    # send the parting message; it's the server's only account of why we went away
+    @backoff.on_exception(backoff.fibo, requests.RequestException,
+                          max_tries=10, max_time=30)
+    def send_shutdown(msg: WorkerShutdownMessage) -> ServerResponse:
+        return send_message(msg)
+
     log_handler = LogHandler(send_message)
     logging.basicConfig(level=logging.INFO,
         handlers=[log_handler] if quiet else [logging.StreamHandler(), log_handler]
@@ -158,6 +195,13 @@ def run_worker(url: str, quiet: bool = False):
                 # run job
                 log_handler.job_id = resp.job_id
 
+                # report the start time by our own clock -- the same one log records are
+                # stamped with, and the anchor the server measures `elapsed` from
+                try:
+                    send_message(JobStartMessage(resp.job_id, datetime.datetime.now(datetime.timezone.utc)))
+                except requests.RequestException:
+                    logger.exception("Failed to report job start time", extra={'local': True})
+
                 plan = ReconsPlan.from_jsons(resp.plan)
                 execute_plan(plan, observers=WorkerObserver(resp.job_id, send_message))
 
@@ -171,10 +215,10 @@ def run_worker(url: str, quiet: bool = False):
                 msg = JobResultMessage(resp.job_id, 'interrupted')
                 resp = send_result(msg)
                 raise
-            except BaseException:
+            except BaseException as e:
                 logger.info("Job stopped due to error", exc_info=True, stack_info=True, extra={'local': True})
                 s = traceback.format_exc()
-                msg = JobResultMessage(resp.job_id, 'errored', s)
+                msg = JobResultMessage(resp.job_id, 'errored', s, failure_log(resp.job_id, e, s))
             else:
                 logger.info("Job finished successfully", extra={'local': True})
                 msg = JobResultMessage(resp.job_id, 'finished')
@@ -185,7 +229,8 @@ def run_worker(url: str, quiet: bool = False):
     except BaseException as e:
         # disconnect message
         logger.error(
-            "Worker interrupted" if isinstance(e, KeyboardInterrupt) else "Worker shutting down due to error",
+            "Worker interrupted" if isinstance(e, KeyboardInterrupt) else "Worker shutting down due to error",  # noqa: TRY401
+            exc_info=None if isinstance(e, KeyboardInterrupt) else True,
             extra={'local': True}
         )
         s = traceback.format_exc()
@@ -194,13 +239,13 @@ def run_worker(url: str, quiet: bool = False):
         if action == 'reload':
             logger.info("Worker reloading", extra={'local': True})
             # instead of sending disconnect message, signal here
-            sys.exit(128 + getattr(signal, 'SIGHUP', 1))
+            sys.exit(RELOAD_EXIT_CODE)
 
         # disconnect message
         logger.info("Worker shutting down normally", extra={'local': True})
         msg = WorkerShutdownMessage('finished')
 
     try:
-        send_message(msg)
-    except Exception as e:
-        logger.error(f"Failed to send shutdown message, error {type(e)}", extra={'local': True})
+        send_shutdown(msg)
+    except Exception:
+        logger.exception("Failed to send shutdown message", extra={'local': True})

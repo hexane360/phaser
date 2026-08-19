@@ -1,0 +1,375 @@
+/* Dashboard workspace: palette + panes of tabs + accordion of widgets.
+   `--accent` is spent only on drag-and-drop affordances, so "pink" reads unambiguously
+   as "this is a drop target". */
+
+.main {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* sits above `.workspace` in `.main`'s column, so the panes shrink to make room for it
+   rather than the page growing a scrollbar */
+.errorBanner {
+    flex: 0 0 auto;
+    margin: 8px;
+    max-height: 40dvh;
+    overflow-y: auto;
+}
+
+.workspace {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;  /* without this the panel's overflow-y never engages */
+
+    --accent: #b63679;
+    --accent-soft: rgb(182 54 121 / 12%);
+    /* matches `Tabs.module.css`, so dashboard tabs underline like the manager's */
+    --tab-highlight-color: black;
+
+    @mixin dark {
+        --accent: #e8639a;
+        --accent-soft: rgb(232 99 154 / 16%);
+        --tab-highlight-color: var(--mantine-color-white);
+    }
+}
+
+.palette {
+    flex: 0 0 232px;
+    overflow-y: auto;
+    padding: 12px 10px 24px;
+    border-right: var(--border-width) solid var(--mantine-color-default-border);
+
+    @media (max-width: $mantine-breakpoint-sm) {
+        display: none;
+    }
+
+    & > :first-child {
+        padding-bottom: 12px;
+    }
+}
+
+.chip {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    padding: 7px 9px;
+    margin-bottom: 6px;
+    border: var(--border-width) solid var(--mantine-color-default-border);
+    border-radius: var(--mantine-radius-sm);
+    cursor: grab;
+
+    &:hover {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+    }
+}
+
+.chipName {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 500;
+}
+
+.chipDesc {
+    display: block;
+    font-size: 11.5px;
+    color: var(--mantine-color-dimmed);
+}
+
+.dragging {
+    opacity: 0.4;
+}
+
+.pane {
+    flex: 1 1 0;
+    min-width: 0;
+    /* inside a `Splitter.Pane` this is a *column* flex item, so `min-height: auto` would
+       stop it shrinking below its content and `.panel` would never scroll */
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* positioning context for the right-edge split zone */
+.panes {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+}
+
+.splitZone {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: clamp(48px, 12%, 140px);
+    z-index: 2;
+}
+
+/* where the new pane will land; `width` is set inline, from the share it will get */
+.splitPreview {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+    pointer-events: none;
+    background-color: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+}
+
+/* the divider between split panes is `Splitter`'s handle, not a border */
+.splitter {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+
+    --splitter-line-size: var(--border-width);
+    --splitter-handle-color: var(--mantine-color-default-border);
+}
+
+/* `Splitter.Pane` defaults to `overflow: auto`; `.panel` is the only scroller */
+.splitterPane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.tabstrip {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    border-bottom: var(--border-width) solid var(--mantine-color-default-border);
+
+    @mixin light {
+        background-color: var(--mantine-color-gray-0);
+    }
+
+    @mixin dark {
+        background-color: var(--mantine-color-dark-6);
+    }
+}
+
+.tab {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex: 0 1 auto;
+    min-width: 8em;
+    max-width: 20em;
+    background: none;
+    padding: 9px 12px 7px;
+    border: none;
+    border-bottom: 4px solid transparent;
+    color: var(--mantine-color-dimmed);
+    cursor: pointer;
+    white-space: nowrap;
+
+    &[data-active="true"] {
+        border-bottom-color: var(--tab-highlight-color);
+        color: var(--mantine-color-text);
+        font-weight: 600;
+    }
+}
+
+/* The derived label is a widget list, so it can outrun `.tab`'s max-width. The mask fades
+   its tail; when the text is short the faded band falls on empty space and shows nothing,
+   so no "is it clipped?" measurement is needed. */
+.tabLabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 1.5em), transparent 100%);
+    mask-image: linear-gradient(to right, black calc(100% - 1.5em), transparent 100%);
+}
+
+.count {
+    font-family: var(--mantine-font-family-monospace);
+    font-size: 10.5px;
+    line-height: 1.4;
+    padding: 0 6px;
+    border-radius: 999px;
+    background-color: var(--mantine-color-default-hover);
+}
+
+.tabClose {
+    display: flex;
+    align-items: center;
+    opacity: 0.5;
+
+    &:hover {
+        opacity: 1;
+    }
+}
+
+.newtab {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    font-size: 19px;
+    line-height: 1;
+    padding: 4px 12px;
+    color: var(--mantine-color-dimmed);
+    cursor: pointer;
+
+    &:hover {
+        color: var(--accent);
+    }
+}
+
+.panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 2px 18px 24px;
+    display: flex;
+    flex-direction: column;
+    container-type: inline-size;
+
+    @media (max-width: $mantine-breakpoint-sm) {
+        padding: 2px 8px 24px;
+    }
+}
+
+.widget {
+    display: block;
+}
+
+/* mirrors `.section-header` in `styles.css` (the pre-restructure section heading) */
+.widgetHead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: x-large;
+    padding: 10px;
+    margin: 10px 0;
+    border-bottom: var(--border-width) solid;
+    cursor: pointer;
+
+    &:hover {
+        border-radius: 5px;
+
+        & .grip {
+            opacity: 0.6;
+        }
+    }
+
+    @mixin light {
+        &:hover { background-color: var(--mantine-color-gray-0); }
+    }
+
+    @mixin dark {
+        &:hover { background-color: var(--mantine-color-dark-6); }
+    }
+}
+
+/* `<Title order={3}>`, as in `Section` -- sizing comes from the Mantine heading scale */
+.widgetTitle {
+    line-height: 1.2;
+}
+
+.spacer {
+    flex: 1 1 auto;
+}
+
+.grip, .widgetClose {
+    display: flex;
+    align-items: center;
+    transition: opacity 0.15s;
+
+    &:hover {
+        opacity: 1;
+    }
+}
+
+/* the grip is a hover affordance; the close button is always visible */
+.grip {
+    opacity: 0;
+    cursor: grab;
+}
+
+.widgetClose {
+    opacity: 0.5;
+}
+
+.chev {
+    display: flex;
+    align-items: center;
+    color: var(--mantine-color-dimmed);
+    transition: transform 0.18s;
+}
+
+.widget[data-open="false"] .chev {
+    transform: rotate(-90deg);
+}
+
+/* collapse is max-height, never display:none -- plotlib canvases size from their
+   container and would collapse to 0x0 permanently */
+.widgetBody {
+    padding: 16px 0 6px;
+    max-height: 100em;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+
+.widget[data-open="false"] .widgetBody {
+    max-height: 0;
+    padding: 0;
+    transition-timing-function: ease-in;
+}
+
+.dropline {
+    height: 3px;
+    flex: 0 0 auto;
+    background-color: var(--accent);
+    border-radius: 2px;
+    margin: 6px 0 -3px;
+}
+
+.dropping {
+    background-color: var(--accent-soft);
+}
+
+/* `.dropline`'s horizontal twin. Zero-width with the bar drawn outside its box, so
+   inserting it can't shift the tabs `insertionIndexX` measures against. */
+.tabDropline {
+    flex: 0 0 0;
+    width: 0;
+    position: relative;
+    align-self: stretch;
+
+    &::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        left: -1.5px;
+        width: 3px;
+        border-radius: 2px;
+        background-color: var(--accent);
+    }
+}
+
+.newtabPage {
+    padding: 18px 4px;
+}
+
+.pickerGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.empty {
+    color: var(--mantine-color-dimmed);
+    padding: 18px 4px;
+}

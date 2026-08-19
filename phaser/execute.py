@@ -16,6 +16,7 @@ from .hooks import EngineHook, Hook, ObjectHook, RawData
 from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
 from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons
 from .observer import Observer, LoggingObserver, PatienceObserver, SaveObserver, ObserverSet
+from .version import version_info
 
 
 def execute_plan(
@@ -25,6 +26,8 @@ def execute_plan(
     observers: t.Union[Observer, t.Iterable[Observer], None] = None,
     override_observers: t.Union[Observer, t.Iterable[Observer], None] = None,
 ):
+    logging.info(str(version_info()))
+
     recons = initialize_reconstruction(
         plan, xp=xp, seed=seed, name=name, init_state=init_state,
         observers=observers, override_observers=override_observers

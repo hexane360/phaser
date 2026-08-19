@@ -4,24 +4,16 @@
         "module": "ESNext",
         "moduleResolution": "bundler",
         "lib": ["ESNext", "DOM"],
-        "jsx": "react",
+        "jsx": "react-jsx",
 
         "sourceMap": true,
         "strict": true,
         "noImplicitAny": false,
+        "skipLibCheck": true,
         "esModuleInterop": true,
         "experimentalDecorators": true,
         "emitDecoratorMetadata": true,
 
-        "plugins": [
-            {
-                "name": "typescript-plugin-css-modules",
-                "options": {
-                    "postcssOptions": {
-                        "useConfig": true,
-                    },
-                }
-            },
-        ],
+        "plugins": [],
     }
 }

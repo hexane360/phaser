@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Phaser — {{ code }} {{ name }}{% endblock %}
+
+{% block head %}
+  <script type="text/javascript" src="{{ url_for('static', filename='dist/error.js') }}" defer></script>
+{% endblock %}
+
+{% block body %}
+  <script type="application/json" id="error-data">
+    {{ {'code': code, 'name': name, 'description': description} | tojson }}
+  </script>
+  <div id="app">
+    <div style="font-family: sans-serif; text-align: center; margin: 4em auto; max-width: 40em;">
+      <h1 style="font-weight: normal;">{{ code }} — {{ name }}</h1>
+      {% if description %}<p>{{ description }}</p>{% endif %}
+      <p><a href="{{ url_for('index') }}">Back to jobs</a></p>
+    </div>
+  </div>
+{% endblock %}

@@ -1,6 +1,63 @@
-import { NArray } from 'wasm-array';
+import { DecodedArray } from './array';
 
-export type WorkerStatus = "queued" | "starting" | "idle" | "running" | "stopping" | "stopped" | "unknown";
+// pub/sub wire protocol (browser <-> server). Mirrors `phaser/web/types.py`.
+
+export type TopicKey = string | number;
+export type Topic = string | Record<string, TopicKey>;
+
+// Canonical JSON key for a `Topic`: sorted keys, no whitespace. Must agree with the
+// Python `canonical_topic` implementation in `phaser/web/types.py`.
+export function canonicalTopic(topic: Topic): string {
+    if (typeof topic === 'string') return JSON.stringify(topic);
+    const sorted: Record<string, TopicKey> = {};
+    for (const k of Object.keys(topic).sort()) sorted[k] = topic[k];
+    return JSON.stringify(sorted);
+}
+
+export interface SubscribeMessage {
+    topics: Array<Topic>;
+    msg: "sub";
+}
+
+export interface UnsubscribeMessage {
+    topics: Array<Topic>;
+    msg: "unsub";
+}
+
+export interface HeartbeatMessage {
+    msg: "ping";
+}
+
+export type ClientMessage = SubscribeMessage | UnsubscribeMessage | HeartbeatMessage;
+
+export interface TopicUpdate {
+    topic: Topic;
+    data: any;
+    cause?: any;
+}
+
+export interface UpdatesMessage {
+    updates: Array<TopicUpdate>;
+    msg: "update";
+}
+
+export interface ErrorMessage {
+    topic: Topic;
+    reason: string;
+    msg: "error";
+}
+
+export interface HeartbeatAckMessage {
+    msg: "pong";
+}
+
+export interface ServerShutdownMessage {
+    msg: "shutdown";
+}
+
+export type ServerMessage = UpdatesMessage | ErrorMessage | HeartbeatAckMessage | ServerShutdownMessage;
+
+export type WorkerStatus = "queued" | "starting" | "reloading" | "idle" | "running" | "stopping" | "stopped" | "unknown";
 export type JobStatus = "queued" | "starting" | "running" | "stopping" | "stopped";
 export type Result = "finished" | "errored" | "cancelled" | "interrupted";
 
@@ -15,13 +72,6 @@ export interface WorkerState {
     backends: Array<[string, string]> | null;
 }
 
-export interface WorkerUpdate {
-    worker_id: string;
-    status: WorkerStatus;
-
-    msg: "status_change";
-}
-
 export interface JobState {
     job_id: string;
     status: JobStatus;
@@ -29,64 +79,11 @@ export interface JobState {
     links: Record<string, string>;
     start_time: string | null;
     state: PartialReconsData;
+    // terminal outcome, null while the job is still live. The traceback behind an
+    // `errored` result isn't here -- it's an ERROR record in the job's log.
+    result: Result | null;
+    error_summary: string | null;
 };
-
-export interface JobStatusChange {
-    status: JobStatus;
-    job_id: string;
-
-    msg: "status_change";
-}
-
-export interface JobUpdate {
-    state: PartialReconsData;
-    job_id: string;
-
-    msg: "job_update";
-}
-
-export interface LogUpdate {
-    new_logs: Array<LogRecord>;
-    msg: "log";
-}
-
-export interface JobStopped {
-    result: Result;
-    error: string | null;
-
-    msg: "job_stopped";
-}
-
-export type JobMessage = JobStatusChange | JobUpdate | LogUpdate | JobStopped;
-
-export interface DashboardConnected {
-    state: JobState;
-    msg: "connected";
-}
-
-export type DashboardMessage = JobMessage | DashboardConnected;
-
-export interface JobsUpdate {
-    event: JobMessage | null;
-    state: Array<JobState>;
-
-    msg: "jobs_update";
-}
-
-export interface WorkersUpdate {
-    event: WorkerUpdate | null;
-    state: Array<WorkerState>;
-
-    msg: "workers_update";
-}
-
-export interface ManagerConnected {
-    workers: Array<WorkerState>;
-    jobs: Array<JobState>;
-    msg: "connected";
-}
-
-export type ManagerMessage = JobsUpdate | WorkersUpdate | ManagerConnected;
 
 export interface LogRecord {
     i: number;
@@ -99,21 +96,30 @@ export interface LogRecord {
     line_number: number;
     func_name: string | null;
     stack_info: string | null;
+    elapsed: number;  // seconds since the job started
 }
 
+// A window of log records from `/job/<id>/logs`, ascending by `i`. `first`/`last` are
+// null when the page is empty; `has_before`/`has_after` say whether more matching
+// records exist on either side.
 export interface LogsData {
-    first: number;
-    last: number;
-    length: number;
-    total_length: number;
     logs: ReadonlyArray<LogRecord>;
+    first: number | null;
+    last: number | null;
+    count: number;
+    total: number;      // records matching `min_level`
+    total_all: number;  // records regardless of `min_level`
+    oldest: number;
+    has_before: boolean;
+    has_after: boolean;
+    min_level: number;
 }
 
 export interface ReconsData {
     iter: IterData;
     probe: ProbeData;
     object: ObjectData;
-    scan: NArray;
+    scan: DecodedArray;
     progress: Record<string, ProgressData>;
 }
 
@@ -141,15 +147,34 @@ export interface ObjectSampling {
     region_max: [number, number] | null;
 }
 
-export interface ProbeData {
+// payload of the `probe_meta` view. `wavelength` is in the same length units as
+// `sampling` (Angstrom); it sets the reciprocal-space view's mrad scales.
+export interface ProbeMeta {
     sampling: Sampling;
-    data: NArray;
-};
+    nprobes: number;
+    wavelength: number;
+}
 
+// payload of the `obj_meta` view. `thicknesses` is null unless the object is genuinely
+// multislice (mirroring `ObjectState.thicknesses`, "length < 2 for single slice"), and is
+// otherwise exactly `n_slices` long. `n_slices` is 1 for a 2D object.
+export interface ObjMeta {
+    sampling: ObjectSampling;
+    n_slices: number;
+    thicknesses: Array<number> | null;
+}
+
+// `ObjectState`/`ProbeState` as the worker sends them (see `ReconsData`), not as any view
+// publishes them -- the views above split these into metadata and a bare array.
 export interface ObjectData {
     sampling: ObjectSampling;
-    data: NArray;
-    thicknesses: NArray;
+    data: DecodedArray;
+    thicknesses: DecodedArray;
+};
+
+export interface ProbeData {
+    sampling: Sampling;
+    data: DecodedArray;
 };
 
 export interface ProgressData {
