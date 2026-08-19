@@ -2,10 +2,12 @@
 
 import logging
 import re
+import typing as t
 
 import numpy
 import pytest
-from numpy.testing import assert_allclose
+from numpy.testing import assert_allclose, assert_array_equal
+from numpy.typing import NDArray
 
 import pane
 from phaser.execute import (
@@ -13,10 +15,12 @@ from phaser.execute import (
     initialize_reconstruction,
     load_raw_data,
 )
-from phaser.hooks import DropNanProps, RawData
+from phaser.hooks import DropNanProps, RasterScanProps, RawData
 from phaser.hooks.preprocessing import drop_nan_patterns
+from phaser.hooks.scan import raster_scan
 from phaser.plan import ReconsPlan
 from phaser.state import PartialReconsState, Patterns, ProbeState, ScanState
+from phaser.utils.misc import freeze
 from phaser.utils.num import Sampling
 
 from .utils import make_recons_state
@@ -292,3 +296,96 @@ def test_drop_nan_patterns_filters_initial():
     assert numpy.array_equal(state.scan.data, flat[kept])
     assert numpy.array_equal(state.scan.initial, flat[kept] + 100.)
     assert numpy.array_equal(state.scan.tilt, flat[kept] * 0.01)
+
+
+def _make_raster(shape: tuple[int, int], step: float = 1.) -> ScanState:
+    return raster_scan(
+        {'seed': None, 'dtype': numpy.float64, 'xp': numpy},
+        RasterScanProps(shape=shape, step_size=(step, step)),
+    )
+
+
+def _grid_indices(shape: tuple[int, int]) -> NDArray[numpy.int64]:
+    """Row and column index of every point of a `shape` grid, as a (..., 2) array."""
+    return numpy.stack(numpy.indices(shape), axis=-1)
+
+
+def _raster_grid(meta: t.Mapping[str, t.Any]) -> NDArray[numpy.int64]:
+    """`raster_rows` and `raster_cols` stacked into a (..., 2) index array."""
+    return numpy.stack((
+        numpy.array(meta['raster_rows']), numpy.array(meta['raster_cols']),
+    ), axis=-1)
+
+
+def _raster_positions(grid: NDArray[numpy.int64], shape: tuple[int, int], step: float) -> NDArray[numpy.float64]:
+    """Positions `make_raster_scan` assigns to the given grid indices."""
+    return (grid - numpy.array(shape) / 2.) * step
+
+
+def test_raster_scan_meta():
+    # non-square, so a transposed grid can't pass
+    shape = (3, 5)
+    scan = _make_raster(shape)
+
+    assert scan.meta['type'] == 'raster'
+
+    grid = _raster_grid(scan.meta)
+    assert grid.shape == (*shape, 2)
+    assert_array_equal(grid, _grid_indices(shape))
+
+    # each index labels the grid position of the matching scan point
+    assert_allclose(scan.data, _raster_positions(grid, shape, 1.))
+
+    # `meta` is a static pytree field, so it must be hashable
+    hash(scan.meta)
+
+
+@pytest.mark.parametrize('flat_meta', (True, False))
+def test_normalize_scan_shape_keeps_raster_meta(flat_meta: bool):
+    shape = (4, 8)
+    scan = _make_raster(shape)
+
+    if flat_meta:
+        # a state resumed after `drop_nan_patterns`, which flattens scan and metadata alike
+        flat = {k: numpy.array(v).ravel() if k.startswith('raster_') else v for (k, v) in scan.meta.items()}
+        scan = ScanState(scan.data.reshape(-1, 2), scan.initial.reshape(-1, 2), meta=freeze(flat))
+
+    patterns = Patterns(
+        numpy.zeros((*shape, 4, 4), dtype=numpy.float32),
+        numpy.ones((4, 4), dtype=numpy.float32),
+    )
+
+    (_, state) = _normalize_scan_shape(patterns, make_recons_state(scan))
+
+    grid = _raster_grid(state.scan.meta)
+    assert grid.shape == (*shape, 2)
+    assert_array_equal(grid, _grid_indices(shape))
+    assert_allclose(state.scan.data, _raster_positions(grid, shape, 1.))
+
+    hash(state.scan.meta)
+
+
+def test_drop_nan_patterns_keeps_raster_meta():
+    shape = (4, 4)
+    scan = _make_raster(shape)
+
+    patterns = numpy.zeros((*shape, 2, 2), dtype=numpy.float32)
+    patterns[0, 0] = numpy.nan
+    patterns[2, 3] = numpy.nan
+
+    (_, state) = drop_nan_patterns({
+        'data': Patterns(patterns, numpy.ones((2, 2), dtype=numpy.float32)),
+        'state': make_recons_state(scan),
+        'seed': None, 'dtype': numpy.float32, 'xp': numpy,
+    }, DropNanProps(threshold=0.5))
+
+    kept = numpy.ones(16, dtype=numpy.bool_)
+    kept[[0, 11]] = False
+
+    # dropped positions take their indices with them, the rest keep theirs
+    grid = _raster_grid(state.scan.meta)
+    assert grid.shape == (14, 2)
+    assert_array_equal(grid, _grid_indices(shape).reshape(-1, 2)[kept])
+    assert_allclose(state.scan.data, _raster_positions(grid, shape, 1.))
+
+    hash(state.scan.meta)

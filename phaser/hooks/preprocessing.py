@@ -3,7 +3,6 @@ import math
 import typing as t
 
 import numpy
-from frozendict import frozendict
 from numpy.typing import NDArray
 
 from phaser.state import Patterns, ReconsState, ScanState
@@ -127,8 +126,9 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
         elif scan_arr.shape[0] != patterns.shape[0]:
             raise ValueError(f"# of scan positions {scan_arr.shape[0]} doesn't match # of patterns"
                              f" before ({mask.size}) or after ({patterns.shape[0]}) filtering")
-        # otherwise, we assume the mask has already been applied to the scan
+        # otherwise, we assume the mask has already been applied to the scan (and metadata)
 
+        # tilt can come from an alternate source, so we need to check it separately
         if tilt_arr is not None:
             if tilt_arr.shape[0] == mask.size:
                 tilt_arr = tilt_arr[~mask]
