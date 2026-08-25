@@ -1,32 +1,54 @@
 import logging
-from functools import partial
 import typing as t
+from functools import partial
 
 import numpy
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from phaser.hooks.solver import NoiseModel
-from phaser.utils.num import (
-    assert_dtype, get_array_module, cast_array_module, jit, to_numpy,
-    fft2, ifft2, fft2shift, ifft2shift, abs2, at, Float,
-    to_complex_dtype, to_real_dtype, block_until_ready,
-)
-import phaser.utils.tree as tree
-from phaser.utils.optics import fourier_shift_filter
-from phaser.observer import Observer
-from phaser.state import ProgressState, ReconsState
 from phaser.hooks import EngineArgs
-from phaser.hooks.solver import GradientSolver
 from phaser.hooks.regularization import CostRegularizer, GroupConstraint
+from phaser.hooks.solver import GradientSolver, NoiseModel
+from phaser.observer import Observer
 from phaser.plan import GradientEnginePlan
-from phaser.types import process_flag, ReconsVar
-from ..common.simulation import GroupManager, make_propagators, tilt_propagators, slice_forwards, stream_patterns
+from phaser.state import ProgressState, ReconsState
+from phaser.types import ReconsVar, process_flag
+from phaser.utils import tree
+from phaser.utils.num import (
+    Float,
+    abs2,
+    assert_dtype,
+    at,
+    block_until_ready,
+    cast_array_module,
+    fft2,
+    get_array_module,
+    ifft2,
+    ifft2shift,
+    jit,
+    to_complex_dtype,
+    to_numpy,
+    to_real_dtype,
+)
+from phaser.utils.optics import fourier_shift_filter
 
+from ..common.simulation import (
+    GroupManager,
+    make_propagators,
+    slice_forwards,
+    stream_patterns,
+    tilt_propagators,
+)
+from .synthetic import SYNTHETIC_GRADS, SYNTHETIC_VARS, SyntheticGrad, source_var
 
 logger = logging.getLogger(__name__)
-_PER_ITER_VARS: t.FrozenSet[ReconsVar] = frozenset({'positions', 'tilt'})
-_PER_ITER_PATHS: t.FrozenSet[str] = frozenset({'initial'}) | _PER_ITER_VARS
+
+# variables whose gradients are accumulated across groups, then solved once per iteration
+_PER_ITER_REAL_VARS: t.FrozenSet[ReconsVar] = frozenset({'positions', 'tilt'})
+# keys to paths which should be sliced with the group
+_PER_ITER_PATHS: t.FrozenSet[str] = frozenset({'initial'}) | _PER_ITER_REAL_VARS
+# variables a per-iteration solver can handle
+_PER_ITER_VARS: t.FrozenSet[ReconsVar] = _PER_ITER_REAL_VARS | SYNTHETIC_VARS
 
 
 def process_solvers(
@@ -35,11 +57,11 @@ def process_solvers(
     # process solvers, and split into per-group and per-iter solvers
     solvers = plan.solvers
 
-    seen = set()
-    duplicate = set()
+    seen: t.Set[ReconsVar] = set()
+    duplicate: t.Set[ReconsVar] = set()
 
-    group_solvers = []
-    iter_solvers = []
+    group_solvers: t.List[GradientSolver[t.Any]] = []
+    iter_solvers: t.List[GradientSolver[t.Any]] = []
 
     for (vars, solver) in solvers.items():
         if len(vars) == 0:
@@ -64,7 +86,7 @@ def process_solvers(
         raise ValueError(f"Duplicate solvers for variable(s) {', '.join(map(repr, duplicate))}.")
 
     return (
-        frozenset(seen), tuple(group_solvers), tuple(iter_solvers)
+        frozenset[ReconsVar](seen), tuple(group_solvers), tuple(iter_solvers)
     )
 
 
@@ -76,23 +98,29 @@ _PATH_MAP: t.Dict[t.Tuple[str, ...], str] = {
     ('scan', 'initial'): 'initial',  # not a solver variable, but need to apply group indexing
 }
 
+
 def _normalize_path(path: t.Tuple[tree.GetAttrKey, ...]) -> t.Tuple[str, ...]:
     return tuple(p.name for p in path)
+
 
 def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
     d = {}
 
     def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
         if (var := _PATH_MAP.get(_normalize_path(path))) and var in vars:
-            if var in _PER_ITER_VARS and group is not None:
-                d[var] = val[tuple(group)]
-            else:
-                d[var] = val
+            d[var] = val[tuple(group)] if var in _PER_ITER_REAL_VARS and group is not None else val
             return None
         return val
 
     state = tree.map_with_path(f, state, is_leaf=lambda x: x is None)
     return (d, state)
+
+
+def extract_params(state: ReconsState, vars: t.AbstractSet[ReconsVar]) -> t.Dict[ReconsVar, t.Any]:
+    """Parameter arrays for `vars`, resolving synthetic variables to where they're synthesized from."""
+    params = extract_vars(state, frozenset[ReconsVar](map(source_var, vars)))[0]
+    return {var: params[source_var(var)] for var in vars}
+
 
 def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Optional[NDArray[numpy.integer]] = None) -> ReconsState:
     def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
@@ -107,24 +135,72 @@ def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Opt
 
 
 def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -> ReconsState:
-    if 'probe' in update:
-        state.probe.data += update['probe']
-    if 'object' in update:
-        state.object.data += update['object']
-    if 'tilt' in update:
-        state.scan.tilt += update['tilt']
-    if 'positions' in update:
-        # subtract mean position update
-        xp = get_array_module(update['positions'])
-        update['positions'] -= xp.mean(update['positions'], tuple(range(update['positions'].ndim - 1)))
-
-        state.scan.data += update['positions']
+    for (var, val) in update.items():
+        match source_var(var):
+            case 'probe':
+                state.probe.data += val
+            case 'object':
+                state.object.data += val
+            case 'tilt':
+                state.scan.tilt += val
+            case 'positions':
+                state.scan.data += val
 
     return state
 
 
+def center_pos_updates(update: t.Dict[ReconsVar, t.Any]) -> t.Dict[ReconsVar, t.Any]:
+    """Updates with the mean of each position update removed."""
+    def f(val: t.Any) -> t.Any:
+        xp = get_array_module(val)
+        return val - xp.mean(val, tuple(range(val.ndim - 1)))
+
+    return {
+        var: f(val) if source_var(var) == 'positions' else val
+        for (var, val) in update.items()
+    }
+
+
 def filter_vars(d: t.Dict[ReconsVar, t.Any], vars: t.AbstractSet[ReconsVar]) -> t.Dict[ReconsVar, t.Any]:
     return {k: v for (k, v) in d.items() if k in vars}
+
+
+def project_grads(
+    synthetics: t.Dict[ReconsVar, t.Tuple[SyntheticGrad[t.Any], t.Any]],
+    state: ReconsState,
+    d: t.Dict[ReconsVar, t.Any],
+) -> t.Dict[ReconsVar, t.Any]:
+    """`d` with grads (or updates) of synthetic variables projected"""
+    def f(var: ReconsVar, val: t.Any) -> t.Any:
+        if (synthetic := synthetics.get(var)) is None:
+            return val
+        return synthetic[0].project(state, synthetic[1], val)
+
+    return {var: f(var, val) for (var, val) in d.items()}
+
+
+def synthesize_grads(
+    synthetics: t.Dict[ReconsVar, t.Tuple[SyntheticGrad[t.Any], t.Any]],
+    state: ReconsState,
+    grads: t.Dict[ReconsVar, t.Any],
+) -> t.Dict[ReconsVar, t.Any]:
+    """`grads`, plus grads for synthetic vars"""
+    return project_grads(synthetics, state, {
+        **grads,
+        **{var: grads[source_var(var)] for var in synthetics if source_var(var) in grads},
+    })
+
+
+_UPDATE_RMS_KEYS: t.Dict[ReconsVar, str] = {
+    'positions': 'pos_update_rms',
+    'tilt': 'tilt_update_rms',
+}
+
+def update_rms_key(var: ReconsVar) -> t.Optional[str]:
+    """Progress key holding the RMS update to `var`, or `None` if `var` isn't tracked."""
+    if source_var(var) not in {'positions', 'tilt'}:
+        return None
+    return _UPDATE_RMS_KEYS.get(var, f'{var}_update_rms')
 
 
 @tree.tree_dataclass
@@ -166,6 +242,8 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     noise_model = props.noise_model(None)
 
     (all_vars, group_solvers, iter_solvers) = process_solvers(props)
+    # real variables we need gradients for
+    grad_vars = frozenset[ReconsVar](map(source_var, all_vars))
 
     regularizers = tuple(reg(None) for reg in props.regularizers)
     group_constraints = tuple(reg(None) for reg in props.group_constraints)
@@ -232,14 +310,17 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     solver_states = SolverStates.init_state(state, xp, noise_model, group_solvers, regularizers, group_constraints)
     iter_solver_states = [solver.init_state(state) for solver in iter_solvers]
     iter_constraint_states = [reg.init_state(state) for reg in iter_constraints]
+    synthetic_states: t.Dict[ReconsVar, t.Tuple[SyntheticGrad[t.Any], t.Any]] = {
+        var: (synthetic := SYNTHETIC_GRADS[var](), synthetic.init_state(state))
+        for var in all_vars & SYNTHETIC_VARS
+    }
 
     loss_keys = (
         'detector_loss', 'total_loss', *(reg.name() for reg in regularizers),
     )
-    other_keys = (
-        *(('pos_update_rms',) if 'positions' in all_vars else ()),
-        *(('tilt_update_rms',) if 'tilt' in all_vars else ()),
-    )
+    other_keys = t.cast(tuple[ReconsVar], tuple(filter(lambda v: v is not None, (
+        update_rms_key(var) for var in sorted(all_vars & _PER_ITER_VARS)
+    ))))
 
     # populate missing keys in progress dictionary
     for k in (*loss_keys, *other_keys):
@@ -254,11 +335,12 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         state.iter.total_iter = start_i + i
 
         # mask vars we're updating this iteration
-        iter_vars = all_vars & t.cast(t.Set[ReconsVar],
-            set(k for (k, flag) in flags.items() if flag({'state': state, 'niter': props.niter}))
+        iter_vars = frozenset[ReconsVar](
+            var for var in grad_vars
+            if flags[var]({'state': state, 'niter': props.niter})
         )
         # gradients for per-iteration solvers
-        iter_grads = tree.zeros_like(extract_vars(state, iter_vars & _PER_ITER_VARS)[0])
+        iter_grads = tree.zeros_like(extract_vars(state, iter_vars & _PER_ITER_REAL_VARS)[0])
         # whether to shuffle groups this iteration
         iter_shuffle_groups = shuffle_groups({'state': state, 'niter': props.niter})
 
@@ -310,28 +392,39 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             progress[k].iters.append(i + start_i)
             progress[k].values.append(v)
 
+        # synthesize the gradients projected from the per-iteration gradients
+        grads = synthesize_grads(synthetic_states, state, iter_grads)
+
         # update per-iteration solvers
         for (sol_i, solver) in enumerate(iter_solvers):
-            solver_grads = filter_vars(iter_grads, solver.params)
+            solver_grads = filter_vars(grads, solver.params)
             if len(solver_grads) == 0:
                 continue
             (update, iter_solver_states[sol_i]) = solver.update(
-                state, iter_solver_states[sol_i], filter_vars(iter_grads, solver.params), losses['total_loss']
+                state, iter_solver_states[sol_i], solver_grads, losses['total_loss']
             )
+            # solvers may take a synthetic update out of its subspace
+            update = project_grads(synthetic_states, state, update)
+            # make sure position updates are centered
+            update = center_pos_updates(update)
+
+            for (var, val) in update.items():
+                key = update_rms_key(var)
+                if not key:
+                    continue
+
+                update_rms = float(xp.mean(xp.linalg.norm(val, axis=-1)))
+                progress[key].iters.append(i + start_i)
+                progress[key].values.append(update_rms)
+
+                if source_var(var) == 'tilt':
+                    # signed per-axis mean, [y, x]
+                    [y_mean, x_mean] = map(float, to_numpy(xp.mean(val, tuple(range(val.ndim - 1)))))
+                    logger.info(f"{var} update: mean [{y_mean:5.3f}, {x_mean:5.3f}] mrad, {update_rms:5.3f} mrad RMS")
+                else:  # source_var(var) == 'positions'
+                    logger.info(f"{var} update: {update_rms:5.3f} A RMS")
+
             state = apply_update(state, update)
-
-            if 'positions' in update:
-                pos_update_rms = float(xp.mean(xp.linalg.norm(update['positions'], axis=-1)))
-                progress['pos_update_rms'].iters.append(i + start_i)
-                progress['pos_update_rms'].values.append(pos_update_rms)
-                logger.info(f"Position update: mean {pos_update_rms}")  # RMS position update
-
-            if 'tilt' in update:
-                mean_tilt_update = to_numpy(xp.mean(xp.abs(update['tilt']), tuple(range(update['tilt'].ndim - 1))))
-                tilt_update_rms = float(xp.mean(xp.linalg.norm(update['tilt'], axis=-1)))
-                progress['tilt_update_rms'].iters.append(i + start_i)
-                progress['tilt_update_rms'].values.append(tilt_update_rms)
-                logger.info(f"Tilt update: mean {mean_tilt_update} mrad")  # average tilt update, [y, x]
 
         for (reg_i, reg) in enumerate(iter_constraints):
             (state, iter_constraint_states[reg_i]) = reg.apply_iter(
@@ -385,17 +478,17 @@ def run_group(
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
         xp=xp, dtype=dtype, jit_unroll_slices=jit_unroll_slices
     )
-    for k in grad.keys():
+    for k in grad:
         # scale gradients appropriately
         # per-pattern variables are normalized by the grouping `group.shape[-1]`
         # Additionally, all gradients except the probe should be normalized by probe intensity
         grad[k] /= xp.array(
-            (1.0 if k in _PER_ITER_VARS else group.shape[-1]) * (1.0 if k == 'probe' else probe_int),
+            (1.0 if k in _PER_ITER_REAL_VARS else group.shape[-1]) * (1.0 if k == 'probe' else probe_int),
             dtype=dtype
         )
 
     # update iter grads at group
-    iter_grads = tree.map(lambda v1, v2: at(v1, tuple(group)).set(v2), iter_grads, filter_vars(grad, vars & _PER_ITER_VARS))
+    iter_grads = tree.map(lambda v1, v2: at(v1, tuple(group)).set(v2), iter_grads, filter_vars(grad, vars & _PER_ITER_REAL_VARS))
 
     for (sol_i, solver) in enumerate(group_solvers):
         solver_grads = filter_vars(grad, solver.params)

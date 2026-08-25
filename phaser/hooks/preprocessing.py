@@ -120,9 +120,9 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
             scan_arr = scan_arr[~mask]
             initial_arr = initial_arr[~mask]
             if 'raster_rows' in scan_meta:
-                scan_meta['raster_rows'] = scan_meta['raster_rows'][~mask]
+                scan_meta['raster_rows'] = scan_meta['raster_rows'][~to_numpy(mask)]
             if 'raster_cols' in scan_meta:
-                scan_meta['raster_cols'] = scan_meta['raster_cols'][~mask]
+                scan_meta['raster_cols'] = scan_meta['raster_cols'][~to_numpy(mask)]
         elif scan_arr.shape[0] != patterns.shape[0]:
             raise ValueError(f"# of scan positions {scan_arr.shape[0]} doesn't match # of patterns"
                              f" before ({mask.size}) or after ({patterns.shape[0]}) filtering")
