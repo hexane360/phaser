@@ -1,82 +1,89 @@
-from pathlib import Path
 import typing as t
+from pathlib import Path
 
 import numpy
-from numpy.typing import NDArray, DTypeLike
-import pane.annotations as annotations
+from numpy.typing import DTypeLike, NDArray
+from pane import annotations
 from typing_extensions import NotRequired
 
-from ..types import Dataclass, Slices, Aberration
+from ..types import Aberration, Dataclass, Slices
 from .hook import Hook
 
 if t.TYPE_CHECKING:
     from phaser.utils.num import Sampling
     from phaser.utils.object import ObjectSampling
-    from ..state import ObjectState, ProbeState, ReconsState, Patterns  # noqa: F401
+
     from ..execute import Observer
+    from ..state import (  # noqa: F401
+        ObjectState,
+        Patterns,
+        ProbeState,
+        ReconsState,
+        ScanState,
+    )
 
 
 class RawData(t.TypedDict):
     patterns: NDArray[numpy.floating]
     mask: NDArray[numpy.floating]
     sampling: 'Sampling'
-    wavelength: NotRequired[t.Optional[float]]
-    scan_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
-    tilt_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
-    probe_hook: NotRequired[t.Union[t.Dict[str, t.Any], None]]
-    seed: NotRequired[t.Optional[object]]
+    wavelength: NotRequired[float | None]
+    scan_hook: NotRequired[dict[str, t.Any] | None]
+    tilt_hook: NotRequired[dict[str, t.Any] | None]
+    probe_hook: NotRequired[dict[str, t.Any] | None]
+    seed: NotRequired[object | None]
 
 
 class LoadEmpadProps(Dataclass):
     path: Path
 
-    diff_step: t.Optional[float] = None
-    kv: t.Optional[float] = None
-    adu: t.Optional[float] = None
-    det_flips: t.Optional[t.Tuple[bool, bool, bool]] = None
+    diff_step: float | None = None
+    kv: float | None = None
+    adu: float | None = None
+    det_flips: tuple[bool, bool, bool] | None = None
 
 
 class LoadGatanProps(Dataclass):
     path: Path
     
-    diff_step: t.Optional[float] = None
-    kv: t.Optional[float] = None
-    adu: t.Optional[float] = None
+    diff_step: float | None = None
+    kv: float | None = None
+    adu: float | None = None
 
 class LoadNionProps(Dataclass):
     path: Path
 
     diff_step: float
-    detector_rotation_offset: t.Optional[float] = None
+    detector_rotation_offset: float | None = None
 
 class LoadManualProps(Dataclass, kw_only=True):
     path: Path
 
-    det_shape: t.Optional[t.Tuple[int, int]] = None
+    det_shape: tuple[int, int] | None = None
     """Detector shape `(ny, nx)` (after flips are applied). Required when loading raw binary files, optional otherwise."""
-    dtype: t.Optional[str] = None
+    dtype: str | None = None
     """Numpy dtype to load (e.g. 'float32'). Applies only when loading raw binary files."""
     gap: int = 0
     """Gap (in bytes) between patterns in the file. Applies only when loading raw binary files."""
     offset: int = 0
     """Offset (in bytes) before start of patterns in the file. Applies only when loading raw binary files."""
 
-    key: t.Optional[str] = None
+    key: str | None = None
     """Key to load from HDF5 or mat file (ex. 'raw.patterns.data')"""
 
     diff_step: float
     # TODO: post-validate (one of kv or wavelength must be specified)
-    kv: t.Optional[float] = None
-    wavelength: t.Optional[float] = None
-    adu: t.Optional[float] = None
+    kv: float | None = None
+    wavelength: float | None = None
+    adu: float | None = None
     """Detector ADU, representing the single-particle signal. Used to scale patterns."""
 
-    det_flips: t.Optional[t.Tuple[bool, bool, bool]] = None
+    det_flips: tuple[bool, bool, bool] | None = None
     fftshifted: bool = False
     """Whether patterns are fftshifted (zero-frequency in corner of array)"""
 
 class RawDataHook(Hook[None, RawData]):
-    known = {
+    known: t.ClassVar = {
         'empad': ('phaser.hooks.io.empad:load_empad', LoadEmpadProps),
         'gatan': ('phaser.hooks.io.gatan:load_gatan', LoadGatanProps, ('rsciio',)),
         'nion': ('phaser.hooks.io.nion:load_nion', LoadNionProps),
@@ -87,19 +94,19 @@ class RawDataHook(Hook[None, RawData]):
 class ProbeHookArgs(t.TypedDict):
     sampling: 'Sampling'
     wavelength: float
-    seed: t.Optional[object]
+    seed: object | None
     dtype: DTypeLike
     xp: t.Any
 
 
 class FocusedProbeProps(Dataclass):
-    defocus: t.Optional[float] = None  # defocus, + is overfocus [A]
-    conv_angle: t.Optional[float] = None  # semiconvergence angle [mrad]
+    defocus: float | None = None  # defocus, + is overfocus [A]
+    conv_angle: float | None = None  # semiconvergence angle [mrad]
     aberrations: t.Sequence[Aberration] = ()
 
 
 class ProbeHook(Hook[ProbeHookArgs, 'ProbeState']):
-    known = {
+    known: t.ClassVar = {
         'focused': ('phaser.hooks.probe:focused_probe', FocusedProbeProps),
     }
 
@@ -107,8 +114,8 @@ class ProbeHook(Hook[ProbeHookArgs, 'ProbeState']):
 class ObjectHookArgs(t.TypedDict):
     sampling: 'ObjectSampling'
     wavelength: float
-    slices: t.Optional[Slices]
-    seed: t.Optional[object]
+    slices: Slices | None
+    seed: object | None
     dtype: DTypeLike
     xp: t.Any
 
@@ -118,26 +125,26 @@ class RandomObjectProps(Dataclass):
 
 
 class ObjectHook(Hook[ObjectHookArgs, 'ObjectState']):
-    known = {
+    known: t.ClassVar = {
         'random': ('phaser.hooks.object:random_object', RandomObjectProps),
     }
 
 
 class ScanHookArgs(t.TypedDict):
-    seed: t.Optional[object]
+    seed: object | None
     dtype: DTypeLike
     xp: t.Any
 
 
 class RasterScanProps(Dataclass):
-    shape: t.Optional[t.Tuple[int, int]] = None  # ny, nx (total shape)
-    step_size: t.Union[None, float, t.Tuple[float, float]] = None  # A
-    rotation: t.Optional[float] = None     # degrees CCW
-    affine: t.Optional[t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))]] = None
+    shape: tuple[int, int] | None = None  # ny, nx (total shape)
+    step_size: None | float | tuple[float, float] = None  # A
+    rotation: float | None = None     # degrees CCW
+    affine: t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))] | None = None
 
 
-class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
-    known = {
+class ScanHook(Hook[ScanHookArgs, 'ScanState']):
+    known: t.ClassVar = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
     }
 
@@ -145,7 +152,7 @@ class ScanHook(Hook[ScanHookArgs, NDArray[numpy.floating]]):
 class TiltHookArgs(t.TypedDict):
     dtype: DTypeLike
     xp: t.Any
-    shape: t.Tuple[int, ...]  # To match raster scan shape
+    shape: tuple[int, ...]  # To match raster scan shape
 
 
 class GlobalTiltProps(Dataclass):
@@ -162,7 +169,7 @@ class CustomTiltProps(Dataclass):
 
 
 class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):
-    known = {
+    known: t.ClassVar = {
         'global': ('phaser.hooks.tilt:generate_global_tilt', GlobalTiltProps),
         'custom': ('phaser.hooks.tilt:load_custom_tilt', CustomTiltProps),
     }
@@ -171,7 +178,7 @@ class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):
 class PostInitArgs(t.TypedDict):
     data: 'Patterns'
     state: 'ReconsState'
-    seed: t.Optional[object]
+    seed: object | None
     dtype: DTypeLike
     xp: t.Any
 
@@ -188,15 +195,15 @@ class BinProps(Dataclass):
 
 
 class CropDataProps(Dataclass):
-    crop: t.Tuple[
+    crop: tuple[
         # y_i, y_f, x_i, x_f
-        t.Optional[int], t.Optional[int], t.Optional[int], t.Optional[int],
+        int | None, int | None, int | None, int | None,
     ] 
 
 
 class PoissonProps(Dataclass):
-    scale: t.Optional[float] = None
-    gaussian: t.Optional[float] = 1.0e-3
+    scale: float | None = None
+    gaussian: float | None = 1.0e-3
 
 
 class DropNanProps(Dataclass):
@@ -208,7 +215,7 @@ class DiffractionAlignProps(Dataclass):
 
 
 class PostLoadHook(Hook[RawData, RawData]):
-    known = {
+    known: t.ClassVar = {
         'crop_data': ('phaser.hooks.preprocessing:crop_data', CropDataProps),
         'poisson': ('phaser.hooks.preprocessing:add_poisson_noise', PoissonProps),
         'scale': ('phaser.hooks.preprocessing:scale_patterns', ScaleProps),
@@ -217,8 +224,8 @@ class PostLoadHook(Hook[RawData, RawData]):
     }
 
 
-class PostInitHook(Hook[PostInitArgs, t.Tuple['Patterns', 'ReconsState']]):
-    known = {
+class PostInitHook(Hook[PostInitArgs, tuple['Patterns', 'ReconsState']]):
+    known: t.ClassVar = {
         'drop_nans': ('phaser.hooks.preprocessing:drop_nan_patterns', DropNanProps),
         'diffraction_align': ('phaser.hooks.preprocessing:diffraction_align', DiffractionAlignProps),
     }
@@ -227,7 +234,7 @@ class PostInitHook(Hook[PostInitArgs, t.Tuple['Patterns', 'ReconsState']]):
 class EngineArgs(t.TypedDict):
     data: 'Patterns'
     state: 'ReconsState'
-    dtype: t.Type[numpy.floating]
+    dtype: type[numpy.floating]
     xp: t.Any
     recons_name: str
     observer: 'Observer'
@@ -235,4 +242,4 @@ class EngineArgs(t.TypedDict):
 
 
 class EngineHook(Hook[EngineArgs, 'ReconsState']):
-    known = {}  # filled in by plan.py
+    known: t.ClassVar = {}  # filled in by plan.py

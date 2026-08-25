@@ -41,8 +41,8 @@ class MomentumPositionSolver(PositionSolver[NDArray[numpy.floating]]):
         self.momentum = props.momentum
 
     def init_state(self, sim: ReconsState) -> NDArray[numpy.floating]:
-        xp = get_array_module(sim.scan)
-        return xp.zeros_like(sim.scan)
+        xp = get_array_module(sim.scan.data)
+        return xp.zeros_like(sim.scan.data)
 
     def perform_update(
         self,

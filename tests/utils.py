@@ -1,13 +1,16 @@
 import builtins
-from contextlib import contextmanager
-from itertools import chain
 import inspect
-from pathlib import Path
 import sys
 import typing as t
+from contextlib import contextmanager
+from itertools import chain
+from pathlib import Path
 
 import numpy
 import pytest
+
+if t.TYPE_CHECKING:
+    from phaser.state import ReconsState, ScanState
 
 CallableT = t.TypeVar('CallableT', bound=t.Callable)
 P = t.ParamSpec('P')
@@ -20,7 +23,7 @@ OVERWRITE_EXPECTED = object()
 
 
 def _wrap_pytest(wrapper: CallableT, wrapped: t.Callable,
-                 mod_params: t.Optional[t.Callable[[t.Sequence[inspect.Parameter]], t.Sequence[inspect.Parameter]]] = None
+                 mod_params: t.Callable[[t.Sequence[inspect.Parameter]], t.Sequence[inspect.Parameter]] | None = None
 ) -> CallableT:
     # hacks to allow pytest to find fixtures in wrapped functions
     old_sig = inspect.signature(wrapped)
@@ -39,10 +42,10 @@ def _wrap_pytest(wrapper: CallableT, wrapped: t.Callable,
 
 
 def with_backends(
-    *backends: t.Union[str, t.Iterable[str]]
+    *backends: str | t.Iterable[str]
 ) -> t.Callable[[t.Callable[P, T]], t.Callable[P, T]]:
     """Run a test on the specified compute backends"""
-    backends = t.cast(t.Tuple[str, ...],
+    backends = t.cast(tuple[str, ...],
         tuple(chain.from_iterable((b,) if isinstance(b, str) else b for b in backends))
     )
 
@@ -103,7 +106,7 @@ def write_array(path: Path, arr: numpy.ndarray):
         raise RuntimeError(f"Unable to save file '{path.name}'") from e
 
 
-def check_array_equals_file(name: str, *, out_name: t.Optional[str] = None, decimal: int = 6) -> t.Callable[[t.Callable[..., numpy.ndarray]], t.Callable[..., None]]:
+def check_array_equals_file(name: str, *, out_name: str | None = None, decimal: int = 6) -> t.Callable[[t.Callable[..., numpy.ndarray]], t.Callable[..., None]]:
     def decorator(f: t.Callable[..., numpy.ndarray]):
         @pytest.mark.expected_filename(name)
         def wrapper(*args, file_contents_array: numpy.ndarray, **kwargs):
@@ -128,8 +131,8 @@ def check_array_equals_file(name: str, *, out_name: t.Optional[str] = None, deci
                 try:
                     print(f"Saving actual result to '{out_path}'")
                     write_array(out_path, actual)
-                except Exception:
-                    print("Failed to save result.")
+                except Exception as e:  # noqa: BLE001
+                    print(f"Failed to save result: {e}")
                 raise
 
         return _wrap_pytest(wrapper, f, lambda params: [*params, inspect.Parameter('file_contents_array', inspect.Parameter.KEYWORD_ONLY)])
@@ -178,3 +181,24 @@ def mock_importerror(*modulenames: t.Iterable[str]):
     # if we're the last ones, change __import__ back
     if not len(builtins.__import__.prevented):
         builtins.__import__ = _import
+
+
+def make_recons_state(scan: 'ScanState') -> 'ReconsState':
+    """Minimal `ReconsState` wrapping `scan`, for tests which only exercise the scan."""
+    from phaser.state import IterState, ObjectState, ProbeState, ReconsState
+    from phaser.utils.num import Sampling
+    from phaser.utils.object import ObjectSampling
+
+    return ReconsState(
+        iter=IterState.empty(), wavelength=1.0,
+        probe=ProbeState(
+            Sampling((4, 4), sampling=(1., 1.)),
+            numpy.zeros((1, 4, 4), dtype=numpy.complex64),
+        ),
+        object=ObjectState(
+            ObjectSampling((4, 4), (1., 1.)),
+            numpy.ones((1, 4, 4), dtype=numpy.complex64),
+            numpy.array([]),
+        ),
+        scan=scan,
+    )

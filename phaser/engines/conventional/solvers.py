@@ -102,7 +102,7 @@ class LSQMLSolver(ConventionalSolver):
 
         new_obj_mag = xp.zeros_like(self.obj_mag)
         new_probe_mag = xp.zeros_like(self.probe_mag)
-        pos_update = xp.zeros_like(sim.state.scan, dtype=sim.dtype)
+        pos_update = xp.zeros_like(sim.state.scan.data, dtype=sim.dtype)
         iter_errors = []
 
         for (group_i, (group, group_patterns)) in enumerate(self.iter_patterns(groups, patterns, xp)):
@@ -171,7 +171,7 @@ def lsqml_dry_run(
         return (probe_mag, psi)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
-                             sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
+                             sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     (probe_mag, psi) = slice_forwards(props, (probe_mag, psi), run_slice)
 
     # modeled and experimental intensity
@@ -238,7 +238,7 @@ def lsqml_run(
         return (group_probe_mag, psi)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
-                             sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
+                             sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     (group_probe_mag, psi) = slice_forwards(props, (group_probe_mag, psi), sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     new_obj_mag += group_obj_mag
@@ -377,7 +377,7 @@ class EPIESolver(ConventionalSolver):
         xp = sim.xp
 
         # TODO: ePIE position update
-        pos_update = xp.zeros_like(sim.state.scan)
+        pos_update = xp.zeros_like(sim.state.scan.data)
         iter_errors = []
 
         beta_object = process_schedule(self.plan.beta_object)({'state': sim.state, 'niter': self.engine_plan.niter})
@@ -432,7 +432,7 @@ def epie_dry_run(
         return psi
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
-                             sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
+                             sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     psi = slice_forwards(props, psi, run_slice)
 
     # modeled and experimental intensity
@@ -479,7 +479,7 @@ def epie_run(
         return psi
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
-                             sim.state.tilt[tuple(group)] if sim.state.tilt is not None else None)
+                             sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     psi = slice_forwards(props, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     model_wave = fft2(psi[-1] * group_obj[:, -1, None])

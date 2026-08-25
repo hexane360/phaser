@@ -1,12 +1,14 @@
 import functools
 import math
-from types import ModuleType
 import typing as t
+from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from types import ModuleType
 
 import numpy
+from frozendict import frozendict
+from numpy.random import PCG64, BitGenerator, Generator, SeedSequence
 from numpy.typing import NDArray
-from numpy.random import SeedSequence, PCG64, BitGenerator, Generator
-
 
 T = t.TypeVar('T')
 
@@ -222,6 +224,50 @@ def unwrap(val: t.Optional[T]) -> T:
     return val
 
 
+def freeze(obj: object) -> t.Any:
+    """Attempt to freeze an object, making it immutable."""
+    return _freeze(obj, set())
+
+
+def _freeze(obj: object, stack: set[int]) -> t.Any:
+    if id(obj) in stack:
+        raise ValueError(f"Cannot freeze self-referential object {type(obj).__name__}")
+
+    stack.add(id(obj))
+    try:
+        # handle numpy types
+        if isinstance(obj, numpy.generic):
+            return _freeze(obj.item(), stack)
+        if isinstance(obj, numpy.ndarray):
+            return _freeze(obj.tolist(), stack)
+
+        # mappings
+        if isinstance(obj, Mapping):
+            return frozendict((_freeze(k, stack), _freeze(v, stack)) for (k, v) in obj.items())
+
+        # sets
+        if isinstance(obj, AbstractSet):
+            return frozenset(_freeze(v, stack) for v in obj)
+
+        # sequences
+        if isinstance(obj, Sequence):
+            # immutable sequence types
+            if isinstance(obj, (str, bytes, range)):
+                return obj
+            # byte arrays
+            if isinstance(obj, (bytearray, memoryview)):
+                return bytes(obj)
+            return tuple(_freeze(v, stack) for v in obj)
+
+        try:
+            hash(obj)
+            return obj
+        except TypeError as e:
+            raise TypeError(f"Don't know how to freeze type '{type(obj)}'") from e
+    finally:
+        stack.discard(id(obj))
+
+
 class _MockModule:
     def __init__(self, module: ModuleType, rewrites: t.Dict[str, t.Callable], wrap: t.Callable):
         self._inner: ModuleType = module
@@ -269,5 +315,5 @@ __all__ = [
     'create_rng', 'create_rng_group',
     'create_sparse_groupings', 'create_compact_groupings',
     'mask_fraction_of_groups', 'FloatKey',
-    'unwrap',
+    'unwrap', 'freeze',
 ]

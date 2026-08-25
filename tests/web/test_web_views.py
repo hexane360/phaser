@@ -217,17 +217,18 @@ def test_cache_array_decodes_once_per_generation():
 
 def test_progress_probes_are_raw_passthrough():
     cache = Cache()
-    scan = encode_obj(numpy.zeros((4, 5, 2), dtype=numpy.float32))
+    positions = encode_obj(numpy.zeros((4, 5, 2), dtype=numpy.float32))
     cache.update_raw({
         'progress': {'total_loss': {'iters': [1], 'values': [0.5]}},
-        'probe': {'sampling': {}, 'data': 'x'}, 'scan': scan,
+        'probe': {'sampling': {}, 'data': 'x'},
+        'scan': {'data': positions, 'initial': 'i', 'tilt': 'ti', 'meta': {}},
     })
 
     assert VIEWS['progress'].compute(cache, {}) == {'total_loss': {'iters': [1], 'values': [0.5]}}
     # the bulk array itself, not the wrapper -- and the same object, not a copy
     assert VIEWS['probes'].compute(cache, {}) is cache.raw['probe']['data']
-    # positions pass through in whatever (..., 2) shape the worker sent; the client flattens
-    assert VIEWS['positions'].compute(cache, {}) is scan
+    # `ScanState.data` only, in whatever (..., 2) shape the worker sent; the client flattens
+    assert VIEWS['positions'].compute(cache, {}) is positions
     assert VIEWS['positions'].deps == frozenset({'scan'})
 
 

@@ -2,15 +2,15 @@ import logging
 import typing as t
 
 import numpy
-from numpy.typing import NDArray
-from numpy.testing import assert_allclose
-import pane
 import pytest
-from phaser.utils.num import get_backend_module
 import tifffile
+from numpy.testing import assert_allclose
+from numpy.typing import NDArray
 
-from phaser.utils.num import Sampling
-from phaser.hooks import RawDataHook, RawData
+import pane
+from phaser.hooks import RawData, RawDataHook
+from phaser.utils.num import Sampling, get_backend_module
+
 from .utils import EXPECTED_PATH, INPUT_FILES_PATH
 
 

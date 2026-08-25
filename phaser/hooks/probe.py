@@ -1,11 +1,12 @@
 import logging
 
 from phaser.utils.optics import make_focused_probe
-from ..state import ProbeState
-from . import ProbeHookArgs, FocusedProbeProps
+
+from ..state import PixelatedProbeState
+from . import FocusedProbeProps, ProbeHookArgs
 
 
-def focused_probe(args: ProbeHookArgs, props: FocusedProbeProps) -> ProbeState:
+def focused_probe(args: ProbeHookArgs, props: FocusedProbeProps) -> PixelatedProbeState:
     logger = logging.getLogger(__name__)
 
     if props.conv_angle is None:
@@ -24,4 +25,4 @@ def focused_probe(args: ProbeHookArgs, props: FocusedProbeProps) -> ProbeState:
         ky, kx, args['wavelength'],
         props.conv_angle, defocus=props.defocus, aberrations=props.aberrations
     )
-    return ProbeState(sampling, probe)
+    return PixelatedProbeState(sampling, probe)
