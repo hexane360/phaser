@@ -27,6 +27,7 @@ def execute_plan(
     observers: t.Union[Observer, t.Iterable[Observer], None] = None,
     override_observers: t.Union[Observer, t.Iterable[Observer], None] = None,
 ):
+    logging.basicConfig(level=logging.INFO)
     logging.info(str(version_info()))
 
     recons = initialize_reconstruction(

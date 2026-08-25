@@ -26,14 +26,15 @@ import typing as t
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import get_array_module, to_real_dtype, xp_is_torch
-import phaser.utils.tree as tree
+from phaser.hooks.schedule import Schedule, ScheduleLike
 from phaser.hooks.solver import GradientSolver, GradientSolverArgs
-from phaser.hooks.schedule import ScheduleLike, Schedule
-from phaser.types import ReconsVar, process_schedule
 from phaser.plan import AdamSolverPlan, PolyakSGDSolverPlan, SGDSolverPlan
 from phaser.state import ReconsState
-from .run import extract_vars
+from phaser.types import ReconsVar, process_schedule
+from phaser.utils import tree
+from phaser.utils.num import get_array_module, to_real_dtype, xp_is_torch
+
+from .run import extract_params
 
 OptState: t.TypeAlias = tree.Tree
 Params: t.TypeAlias = tree.Tree
@@ -79,12 +80,12 @@ class ScheduledSolver(GradientSolver[ScheduledSolverState]):
         )
 
     def _resolve(self, hparams: t.Mapping[str, t.Optional[float]]) -> GradientTransformation:
-        return self.factory(**{k: hparams[k] for k in self.hyperparams.keys()})
+        return self.factory(**{k: hparams[k] for k in self.hyperparams})
 
     def update_for_iter(self, sim: ReconsState, state: ScheduledSolverState, niter: int) -> ScheduledSolverState:
         hparams_state: t.Dict[str, t.Optional[float]] = {k: v({'state': sim, 'niter': niter}) for (k, v) in self.hyperparams.items()}
         return (
-            self._resolve(hparams_state).init(params=extract_vars(sim, self.params)[0]) if state[0] is None else state[0],
+            self._resolve(hparams_state).init(params=extract_params(sim, self.params)) if state[0] is None else state[0],
             hparams_state
         )
 
@@ -93,7 +94,7 @@ class ScheduledSolver(GradientSolver[ScheduledSolverState]):
     ) -> t.Tuple[t.Dict[ReconsVar, numpy.ndarray], ScheduledSolverState]:
         (inner_state, hparams_state) = state
         (updates, inner_state) = self._resolve(hparams_state).update(
-            grad, inner_state, params=extract_vars(sim, self.params)[0], value=loss, loss=loss
+            grad, inner_state, params=extract_params(sim, self.params), value=loss, loss=loss
         )
         return (t.cast(t.Dict[ReconsVar, t.Any], updates), (inner_state, hparams_state))
 

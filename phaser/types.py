@@ -1,18 +1,19 @@
+import typing as t
 from dataclasses import dataclass
 from functools import lru_cache
-import typing as t
 
 import numpy
-import pane
-from pane.converters import Converter, make_converter, ConverterHandlers, ErrorNode
-from pane.annotations import ConvertAnnotation, Condition
-from pane.errors import ParseInterrupt, WrongTypeError
-from pane.util import pluralize, list_phrase
 from typing_extensions import Self
 
+import pane
+from pane.annotations import Condition, ConvertAnnotation
+from pane.converters import Converter, ConverterHandlers, ErrorNode, make_converter
+from pane.errors import ParseInterrupt, WrongTypeError
+from pane.util import list_phrase, pluralize
+
 if t.TYPE_CHECKING:
+    from phaser.hooks.schedule import Flag, FlagArgs, FlagLike, Schedule, ScheduleLike
     from phaser.state import ReconsState
-    from phaser.hooks.schedule import FlagArgs, FlagLike, Flag, ScheduleLike, Schedule
 
 T = t.TypeVar('T')
 
@@ -76,7 +77,7 @@ class _ReconsVarsAnnotation(ConvertAnnotation):
 
 
 BackendName: t.TypeAlias = t.Literal['cupy', 'jax', 'torch', 'numpy']
-ReconsVar: t.TypeAlias = t.Literal['object', 'probe', 'positions', 'tilt']
+ReconsVar: t.TypeAlias = t.Literal['object', 'probe', 'positions', 'tilt', 'positions_affine', 'positions_line']
 
 ReconsVars: t.TypeAlias = t.Annotated[t.FrozenSet[ReconsVar], _ReconsVarsAnnotation()]
 EmptyDict: t.TypeAlias = t.Annotated[t.Dict[t.NoReturn, t.NoReturn], _EmptyDictAnnotation()]
@@ -84,7 +85,7 @@ EmptyDict: t.TypeAlias = t.Annotated[t.Dict[t.NoReturn, t.NoReturn], _EmptyDictA
 
 class EarlyTermination(BaseException):
     def __init__(self, state: 'ReconsState', continue_next_engine: bool = False):
-        self.state: 'ReconsState' = state
+        self.state: ReconsState = state
         self.continue_next_engine: bool = continue_next_engine
 
 
