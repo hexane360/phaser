@@ -2,17 +2,25 @@
 Utilities for image processing & filtering
 """
 
-import warnings
 import typing as t
+import warnings
 
 import numpy
 from numpy.typing import ArrayLike, NDArray
 
 from .num import (
-    Sampling, cast_array_module, get_array_module, get_scipy_module, max_supported_float, to_numpy, at, abs2,
-    xp_is_jax, xp_is_torch, Float
+    Float,
+    Sampling,
+    abs2,
+    at,
+    cast_array_module,
+    get_array_module,
+    get_scipy_module,
+    max_supported_float,
+    to_numpy,
+    xp_is_jax,
+    xp_is_torch,
 )
-
 
 NumT = t.TypeVar('NumT', bound=numpy.number)
 
@@ -79,7 +87,7 @@ def remove_linear_ramp(
 
     for idx in numpy.ndindex(data.shape[:-2]):
         layer = data[tuple(idx)].astype(float_dtype)
-        p, residues, rank, singular = xp.linalg.lstsq(pts[mask], layer.flatten()[mask], rcond=None)
+        p, _residues, _rank, _singular = xp.linalg.lstsq(pts[mask], layer.flatten()[mask], rcond=None)
         output = at(output, idx).set((layer - (p @ pts.T).reshape(layer.shape)).astype(output.dtype))
 
     return output
@@ -290,18 +298,30 @@ def _canonicalize_axis(axis: int, num_dims: int) -> int:
 
 def convolve1d(
     arr: NDArray[NumT], weights: ArrayLike, axis: int = -1, *,
-    mode: _InterpBoundaryMode = 'reflect', cval: float = 0.
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.
 ) -> NDArray[NumT]:
+    """
+    Convolve `arr` with the 1D filter `weights` along `axis`.
+
+    Parameters:
+        arr: Array to filter.
+        weights: 1D filter to convolve with.
+        axis: Axis of `arr` to filter along.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns: Array of the same shape as `arr`.
+    """
     xp = get_array_module(arr, weights)
 
     arr = xp.asarray(arr)
     weights = xp.asarray(weights)
     if weights.ndim != 1:
-        raise ValueError("Expected 'weights' to be 1D")
+        raise ValueError("convolve1d: Expected 'weights' to be 1D")
     axis = _canonicalize_axis(axis, arr.ndim)
 
     if xp_is_torch(xp):
-        from ._torch_kernels import convolve1d, _MockTensor
+        from ._torch_kernels import _MockTensor, convolve1d
 
         return t.cast(NDArray[NumT], convolve1d(
             t.cast(_MockTensor, arr),
@@ -324,13 +344,101 @@ def convolve1d(
     )
 
 
+def convolve2d_separable(
+    arr: NDArray[NumT], y_weights: ArrayLike, x_weights: t.Optional[ArrayLike] = None, *,
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.
+) -> NDArray[NumT]:
+    """
+    Convolve the last two axes of `arr` with a separable 2D filter.
+
+    Equivalent to [`convolve2d`][phaser.utils.image.convolve2d] with the outer
+    product `y_weights[:, None] * x_weights[None, :]`.
+
+    Parameters:
+        arr: Array to filter.
+        y_weights: 1D filter to convolve along the second-to-last axis.
+        x_weights: 1D filter to convolve along the last axis. Defaults to `y_weights`.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns: Array of the same shape as `arr`.
+    """
+    xp = get_array_module(arr, y_weights, x_weights)
+
+    y_weights = xp.asarray(y_weights)
+    if y_weights.ndim != 1:
+        raise ValueError("convolve2d_separable: Expected 'y_weights' to be 1D")
+
+    if x_weights is None:
+        x_weights = y_weights
+    else:
+        x_weights = xp.asarray(x_weights)
+        if x_weights.ndim != 1:
+            raise ValueError("convolve2d_separable: Expected 'x_weights' to be 1D")
+
+    # the second pass fills against a boundary the first pass already filtered,
+    # scaling its fill value by the dc gain of `y_weights`
+    x_cval = cval * xp.sum(y_weights) if mode in ('constant', 'grid-constant') and cval != 0. else cval
+
+    return convolve1d(
+        convolve1d(arr, y_weights, axis=-2, mode=mode, cval=cval),
+        x_weights, axis=-1, mode=mode, cval=x_cval,
+    )
+
+
+def convolve2d(
+    arr: NDArray[NumT], weights: ArrayLike, *,
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.
+) -> NDArray[NumT]:
+    """
+    Convolve the last two axes of `arr` with the 2D filter `weights`.
+    For separable filters (e.g. Gaussian, sinc), prefer `convolve2d_separable`.
+
+    Parameters:
+        arr: Array to filter.
+        weights: 2D filter to convolve with.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns: Array of the same shape as `arr`.
+    """
+    xp = get_array_module(arr, weights)
+    arr = xp.asarray(arr)
+    weights = xp.asarray(weights)
+    if weights.ndim != 2:
+        raise ValueError("convolve2d: Expected 'weights' to be 2D")
+
+    if xp_is_torch(xp):
+        from ._torch_kernels import convolve2d
+
+        return t.cast(NDArray[NumT], convolve2d(
+            arr, weights,  # type: ignore
+            mode=mode, cval=cval,
+        ))
+    if xp_is_jax(xp):
+        from ._jax_kernels import convolve2d
+
+        return t.cast(NDArray[NumT], convolve2d(
+            arr, weights,  # type: ignore
+            mode=mode, cval=cval,
+        ))
+
+    scipy = get_scipy_module(arr, weights)
+
+    output = xp.empty_like(arr)
+    # we can't use the axes parameter, we support too old of scipy
+    scipy.ndimage.convolve(
+        arr, weights[(None,) * (arr.ndim - weights.ndim)], output=output,
+        mode=mode, cval=cval,
+    )
+    return output
 
 
 __all__ = [
     'apply_flips',
     'remove_linear_ramp', 'colorize_complex', 'scale_to_integral_type',
     'affine_transform', 'to_affine_matrix',
-    'convolve1d',
+    'convolve1d', 'convolve2d', 'convolve2d_separable',
     'scale_matrix', 'rotation_matrix', 'translation_matrix',
     'gaussian_transfer', 'square_pixel_transfer',
 ]

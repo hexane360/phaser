@@ -4,13 +4,13 @@ import operator
 import typing as t
 
 import numpy
-from numpy.typing import ArrayLike
 import torch
 import torch.nn.functional as F
+from numpy.typing import ArrayLike
 
-from phaser.utils.num import _PadMode
 from phaser.utils.image import _InterpBoundaryMode
 from phaser.utils.misc import _MockModule
+from phaser.utils.num import _PadMode
 
 
 def get_cutouts(obj: torch.Tensor, start_idxs: torch.Tensor, cutout_shape: t.Tuple[int, int]) -> torch.Tensor:
@@ -243,19 +243,29 @@ _MAKE_PAD_IDXS: t.Dict[_PadMode, t.Callable[[torch.Tensor, int, int, int], t.Tup
 
 def pad(
     arr: torch.Tensor, pad_width: t.Union[int, t.Tuple[int, int], t.Sequence[t.Tuple[int, int]]], /, *,
-    mode: _PadMode = 'constant', cval: float = 0.
+    mode: _PadMode = 'constant', cval: complex | numpy.number = 0.
 ) -> torch.Tensor:
     if mode not in _PAD_MODES:
         raise ValueError(f"Unsupported padding mode '{mode}'")
 
-    pad = (pad_width, pad_width) if isinstance(pad_width, int) else pad_width
+    if mode == 'constant':
+        cval_arr = cval.numpy(force=True) if isinstance(cval, torch.Tensor) else numpy.asarray(cval)
+        if numpy.iscomplexobj(cval_arr) and torch.is_complex(arr):
+            cval = complex(cval_arr)
+            return _MockTensor(torch.complex(
+                pad(arr.real, pad_width, mode=mode, cval=cval.real),
+                pad(arr.imag, pad_width, mode=mode, cval=cval.imag),
+            ))
+        cval = complex(cval_arr).real
 
-    if isinstance(pad[0], int):
-        pad = (t.cast(t.Tuple[int, int], pad),)
+    widths = (pad_width, pad_width) if isinstance(pad_width, int) else pad_width
 
-    if len(pad) == 1:
-        pad = tuple(pad) * arr.ndim
-    elif len(pad) != arr.ndim:
+    if isinstance(widths[0], int):
+        widths = (t.cast(t.Tuple[int, int], widths),)
+
+    if len(widths) == 1:
+        widths = tuple(widths) * arr.ndim
+    elif len(widths) != arr.ndim:
         raise ValueError(f"Invalid `pad_width` '{pad_width}'.")
 
     # check for fast path (F.pad)
@@ -264,14 +274,14 @@ def pad(
     if mode == 'constant' or (
         mode in _FAST_PAD_MODES
         and arr.ndim <= 3
-        and all(p <= s - 1 if isinstance(p, int) else all(p1 <= s - 1 for p1 in p) for (p, s) in zip(pad, arr.shape))
+        and all(p <= s - 1 if isinstance(p, int) else all(p1 <= s - 1 for p1 in p) for (p, s) in zip(widths, arr.shape))
     ):
-        pad = tuple(itertools.chain.from_iterable(t.cast(t.Sequence[t.Tuple[int, int]], reversed(pad))))
-        kwargs = {'value': cval} if mode == 'constant' else {}
-        return _MockTensor(F.pad(arr.reshape(1, *arr.shape), pad, mode=_PAD_MODE_MAP[mode], **kwargs)[0])
+        widths = tuple(itertools.chain.from_iterable(t.cast(t.Sequence[t.Tuple[int, int]], reversed(widths))))
+        kwargs = {'value': float(t.cast(float | numpy.number, cval))} if mode == 'constant' else {}
+        return _MockTensor(F.pad(arr.reshape(1, *arr.shape), widths, mode=_PAD_MODE_MAP[mode], **kwargs)[0])
 
     # slow path
-    for dim, (p, size) in enumerate(zip(pad, arr.shape)):
+    for dim, (p, size) in enumerate(zip(widths, arr.shape)):
         (left, right) = (p, p) if isinstance(p, int) else p
         if left == 0 and right == 0:
             continue
@@ -481,7 +491,7 @@ _INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
 
 def convolve1d(
     arr: torch.Tensor, weights: torch.Tensor, axis: int, *,
-    mode: _InterpBoundaryMode, cval: float = 0.
+    mode: _InterpBoundaryMode, cval: t.Union[complex, numpy.number] = 0.
 ) -> torch.Tensor:
     r = len(weights) // 2
     pad_mode = t.cast(_PadMode, _INTERP_TO_PAD.get(mode, mode))
@@ -499,10 +509,71 @@ def convolve1d(
     # convolve
     arr = F.conv1d(
         arr.reshape((-1, 1, arr.shape[-1])),
-        weights.flip(0).to(arr.dtype)[None, None, :]
+        weights.flip(0).to(arr.dtype)[None, None]
     ).reshape(out_shape_t)
 
     return torch.moveaxis(arr, -1, axis)
+
+
+def convolve2d(
+    arr: torch.Tensor, weights: torch.Tensor, *,
+    mode: _InterpBoundaryMode, cval: t.Union[complex, numpy.number] = 0.
+) -> torch.Tensor:
+    pad_mode = t.cast(_PadMode, _INTERP_TO_PAD.get(mode, mode))
+
+    # pad array
+    out_shape_t = arr.shape
+    arr = pad(
+        arr,
+        ((0, 0),) * (arr.ndim - weights.ndim) + tuple(
+            (w - w // 2 - 1, w // 2) for w in weights.shape
+        ),
+        mode=pad_mode, cval=cval
+    )
+
+    # convolve
+    return F.conv2d(
+        arr.reshape(-1, 1, arr.shape[-2], arr.shape[-1]),
+        weights.flip(0, 1)[None, None].to(arr.dtype),
+    ).reshape(out_shape_t)
+
+
+def _dct_weights(arr: torch.Tensor, axis: int, inverse: bool) -> torch.Tensor:
+    """Twiddle factors & orthonormalization for a type-II/III DCT along `axis` of `arr`."""
+    n = arr.shape[axis]
+    sign = 1. if inverse else -1.
+    w = numpy.exp(sign * 1.j * numpy.pi * numpy.arange(n) / (2. * n))
+    w *= (2. * n) ** 0.5 if inverse else (0.5 / n) ** 0.5
+    w[0] *= 2. ** 0.5 if inverse else 0.5 ** 0.5
+
+    shape = tuple(n if i == axis % arr.ndim else 1 for i in range(arr.ndim))
+    dtype = torch.promote_types(arr.dtype, torch.complex64)
+    return torch.as_tensor(w, dtype=dtype, device=arr.device).reshape(shape)
+
+
+def _dct(arr: torch.Tensor, axis: int) -> torch.Tensor:
+    """Type-II DCT along `axis`, orthonormalized."""
+    n = arr.shape[axis]
+    # under half-sample symmetric extension the real FFT is the DCT, up to twiddle factors
+    v = torch.fft.rfft(torch.cat((arr, arr.flip(axis)), dim=axis), dim=axis)
+    return (torch.narrow(v, axis, 0, n) * _dct_weights(arr, axis, False)).real
+
+
+def _idct(arr: torch.Tensor, axis: int) -> torch.Tensor:
+    """Type-III DCT along `axis`, orthonormalized (the inverse of `_dct`)."""
+    n = arr.shape[axis]
+    v = arr * _dct_weights(arr, axis, True)
+    # the Nyquist term of the symmetric extension is always zero
+    v = torch.cat((v, torch.zeros_like(torch.narrow(v, axis, 0, 1))), dim=axis)
+    return torch.narrow(torch.fft.irfft(v, n=2 * n, dim=axis), axis, 0, n)
+
+
+def dct2(arr: torch.Tensor) -> torch.Tensor:
+    return _dct(_dct(arr, -2), -1)
+
+
+def idct2(arr: torch.Tensor) -> torch.Tensor:
+    return _idct(_idct(arr, -1), -2)
 
 
 def get_devices() -> t.Tuple[torch.device, ...]:
