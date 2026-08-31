@@ -451,7 +451,7 @@ class _JitKernel(t.Generic[P, T]):
 
             @functools.wraps(f)
             def jax_f(*args: P.args, **kwargs: P.kwargs) -> T:
-                logger.info(f"JIT-compiling kernel '{self.__qualname__}'...")
+                logger.info(f"JIT-compiling kernel '{self.__qualname__}'...")  # type: ignore
                 return self.inner(*args, **kwargs)
 
             self.jax_jit = jax.jit(

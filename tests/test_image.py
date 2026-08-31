@@ -7,11 +7,23 @@ from numpy.testing import assert_allclose, assert_array_almost_equal
 from numpy.typing import ArrayLike, NDArray
 
 from phaser.utils.image import (
+    _FilterBoundaryMode,
     _InterpBoundaryMode,
+    Filter,
+    GaussianFilter,
+    PreparedPsf,
+    PsfFilter,
+    SeparablePsfFilter,
+    SquarePixelFilter,
+    TransferFilter,
     affine_transform,
     convolve1d,
     convolve2d,
+    convolve2d_recip,
+    convolve2d_recip_wrap,
     convolve2d_separable,
+    prepare_convolve2d,
+    prepare_convolve2d_recip,
 )
 from phaser.utils.num import BackendName, Sampling, get_backend_module, to_numpy
 
@@ -24,6 +36,10 @@ def checkerboard() -> t.Tuple[NDArray[numpy.float32], Sampling]:
     checker = ((yy % 2) ^ (xx % 2)).astype(numpy.float32)
 
     return (checker, Sampling(checker.shape, sampling=(1.0, 1.0)))
+
+
+def _unit_sampling(shape: t.Tuple[int, int]) -> Sampling:
+    return Sampling(shape, sampling=(1., 1.))
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
@@ -265,3 +281,341 @@ def test_convolve2d_separable_validates_weights(backend: BackendName):
 
     with pytest.raises(ValueError, match="Expected 'x_weights' to be 1D"):
         convolve2d_separable(arr, xp.array([1., 2.]), xp.array([[1., 2.]]))
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'nearest', 'mirror', 'grid-wrap', 'grid-constant'])
+@pytest.mark.parametrize('kernel', [
+    numpy.array([[1., 2., 1.], [2., 4., 2.], [1., 2., 1.]]) / 16.,
+    # asymmetric, to pin down convolution (rather than correlation)
+    numpy.array([[1., 0., 0.], [0., 0., 0.], [0., 0., 0.]]),
+])
+def test_convolve2d_filter_overload(mode: _InterpBoundaryMode, kernel: NDArray[numpy.floating], backend: BackendName):
+    """`convolve2d`'s `Filter` overload matches convolving with the filter's own kernel directly."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(9, 11))
+
+    expected = to_numpy(convolve2d(xp.array(arr), xp.array(kernel), mode=mode))
+    actual = to_numpy(convolve2d(xp.array(arr), PsfFilter(kernel), mode=mode))
+
+    assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'nearest', 'grid-wrap'])
+def test_convolve2d_complex_psf(mode: _InterpBoundaryMode, backend: BackendName):
+    """
+    Real-space convolution supports a complex `arr` (with either a real or complex
+    PSF), but a complex PSF can't filter a real `arr`.
+    """
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    real_kernel = _KERNELS[1]
+    complex_kernel = real_kernel * numpy.exp(1.j * rng.normal(size=real_kernel.shape))
+    real_arr = rng.normal(size=(9, 11))
+    complex_arr = real_arr + 1.j * rng.normal(size=(9, 11))
+
+    for kernel in (real_kernel, complex_kernel):
+        expected = to_numpy(convolve2d(xp.array(complex_arr), xp.array(kernel), mode=mode))
+        actual = to_numpy(convolve2d(xp.array(complex_arr), PsfFilter(kernel), mode=mode))
+        assert actual.dtype == numpy.complex128
+        assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+    for weights in (xp.array(real_kernel[0]), xp.array(complex_kernel[0])):
+        assert to_numpy(convolve1d(xp.array(complex_arr), weights)).dtype == numpy.complex128
+
+    with pytest.raises(ValueError, match="Expected a real point spread function"):
+        convolve2d(xp.array(real_arr), xp.array(complex_kernel), mode=mode)
+    with pytest.raises(ValueError, match="Expected a real point spread function"):
+        convolve1d(xp.array(real_arr), xp.array(complex_kernel[0]))
+    with pytest.raises(ValueError, match="Expected a real point spread function"):
+        convolve2d(xp.array(real_arr), PsfFilter(complex_kernel), mode=mode)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'nearest', 'grid-wrap'])
+def test_prepare_convolve2d(mode: _InterpBoundaryMode, backend: BackendName):
+    """A `PreparedPsf` applies exactly what `convolve2d`'s `Filter` overload does."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(3, 9, 11))
+    samp = _unit_sampling((9, 11))
+
+    filt = PsfFilter(_KERNELS[1])
+    prepared = prepare_convolve2d(filt, samp, mode=mode, xp=xp)
+    assert isinstance(prepared, PreparedPsf)
+
+    assert_allclose(
+        to_numpy(prepared(xp.array(arr))),
+        to_numpy(convolve2d(xp.array(arr), filt, mode=mode)),
+        rtol=1e-10, atol=1e-10,
+    )
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepare_convolve2d_separable(backend: BackendName):
+    """`prepare_convolve2d` on a `SeparableFilter` matches `convolve2d_separable` on its own kernels."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(9, 11))
+    samp = _unit_sampling((9, 11))
+
+    filt = GaussianFilter(1.5)
+    prepared = prepare_convolve2d(filt, samp, xp=xp)
+    y_kernel, x_kernel = filt.psf_separable(samp, xp=xp)
+
+    assert_allclose(
+        to_numpy(prepared(xp.array(arr))),
+        to_numpy(convolve2d_separable(xp.array(arr), y_kernel, x_kernel)),
+        rtol=1e-10, atol=1e-10,
+    )
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepare_convolve2d_cval(backend: BackendName):
+    """`PreparedPsf.cval` is used as the fill value under `'constant'`/`'grid-constant'` modes."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(9, 11))
+    samp = _unit_sampling((9, 11))
+
+    filt = PsfFilter(_KERNELS[1])
+    prepared = prepare_convolve2d(filt, samp, mode='grid-constant', cval=2.5, xp=xp)
+
+    assert_allclose(
+        to_numpy(prepared(xp.array(arr))),
+        to_numpy(convolve2d(xp.array(arr), filt, mode='grid-constant', cval=2.5)),
+        rtol=1e-10, atol=1e-10,
+    )
+
+
+_KERNELS: t.Sequence[NDArray[numpy.floating]] = [
+    numpy.array([[1.]]),
+    numpy.array([[1., 2., 1.], [2., 4., 2.], [1., 2., 1.]]) / 16.,
+    # asymmetric, to pin down convolution (rather than correlation)
+    numpy.array([[1., 0., 0.], [0., 0., 0.], [0., 0., 0.]]),
+    numpy.arange(15.).reshape((5, 3)),
+]
+
+
+def _recip_convolve(
+    arr: NDArray[numpy.inexact], filt: Filter, mode: _FilterBoundaryMode,
+    samp: t.Optional[Sampling] = None,
+) -> NDArray[numpy.inexact]:
+    return convolve2d_recip(arr, filt, samp if samp is not None else _unit_sampling(arr.shape[-2:]), mode=mode)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+@pytest.mark.parametrize('kernel', _KERNELS)
+@pytest.mark.parametrize('shape', [(8, 8), (9, 11), (3, 6, 5)])
+def test_convolve2d_recip_matches_spatial(
+    mode: _FilterBoundaryMode, kernel: NDArray[numpy.floating],
+    shape: t.Tuple[int, ...], backend: BackendName
+):
+    """Reciprocal space filtering by a `PsfFilter` matches spatial convolution by its kernel."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape)
+
+    actual = to_numpy(_recip_convolve(xp.array(arr), PsfFilter(kernel), mode, _unit_sampling(shape[-2:])))
+    expected = osp.convolve(arr, kernel[None] if len(shape) > 2 else kernel, mode=mode)
+
+    assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+def test_convolve2d_recip_separable(mode: _FilterBoundaryMode, backend: BackendName):
+    """`SeparablePsfFilter` matches the `PsfFilter` of its outer product."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(9, 11))
+    y_kernel, x_kernel = numpy.array([1., 4., 6., 4., 1.]) / 16., numpy.array([1., 2., 1.]) / 4.
+
+    separable = to_numpy(_recip_convolve(xp.array(arr), SeparablePsfFilter(y_kernel, x_kernel), mode))
+    outer = to_numpy(_recip_convolve(xp.array(arr), PsfFilter(y_kernel[:, None] * x_kernel[None, :]), mode))
+
+    assert_allclose(separable, outer, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+@pytest.mark.parametrize('kernel', _KERNELS)
+@pytest.mark.parametrize('shape', [(8, 8), (9, 11)])
+def test_transfer_filter_matches_psf_filter(
+    mode: _FilterBoundaryMode, kernel: NDArray[numpy.floating],
+    shape: t.Tuple[int, int], backend: BackendName
+):
+    """
+    A `TransferFilter` sampled on the fft grid applies the same filter as the
+    `PsfFilter` it came from, under both boundary modes.
+
+    Under `'reflect'` this exercises `TransferFilter.transfer_function_sym`, which
+    must Fourier upsample onto the doubled grid.
+    """
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape)
+
+    psf_filt = PsfFilter(kernel)
+    transfer_filt = TransferFilter(psf_filt.transfer_function(_unit_sampling(shape)))
+
+    assert_allclose(
+        to_numpy(_recip_convolve(xp.array(arr), transfer_filt, mode)),
+        to_numpy(_recip_convolve(xp.array(arr), psf_filt, mode)),
+        rtol=1e-10, atol=1e-10,
+    )
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+@pytest.mark.parametrize('shape', [(8, 8), (9, 11)])
+def test_gaussian_filter(mode: _FilterBoundaryMode, shape: t.Tuple[int, int], backend: BackendName):
+    """`GaussianFilter` samples its transfer function on whichever grid it's asked for."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape)
+
+    filt = GaussianFilter(1.5)
+    actual = to_numpy(_recip_convolve(xp.array(arr), filt, mode))
+
+    # `transfer_function_sym` is the transfer function of the doubled shape
+    doubled = (2 * shape[0], 2 * shape[1])
+    assert_allclose(to_numpy(filt.transfer_function_sym(_unit_sampling(shape))),
+                    to_numpy(filt.transfer_function(_unit_sampling(doubled))), rtol=1e-12, atol=1e-12)
+
+    # a gaussian blur is close to (but not exactly) its truncated spatial kernel
+    ms = numpy.arange(-8, 9)
+    kernel = numpy.exp(-0.5 * (ms[:, None]**2 + ms[None, :]**2) / 1.5**2)
+    kernel /= numpy.sum(kernel)
+    assert_allclose(actual, osp.convolve(arr, kernel, mode=mode), rtol=1e-3, atol=1e-3)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_square_pixel_filter_pixel_sampling(backend: BackendName):
+    """`SquarePixelFilter.pixel_sampling` decouples the detector pixel size from the
+    `Sampling` it's evaluated on, defaulting to that sampling's own spacing."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(1)
+    shape = (16, 16)
+    arr = rng.normal(size=shape)
+
+    # a pixel exactly matching the sampling spacing (the old, fixed behavior) should
+    # be the same whether that spacing is 1.0 or something else
+    unit_samp = _unit_sampling(shape)
+    coarse_samp = Sampling(shape, sampling=(2.0, 2.0))
+
+    filt_unit = SquarePixelFilter()
+    filt_matched = SquarePixelFilter(pixel_sampling=2.0)
+
+    kernel_unit = to_numpy(filt_unit.psf_separable(unit_samp, xp=xp)[0])
+    kernel_matched = to_numpy(filt_matched.psf_separable(coarse_samp, xp=xp)[0])
+    assert_allclose(kernel_unit, kernel_matched, rtol=1e-10, atol=1e-10)
+
+    actual_unit = to_numpy(_recip_convolve(xp.array(arr), filt_unit, 'grid-wrap', unit_samp))
+    actual_matched = to_numpy(_recip_convolve(xp.array(arr), filt_matched, 'grid-wrap', coarse_samp))
+    assert_allclose(actual_unit, actual_matched, rtol=1e-10, atol=1e-10)
+
+    # a detector pixel twice the sampling's spacing should produce a kernel spanning
+    # roughly twice as many samples, and should differ from the unscaled case
+    filt_wide = SquarePixelFilter(pixel_sampling=4.0)
+    kernel_wide = to_numpy(filt_wide.psf_separable(coarse_samp, xp=xp)[0])
+    assert len(kernel_wide) > len(kernel_matched)
+    assert not numpy.allclose(kernel_wide, numpy.pad(
+        kernel_matched, (len(kernel_wide) - len(kernel_matched)) // 2,
+    ), rtol=1e-6, atol=1e-6)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+def test_prepare_convolve2d_recip(mode: _FilterBoundaryMode, backend: BackendName):
+    """A prepared filter applies exactly what the matching eager function does."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(3, 9, 11))
+    samp = _unit_sampling((9, 11))
+
+    filt = PsfFilter(_KERNELS[1])
+    prepared = prepare_convolve2d_recip(filt, samp, mode=mode, xp=xp)
+
+    assert_allclose(
+        to_numpy(prepared(xp.array(arr))),
+        to_numpy(_recip_convolve(xp.array(arr), filt, mode, samp)),
+        rtol=1e-10, atol=1e-10,
+    )
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+@pytest.mark.parametrize('shape', [(8, 8), (9, 11)])
+def test_convolve2d_recip_identity(mode: _FilterBoundaryMode, shape: t.Tuple[int, int], backend: BackendName):
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape)
+
+    ones = TransferFilter(numpy.ones(shape))
+    assert_allclose(to_numpy(_recip_convolve(xp.array(arr), ones, mode)), arr, rtol=1e-10, atol=1e-10)
+    assert_allclose(to_numpy(_recip_convolve(xp.array(arr), PsfFilter(numpy.array([[1.]])), mode)),
+                    arr, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'grid-wrap'])
+@pytest.mark.parametrize('dtype', [numpy.float32, numpy.float64, numpy.complex64, numpy.complex128])
+def test_convolve2d_recip_dtypes(mode: _FilterBoundaryMode, dtype, backend: BackendName):
+    """The result always has the same dtype as `arr`, even if the filter's transfer function is complex."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(8, 8)).astype(dtype)
+    kernel = _KERNELS[1].astype(numpy.float64)
+
+    for filt in (PsfFilter(kernel), TransferFilter(numpy.ones((8, 8))), GaussianFilter(1.5)):
+        assert to_numpy(_recip_convolve(xp.array(arr), filt, mode)).dtype == numpy.dtype(dtype)
+
+    # a complex `PsfFilter` can't filter a real array (no explicit `dtype` -> defaults to real)
+    with pytest.raises(ValueError, match="Expected a real point spread function"):
+        PsfFilter(kernel * 1.j).psf(_unit_sampling((8, 8)), xp=xp)
+
+    # a complex *transfer function* (e.g. a propagator or phase plate) is a normal filter;
+    # applying one to a real `arr` assumes the transfer function is Hermitian, and keeps
+    # the result real (matching `arr`'s dtype)
+    complex_filt = TransferFilter(xp.asarray(numpy.exp(1.j * rng.normal(size=(8, 8)))))
+    assert to_numpy(_recip_convolve(xp.array(arr), complex_filt, mode)).dtype == numpy.dtype(dtype)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_convolve2d_recip_validates(backend: BackendName):
+    xp = get_backend_module(backend)
+    arr = xp.array(numpy.zeros((4, 5)))
+    samp = _unit_sampling((4, 5))
+
+    with pytest.raises(TypeError, match="must implement 'psf' or 'transfer_function'"):
+        class BadFilter(Filter):
+            pass
+
+    with pytest.raises(ValueError, match="Expected 'kernel' to be 2D"):
+        convolve2d_recip(arr, PsfFilter(numpy.ones(3)), samp)
+
+    with pytest.raises(ValueError, match="Expected 'y_kernel' and 'x_kernel' to be 1D"):
+        convolve2d_recip(arr, SeparablePsfFilter(numpy.ones((2, 2)), numpy.ones(2)), samp)
+
+    # under 'reflect', the kernel is embedded on the doubled grid (needed for a
+    # correct whole-sample-symmetric extension), so it must be checked under
+    # 'grid-wrap' (no doubling) to fail against the base data shape
+    with pytest.raises(ValueError, match=r"doesn't fit in a grid of shape \(4, 5\)"):
+        convolve2d_recip(arr, PsfFilter(numpy.ones((7, 3))), samp, mode='grid-wrap')
+
+    with pytest.raises(ValueError, match=r"Expected a transfer function of shape \(4, 5\), instead got shape \(4,\)"):
+        convolve2d_recip(arr, TransferFilter(numpy.ones(4)), samp)
+
+    with pytest.raises(ValueError, match=r"Expected a transfer function of shape \(4, 5\)"):
+        convolve2d_recip(arr, TransferFilter(numpy.ones((5, 4))), samp)
+
+    with pytest.raises(ValueError, match="Expected 'arr' to be at least 2D"):
+        convolve2d_recip_wrap(xp.array(numpy.zeros(4)), numpy.ones((4,)))
+
+    with pytest.raises(ValueError, match=r"Filter was prepared for shape \(8, 8\)"):
+        prepared = prepare_convolve2d_recip(PsfFilter(numpy.ones((1, 1))), _unit_sampling((8, 8)), xp=xp)
+        prepared(arr)
