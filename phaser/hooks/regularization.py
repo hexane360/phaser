@@ -54,7 +54,7 @@ class UnstructuredGaussianProps(Dataclass):
 
 
 class TiltGaussianProps(UnstructuredGaussianProps):
-    attr_path: t.Literal['tilt'] = 'tilt'
+    attr_path: t.Literal['scan.tilt'] = 'scan.tilt'
 
 
 class OPRGaussianProps(UnstructuredGaussianProps):
