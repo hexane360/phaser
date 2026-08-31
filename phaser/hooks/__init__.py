@@ -7,6 +7,7 @@ from pane import annotations
 from typing_extensions import NotRequired
 
 from ..types import Aberration, Dataclass, Slices
+from .filter import FilterHook
 from .hook import Hook
 
 if t.TYPE_CHECKING:
@@ -214,6 +215,13 @@ class DiffractionAlignProps(Dataclass):
     ...
 
 
+class ApplyMtfProps(Dataclass):
+    mtf: FilterHook
+    domain: t.Literal['real', 'recip'] = 'real'
+    """Whether to apply the filter by direct spatial-domain convolution ('real') or by
+    multiplying in the Fourier domain ('recip')."""
+
+
 class PostLoadHook(Hook[RawData, RawData]):
     known: t.ClassVar = {
         'crop_data': ('phaser.hooks.preprocessing:crop_data', CropDataProps),
@@ -221,6 +229,7 @@ class PostLoadHook(Hook[RawData, RawData]):
         'scale': ('phaser.hooks.preprocessing:scale_patterns', ScaleProps),
         'offset': ('phaser.hooks.preprocessing:offset_patterns', OffsetProps),
         'bin': ('phaser.hooks.preprocessing:bin_patterns', BinProps),
+        'apply_mtf': ('phaser.hooks.preprocessing:apply_mtf', ApplyMtfProps),
     }
 
 
