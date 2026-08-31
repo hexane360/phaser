@@ -48,3 +48,10 @@ def test_electron_0keV():
 
     with pytest.raises(ZeroDivisionError):
         e.interaction_param
+
+
+def test_electron_roundtrip():
+    e1 = Electron(200e3)
+    e2 = Electron.from_wavelength(e1.wavelength)
+
+    assert pytest.approx(e1.energy) == e2.energy

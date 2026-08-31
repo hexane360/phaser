@@ -645,8 +645,11 @@ def test_composite_filter_transfer_function(backend: BackendName):
 def test_composite_filter_psf_matches_transfer_function(backend: BackendName):
     """
     `ProductFilter.psf`'s direct compact-kernel convolution agrees with the
-    (independent) FFT-derived `ifft2(transfer_function(samp))`.
+    (independent) FFT-derived `ifft2(transfer_function(samp))`, once both are
+    embedded onto the same full grid.
     """
+    from phaser.utils.image import _embed_psf
+
     xp = get_backend_module(backend)
     samp = _unit_sampling((16, 16))
 
@@ -654,7 +657,8 @@ def test_composite_filter_psf_matches_transfer_function(backend: BackendName):
     f2 = PsfFilter(_KERNELS[2])
     composite = ProductFilter((f1, f2))
 
-    actual = to_numpy(composite.psf(samp, xp=xp))
+    compact = composite.psf(samp, xp=xp)
+    actual = to_numpy(_embed_psf(compact, (16, 16), xp, compact.dtype))
     expected = to_numpy(Filter.psf(composite, samp, xp=xp))
     assert_allclose(actual, expected, rtol=1e-8, atol=1e-8)
 
@@ -701,7 +705,7 @@ def test_composite_filter_flattens(backend: BackendName):
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_composite_filter_identity(backend: BackendName):
     """The empty `ProductFilter` is the identity filter: an all-ones transfer
-    function, and a single-tap delta point spread function."""
+    function, and a single-tap (compact) point spread function."""
     xp = get_backend_module(backend)
     samp = _unit_sampling((8, 8))
 
@@ -709,9 +713,7 @@ def test_composite_filter_identity(backend: BackendName):
     assert_allclose(to_numpy(identity.transfer_function(samp, xp=xp)), numpy.ones((8, 8)))
 
     psf = to_numpy(identity.psf(samp, xp=xp))
-    expected = numpy.zeros((8, 8))
-    expected[4, 4] = 1.
-    assert_allclose(psf, expected, atol=1e-10)
+    assert_allclose(psf, numpy.array([[1.]]), atol=1e-10)
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')

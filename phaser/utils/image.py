@@ -5,6 +5,7 @@ Utilities for image processing & filtering
 import abc
 import dataclasses
 import functools
+import math
 import typing as t
 import warnings
 
@@ -500,20 +501,27 @@ class Filter(abc.ABC):
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
         """
-        Return the point spread function of the filter, sampled on the grid `samp`.
+        Return the point spread function of the filter, evaluated for data sampled on `samp`.
 
-        The kernel is centered, i.e. the origin is at index `tuple(n // 2 for n in samp.shape)`,
-        matching the convention of [`PsfFilter`][phaser.utils.image.PsfFilter] and
-        [`convolve2d`][phaser.utils.image.convolve2d].
+        The kernel is centered at `tuple(n // 2 for n in kernel.shape)`, matching the
+        convention of [`PsfFilter`][phaser.utils.image.PsfFilter] and
+        [`convolve2d`][phaser.utils.image.convolve2d]. When the filter has a natural
+        compact representation (e.g. [`SeparableFilter`][phaser.utils.image.SeparableFilter],
+        [`PsfFilter`][phaser.utils.image.PsfFilter], and composites of these), the returned
+        kernel may be smaller than `samp.shape`; use
+        [`_embed_psf`][phaser.utils.image._embed_psf] to place it on the full grid.
+        This default implementation has no such compact form to fall back on (a transfer
+        function alone carries no locality information), so it always returns an array of
+        shape `samp.shape`.
 
         Parameters:
             samp: Sampling of the data to filter.
             xp: Array module to return an array of.
             dtype: Floating point precision to work in.
 
-        Returns: Array of shape `samp.shape`. If `dtype` is real (the default), the
-                 transfer function is assumed to be Hermitian and only the real part
-                 is kept.
+        Returns: Array of shape `samp.shape` (or smaller, for a filter with a compact
+                 representation). If `dtype` is real (the default), the transfer function
+                 is assumed to be Hermitian and only the real part is kept.
         """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         psf = fft2shift(xp.fft.ifft2(self.transfer_function(samp, xp=xp, dtype=dtype)))
@@ -535,7 +543,9 @@ class Filter(abc.ABC):
         Returns: Array of shape `samp.shape`.
         """
         xp = _resolve_xp(xp)
-        return xp.fft.fft2(ifft2shift(self.psf(samp, xp=xp, dtype=dtype)))
+        kernel = self.psf(samp, xp=xp, dtype=dtype)
+        psf = _embed_psf(kernel, _sampling_shape(samp), xp, kernel.dtype)
+        return xp.fft.fft2(ifft2shift(psf))
 
     def transfer_function_sym(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
@@ -697,7 +707,7 @@ class PsfFilter(Filter):
         if kernel.ndim != 2:
             raise ValueError("PsfFilter: Expected 'kernel' to be 2D")
         _check_real_psf(kernel, numpy.issubdtype(dtype, numpy.complexfloating), xp, 'PsfFilter')
-        return _embed_psf(kernel, _sampling_shape(samp), xp, dtype)
+        return _cast_filter(kernel, dtype)
 
 
 class SeparableFilter(Filter):
@@ -741,7 +751,7 @@ class SeparableFilter(Filter):
     ) -> NDArray[numpy.inexact]:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         y_kernel, x_kernel = self.psf_separable(samp, xp=xp, dtype=dtype)
-        return _embed_psf(y_kernel[:, None] * x_kernel[None, :], _sampling_shape(samp), xp, dtype)
+        return y_kernel[:, None] * x_kernel[None, :]
 
 
 class AnalyticFilter(Filter):
@@ -861,7 +871,8 @@ class GaussianFilter(SeparableFilter, AnalyticFilter):
     sampling it is evaluated on.
 
     The point spread function is truncated at `psf_sigma` standard deviations
-    (and renormalized).
+    (and renormalized). It is also bandwidth limited to match a smooth Gaussian
+    transfer function. This leads to some ringing for small `sigma` values.
     """
 
     sigma: t.Union[Float, t.Tuple[Float, Float]]
@@ -882,18 +893,25 @@ class GaussianFilter(SeparableFilter, AnalyticFilter):
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> t.Tuple[NDArray[numpy.inexact], NDArray[numpy.inexact]]:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
+        real_dtype = to_real_dtype(dtype)
 
-        def kernel_1d(sigma: float) -> NDArray[numpy.float64]:
-            # truncated, normalized 1D Gaussian, matching scipy.ndimage.gaussian_filter1d
-            radius = int(self.psf_sigma * sigma + 0.5)
-            ns = numpy.arange(-radius, radius + 1, dtype=numpy.float64)
-            k = numpy.exp(-0.5 * (ns / sigma)**2) if sigma > 0. else numpy.ones_like(ns)
-            return k / numpy.sum(k)
+        def kernel_1d(sigma: float, n: int) -> NDArray[numpy.floating]:
+            # built in recip. space, for consistency with the reciprocal
+            # version. For small values of `sigma`, these diverge.
+            # This means the transfer function is truly a Gaussian, but
+            # the PSF is a bandwidth-limited Gaussian, which rings slightly.
+            k = xp.fft.fftfreq(n).astype(real_dtype)
+            transfer = xp.exp(-2 * numpy.pi**2 * sigma**2 * k**2).astype(real_dtype)
+            full = xp.fft.fftshift(xp.fft.ifft(transfer).real)
+
+            center = n // 2
+            r = int(numpy.ceil(self.psf_sigma * sigma))
+            kernel = full[center-r : center+r+1]
+            return kernel / xp.sum(kernel)
 
         sigmas = numpy.array(_split_pair(self.sigma), dtype=numpy.float64) / samp.sampling
         return t.cast(t.Tuple[NDArray[numpy.inexact], NDArray[numpy.inexact]], tuple(
-            _cast_filter(xp.asarray(kernel_1d(sigma)), dtype)
-            for sigma in sigmas
+            kernel_1d(sigma, n) for (sigma, n) in zip(sigmas, _sampling_shape(samp))
         ))
 
 
@@ -955,23 +973,6 @@ class SquarePixelFilter(SeparableFilter, AnalyticFilter):
         ))
 
 
-def _compact_psf(
-    f: Filter, samp: Sampling, *, xp: t.Any, dtype: DTypeLike
-) -> NDArray[numpy.inexact]:
-    """
-    Return the most compact available representation of `f`'s point spread function
-    (i.e. not padded/embedded to `samp.shape`), for use by
-    [`ProductFilter.psf`][phaser.utils.image.ProductFilter.psf] and
-    [`SumFilter.psf`][phaser.utils.image.SumFilter.psf].
-    """
-    if isinstance(f, SeparableFilter):
-        y_kernel, x_kernel = f.psf_separable(samp, xp=xp, dtype=dtype)
-        return y_kernel[:, None] * x_kernel[None, :]
-    if isinstance(f, PsfFilter):
-        return _cast_filter(xp.asarray(f.kernel), dtype)
-    return f.psf(samp, xp=xp, dtype=dtype)
-
-
 @dataclasses.dataclass(frozen=True)
 class ProductFilter(Filter):
     """
@@ -1015,18 +1016,17 @@ class ProductFilter(Filter):
     ) -> NDArray[numpy.inexact]:
         """
         The product point spread function, computed by directly convolving the
-        components' compact kernels (rather than going through
+        components' own (compact) point spread functions, rather than going through
         [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
-        FFT over the full `samp.shape` grid regardless of how compact the components are).
+        FFT over the full `samp.shape` grid regardless of how compact the components are.
         """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         if not self.filters:
-            return _embed_psf(xp.ones((1, 1), dtype=dtype), _sampling_shape(samp), xp, dtype)
-        kernel = functools.reduce(
+            return xp.ones((1, 1), dtype=dtype)
+        return functools.reduce(
             lambda a, b: _convolve_kernels_2d(a, b, xp, dtype),
-            (_compact_psf(f, samp, xp=xp, dtype=dtype) for f in self.filters),
+            (f.psf(samp, xp=xp, dtype=dtype) for f in self.filters),
         )
-        return _embed_psf(kernel, _sampling_shape(samp), xp, dtype)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1119,18 +1119,17 @@ class SumFilter(Filter):
     ) -> NDArray[numpy.inexact]:
         """
         The sum point spread function, computed by directly adding the components'
-        compact kernels (rather than going through
+        own (compact) point spread functions, rather than going through
         [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
-        FFT over the full `samp.shape` grid regardless of how compact the components are).
+        FFT over the full `samp.shape` grid regardless of how compact the components are.
         """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         if not self.filters:
-            return xp.zeros(_sampling_shape(samp), dtype=dtype)
-        kernel = functools.reduce(
+            return xp.zeros((1, 1), dtype=dtype)
+        return functools.reduce(
             lambda a, b: _add_kernels_2d(a, b, xp, dtype),
-            (_compact_psf(f, samp, xp=xp, dtype=dtype) for f in self.filters),
+            (f.psf(samp, xp=xp, dtype=dtype) for f in self.filters),
         )
-        return _embed_psf(kernel, _sampling_shape(samp), xp, dtype)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1376,6 +1375,7 @@ def prepare_convolve2d(
     if isinstance(filt, SeparableFilter):
         psf = filt.psf_separable(samp, xp=xp, dtype=dtype)
     else:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
         psf = filt.psf(samp, xp=xp, dtype=dtype)
     return PreparedPsf(psf, mode, cval)
 

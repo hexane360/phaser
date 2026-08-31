@@ -3,8 +3,9 @@ from pathlib import Path
 
 import numpy
 from numpy.typing import DTypeLike, NDArray
-from pane import annotations
 from typing_extensions import NotRequired
+
+from pane import annotations
 
 from ..types import Aberration, Dataclass, Slices
 from .filter import FilterHook
@@ -217,7 +218,7 @@ class DiffractionAlignProps(Dataclass):
 
 class ApplyMtfProps(Dataclass):
     mtf: FilterHook
-    domain: t.Literal['real', 'recip'] = 'real'
+    domain: t.Literal['real', 'recip'] = 'recip'
     """Whether to apply the filter by direct spatial-domain convolution ('real') or by
     multiplying in the Fourier domain ('recip')."""
 

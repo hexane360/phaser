@@ -93,7 +93,7 @@ def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
 
 def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
     xp = get_array_module(raw_data['patterns'])
-    filt = props.mtf(None)
+    filt = props.mtf(raw_data)
 
     patterns = raw_data['patterns']
     # sigma/psf_radius are in detector pixels, so use a unit sampling
