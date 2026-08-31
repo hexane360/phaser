@@ -478,6 +478,12 @@ class Filter(abc.ABC):
     Subclasses implement whichever of [`psf`][phaser.utils.image.Filter.psf] and
     [`transfer_function`][phaser.utils.image.Filter.transfer_function] they natively
     have; the other is derived automatically.
+
+    LSI filters form a commutative ring under [`__add__`][phaser.utils.image.Filter.__add__]
+    (pointwise sum of point spread functions/transfer functions, identity
+    [`SumFilter(())`][phaser.utils.image.SumFilter]) and
+    [`__mul__`][phaser.utils.image.Filter.__mul__] (composition, identity
+    [`ProductFilter(())`][phaser.utils.image.ProductFilter]).
     """
 
     def __init_subclass__(cls, **kwargs: t.Any) -> None:
@@ -583,7 +589,7 @@ class Filter(abc.ABC):
         by that scalar.
         """
         if isinstance(other, Filter):
-            return _compose_filters(self, other)
+            return _multiply_filters(self, other)
         if isinstance(other, (int, float)):
             return _scale_filter(self, float(other))
         return NotImplemented
@@ -591,6 +597,20 @@ class Filter(abc.ABC):
     def __rmul__(self, other: float) -> 'Filter':
         if isinstance(other, (int, float)):
             return _scale_filter(self, float(other))
+        return NotImplemented
+
+    def __add__(self, other: 'Filter') -> 'Filter':
+        """
+        Add another filter (`filt1 + filt2`): point spread functions and transfer
+        functions add pointwise.
+        """
+        if isinstance(other, Filter):
+            return _add_filters(self, other)
+        return NotImplemented
+
+    def __radd__(self, other: 'Filter') -> 'Filter':
+        if isinstance(other, Filter):
+            return _add_filters(other, self)
         return NotImplemented
 
 
@@ -688,13 +708,13 @@ class SeparableFilter(Filter):
     """
 
     @t.overload
-    def __mul__(self, other: 'SeparableFilter') -> 'CompositeSeparableFilter': ...
+    def __mul__(self, other: 'SeparableFilter') -> 'ProductSeparableFilter': ...
     @t.overload
     def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter': ...
 
     def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter':
         if isinstance(other, Filter):
-            return _compose_filters(self, other)
+            return _multiply_filters(self, other)
         if isinstance(other, (int, float)):
             return _scale_filter(self, float(other))
         return NotImplemented
@@ -941,7 +961,8 @@ def _compact_psf(
     """
     Return the most compact available representation of `f`'s point spread function
     (i.e. not padded/embedded to `samp.shape`), for use by
-    [`CompositeFilter.psf`][phaser.utils.image.CompositeFilter.psf].
+    [`ProductFilter.psf`][phaser.utils.image.ProductFilter.psf] and
+    [`SumFilter.psf`][phaser.utils.image.SumFilter.psf].
     """
     if isinstance(f, SeparableFilter):
         y_kernel, x_kernel = f.psf_separable(samp, xp=xp, dtype=dtype)
@@ -952,14 +973,15 @@ def _compact_psf(
 
 
 @dataclasses.dataclass(frozen=True)
-class CompositeFilter(Filter):
+class ProductFilter(Filter):
     """
-    The composition of several filters, applied in sequence (order doesn't matter,
-    since LSI filters commute): point spread functions convolve, transfer functions
-    multiply.
+    The composition (product) of several filters, applied in sequence (order doesn't
+    matter, since LSI filters commute): point spread functions convolve, transfer
+    functions multiply.
 
     Construct via [`Filter.__mul__`][phaser.utils.image.Filter.__mul__] (`filt1 * filt2`)
-    rather than directly. The empty composite, `CompositeFilter(())`, is the identity filter.
+    rather than directly. The empty product, `ProductFilter(())`, is the multiplicative
+    identity filter.
     """
 
     filters: t.Tuple[Filter, ...] = ()
@@ -992,7 +1014,7 @@ class CompositeFilter(Filter):
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
         """
-        The composite point spread function, computed by directly convolving the
+        The product point spread function, computed by directly convolving the
         components' compact kernels (rather than going through
         [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
         FFT over the full `samp.shape` grid regardless of how compact the components are).
@@ -1008,12 +1030,12 @@ class CompositeFilter(Filter):
 
 
 @dataclasses.dataclass(frozen=True)
-class CompositeSeparableFilter(SeparableFilter, CompositeFilter):
+class ProductSeparableFilter(SeparableFilter, ProductFilter):
     """
-    A [`CompositeFilter`][phaser.utils.image.CompositeFilter] all of whose components are
-    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s, so the composite point spread
+    A [`ProductFilter`][phaser.utils.image.ProductFilter] all of whose components are
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s, so the product point spread
     function can be built (and convolved) one axis at a time, rather than going through
-    [`CompositeFilter`][phaser.utils.image.CompositeFilter]'s 2D compact convolution.
+    [`ProductFilter`][phaser.utils.image.ProductFilter]'s 2D compact convolution.
     """
 
     filters: t.Tuple[SeparableFilter, ...] = ()
@@ -1033,18 +1055,109 @@ class CompositeSeparableFilter(SeparableFilter, CompositeFilter):
         return (y_kernel, x_kernel)
 
 
-def _compose_filters(a: Filter, b: Filter) -> Filter:
-    a_filters = a.filters if isinstance(a, CompositeFilter) else (a,)
-    b_filters = b.filters if isinstance(b, CompositeFilter) else (b,)
+def _multiply_filters(a: Filter, b: Filter) -> Filter:
+    a_filters = a.filters if isinstance(a, ProductFilter) else (a,)
+    b_filters = b.filters if isinstance(b, ProductFilter) else (b,)
     filters = a_filters + b_filters
     if all(isinstance(f, SeparableFilter) for f in filters):
-        return CompositeSeparableFilter(t.cast(t.Tuple[SeparableFilter, ...], filters))
-    return CompositeFilter(filters)
+        return ProductSeparableFilter(t.cast(t.Tuple[SeparableFilter, ...], filters))
+    return ProductFilter(filters)
 
 
 def _scale_filter(filt: Filter, scale: float) -> Filter:
     one = numpy.array([scale])
-    return _compose_filters(filt, SeparablePsfFilter(one, numpy.array([1.0]), symmetric=True))
+    return _multiply_filters(filt, SeparablePsfFilter(one, numpy.array([1.0]), symmetric=True))
+
+
+def _add_kernels_2d(
+    a: NDArray[numpy.inexact], b: NDArray[numpy.inexact], xp: t.Any, dtype: DTypeLike
+) -> NDArray[numpy.inexact]:
+    """Add two centered compact kernels, embedding both into their union bounding box."""
+    shape = (max(a.shape[-2], b.shape[-2]), max(a.shape[-1], b.shape[-1]))
+    return _embed_psf(a, shape, xp, dtype) + _embed_psf(b, shape, xp, dtype)
+
+
+@dataclasses.dataclass(frozen=True)
+class SumFilter(Filter):
+    """
+    The sum of several filters: point spread functions and transfer functions add
+    pointwise.
+
+    Construct via [`Filter.__add__`][phaser.utils.image.Filter.__add__] (`filt1 + filt2`)
+    rather than directly. The empty sum, `SumFilter(())`, is the additive identity
+    (zero) filter.
+    """
+
+    filters: t.Tuple[Filter, ...] = ()
+    symmetric: bool = dataclasses.field(init=False)
+    """Whether every component filter is symmetric."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'symmetric', all(f.symmetric for f in self.filters))
+
+    def transfer_function(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        transfer = xp.zeros(_sampling_shape(samp), dtype=dtype)
+        for f in self.filters:
+            transfer = transfer + f.transfer_function(samp, xp=xp, dtype=dtype)
+        return transfer
+
+    def transfer_function_dct(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        transfer = xp.zeros(_sampling_shape(samp), dtype=dtype)
+        for f in self.filters:
+            transfer = transfer + f.transfer_function_dct(samp, xp=xp, dtype=dtype)
+        # a symmetric filter's transfer function is real, up to roundoff
+        return xp.real(transfer) if self.symmetric else transfer
+
+    def psf(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        """
+        The sum point spread function, computed by directly adding the components'
+        compact kernels (rather than going through
+        [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
+        FFT over the full `samp.shape` grid regardless of how compact the components are).
+        """
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        if not self.filters:
+            return xp.zeros(_sampling_shape(samp), dtype=dtype)
+        kernel = functools.reduce(
+            lambda a, b: _add_kernels_2d(a, b, xp, dtype),
+            (_compact_psf(f, samp, xp=xp, dtype=dtype) for f in self.filters),
+        )
+        return _embed_psf(kernel, _sampling_shape(samp), xp, dtype)
+
+
+@dataclasses.dataclass(frozen=True)
+class SumSeparableFilter(SumFilter):
+    """
+    A [`SumFilter`][phaser.utils.image.SumFilter] all of whose components are
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s.
+
+    Unlike [`ProductSeparableFilter`][phaser.utils.image.ProductSeparableFilter], the
+    sum itself is *not* generally separable (a sum of outer products isn't generally
+    a single outer product), so this doesn't implement
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]. It exists so that
+    [`psf`][phaser.utils.image.SumFilter.psf] can build the result directly from the
+    components' compact `psf_separable` kernels, rather than paying for a full
+    `samp.shape` FFT per component.
+    """
+
+    filters: t.Tuple[SeparableFilter, ...] = ()
+
+
+def _add_filters(a: Filter, b: Filter) -> Filter:
+    a_filters = a.filters if isinstance(a, SumFilter) else (a,)
+    b_filters = b.filters if isinstance(b, SumFilter) else (b,)
+    filters = a_filters + b_filters
+    if all(isinstance(f, SeparableFilter) for f in filters):
+        return SumSeparableFilter(t.cast(t.Tuple[SeparableFilter, ...], filters))
+    return SumFilter(filters)
 
 
 def _check_transfer(
@@ -1275,7 +1388,8 @@ __all__ = [
     'Filter', 'SeparableFilter', 'AnalyticFilter',
     'PsfFilter', 'SeparablePsfFilter', 'TransferFilter',
     'GaussianFilter', 'SquarePixelFilter',
-    'CompositeFilter', 'CompositeSeparableFilter',
+    'ProductFilter', 'ProductSeparableFilter',
+    'SumFilter', 'SumSeparableFilter',
     'convolve2d_recip_wrap', 'convolve2d_recip_reflect', 'convolve2d_recip_reflect_dct',
     'convolve2d_recip',
     'PreparedFilter', 'prepare_convolve2d_recip',

@@ -9,8 +9,8 @@ from numpy.typing import ArrayLike, NDArray
 from phaser.utils.image import (
     _FilterBoundaryMode,
     _InterpBoundaryMode,
-    CompositeFilter,
-    CompositeSeparableFilter,
+    ProductFilter,
+    ProductSeparableFilter,
     Filter,
     GaussianFilter,
     PreparedPsf,
@@ -633,8 +633,8 @@ def test_composite_filter_transfer_function(backend: BackendName):
     f2 = TransferFilter(numpy.linspace(0.1, 1., 64).reshape(8, 8))
     composite = f1 * f2
 
-    assert isinstance(composite, CompositeFilter)
-    assert not isinstance(composite, CompositeSeparableFilter)
+    assert isinstance(composite, ProductFilter)
+    assert not isinstance(composite, ProductSeparableFilter)
     assert composite.filters == (f1, f2)
 
     expected = to_numpy(f1.transfer_function(samp, xp=xp)) * to_numpy(f2.transfer_function(samp, xp=xp))
@@ -644,7 +644,7 @@ def test_composite_filter_transfer_function(backend: BackendName):
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_composite_filter_psf_matches_transfer_function(backend: BackendName):
     """
-    `CompositeFilter.psf`'s direct compact-kernel convolution agrees with the
+    `ProductFilter.psf`'s direct compact-kernel convolution agrees with the
     (independent) FFT-derived `ifft2(transfer_function(samp))`.
     """
     xp = get_backend_module(backend)
@@ -652,7 +652,7 @@ def test_composite_filter_psf_matches_transfer_function(backend: BackendName):
 
     f1 = PsfFilter(_KERNELS[1])
     f2 = PsfFilter(_KERNELS[2])
-    composite = CompositeFilter((f1, f2))
+    composite = ProductFilter((f1, f2))
 
     actual = to_numpy(composite.psf(samp, xp=xp))
     expected = to_numpy(Filter.psf(composite, samp, xp=xp))
@@ -662,9 +662,9 @@ def test_composite_filter_psf_matches_transfer_function(backend: BackendName):
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_composite_separable_filter(backend: BackendName):
     """
-    `SeparableFilter * SeparableFilter` produces a `CompositeSeparableFilter` whose
+    `SeparableFilter * SeparableFilter` produces a `ProductSeparableFilter` whose
     1D kernels are the full convolution of the components' own 1D kernels, and whose
-    (outer-product) `psf` agrees with the generic `CompositeFilter` path.
+    (outer-product) `psf` agrees with the generic `ProductFilter` path.
     """
     xp = get_backend_module(backend)
     samp = _unit_sampling((64, 64))
@@ -673,7 +673,7 @@ def test_composite_separable_filter(backend: BackendName):
     f2 = SquarePixelFilter()
     composite = f1 * f2
 
-    assert isinstance(composite, CompositeSeparableFilter)
+    assert isinstance(composite, ProductSeparableFilter)
 
     y1, x1 = (to_numpy(k) for k in f1.psf_separable(samp, xp=xp))
     y2, x2 = (to_numpy(k) for k in f2.psf_separable(samp, xp=xp))
@@ -681,7 +681,7 @@ def test_composite_separable_filter(backend: BackendName):
     assert_allclose(y, numpy.convolve(y1, y2, mode='full'), rtol=1e-8, atol=1e-8)
     assert_allclose(x, numpy.convolve(x1, x2, mode='full'), rtol=1e-8, atol=1e-8)
 
-    generic = CompositeFilter((f1, f2))
+    generic = ProductFilter((f1, f2))
     assert_allclose(
         to_numpy(composite.psf(samp, xp=xp)), to_numpy(generic.psf(samp, xp=xp)), rtol=1e-8, atol=1e-8,
     )
@@ -700,12 +700,12 @@ def test_composite_filter_flattens(backend: BackendName):
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_composite_filter_identity(backend: BackendName):
-    """The empty `CompositeFilter` is the identity filter: an all-ones transfer
+    """The empty `ProductFilter` is the identity filter: an all-ones transfer
     function, and a single-tap delta point spread function."""
     xp = get_backend_module(backend)
     samp = _unit_sampling((8, 8))
 
-    identity = CompositeFilter(())
+    identity = ProductFilter(())
     assert_allclose(to_numpy(identity.transfer_function(samp, xp=xp)), numpy.ones((8, 8)))
 
     psf = to_numpy(identity.psf(samp, xp=xp))
@@ -794,10 +794,10 @@ def test_filter_scalar_multiply(backend: BackendName):
 def test_filter_scalar_multiply_preserves_separable(backend: BackendName):
     """Scaling a `SeparableFilter` stays separable, including under further composition."""
     scaled = GaussianFilter(1.5) * 2.0
-    assert isinstance(scaled, CompositeSeparableFilter)
+    assert isinstance(scaled, ProductSeparableFilter)
 
     further = scaled * SquarePixelFilter()
-    assert isinstance(further, CompositeSeparableFilter)
+    assert isinstance(further, ProductSeparableFilter)
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
