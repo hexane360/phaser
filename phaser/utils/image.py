@@ -4,6 +4,7 @@ Utilities for image processing & filtering
 
 import abc
 import dataclasses
+import functools
 import typing as t
 import warnings
 
@@ -571,6 +572,16 @@ class Filter(abc.ABC):
         # a symmetric filter's transfer function is real, up to roundoff
         return transfer.real if self.symmetric else transfer
 
+    def __mul__(self, other: 'Filter') -> 'Filter':
+        """
+        Compose two filters, i.e. the filter obtained by applying `self` then `other`
+        (or in either order, since LSI filters commute): point spread functions convolve,
+        transfer functions multiply.
+        """
+        if not isinstance(other, Filter):
+            return NotImplemented
+        return _compose_filters(self, other)
+
 
 def _embed_psf(
     kernel: NDArray[numpy.number], shape: t.Tuple[int, int], xp: t.Any, dtype: DTypeLike
@@ -584,6 +595,51 @@ def _embed_psf(
     iy = xp.arange(a) - a // 2 + n // 2
     ix = xp.arange(b) - b // 2 + m // 2
     return at(xp.zeros(shape, dtype=kernel.dtype), (iy[:, None], ix[None, :])).set(kernel)
+
+
+def _pad_centered_1d(
+    kernel: NDArray[numpy.number], n: int, xp: t.Any, dtype: DTypeLike
+) -> NDArray[numpy.inexact]:
+    """Place 1D `kernel` (centered at `kernel.shape[-1] // 2`) into a centered array of length `n`."""
+    a = kernel.shape[-1]
+    if a > n:
+        raise ValueError(f"Filter kernel of length {a} doesn't fit in a grid of length {n}")
+
+    kernel = _cast_filter(kernel, dtype)
+    i = xp.arange(a) - a // 2 + n // 2
+    return at(xp.zeros(n, dtype=kernel.dtype), i).set(kernel)
+
+
+def _convolve_kernels_1d(
+    a: NDArray[numpy.inexact], b: NDArray[numpy.inexact], xp: t.Any, dtype: DTypeLike
+) -> NDArray[numpy.inexact]:
+    """
+    Full linear convolution of two centered 1D kernels (`numpy.convolve(a, b, 'full')`),
+    keeping the same 'centered at `n // 2`' convention as [`_embed_psf`][phaser.utils.image._embed_psf].
+    """
+    n = a.shape[-1] + b.shape[-1] - 1
+    work_dtype = to_complex_dtype(dtype)
+    fa = xp.fft.fft(xp.fft.ifftshift(_pad_centered_1d(a, n, xp, work_dtype)))
+    fb = xp.fft.fft(xp.fft.ifftshift(_pad_centered_1d(b, n, xp, work_dtype)))
+    out = xp.fft.fftshift(xp.fft.ifft(fa * fb))
+    complex_dtype = numpy.issubdtype(dtype, numpy.complexfloating)
+    return (out if complex_dtype else xp.real(out)).astype(dtype)
+
+
+def _convolve_kernels_2d(
+    a: NDArray[numpy.inexact], b: NDArray[numpy.inexact], xp: t.Any, dtype: DTypeLike
+) -> NDArray[numpy.inexact]:
+    """
+    Full linear convolution of two centered 2D kernels, keeping the same
+    'centered at `shape // 2`' convention as [`_embed_psf`][phaser.utils.image._embed_psf].
+    """
+    shape = (a.shape[-2] + b.shape[-2] - 1, a.shape[-1] + b.shape[-1] - 1)
+    work_dtype = to_complex_dtype(dtype)
+    fa = xp.fft.fft2(ifft2shift(_embed_psf(a, shape, xp, work_dtype)))
+    fb = xp.fft.fft2(ifft2shift(_embed_psf(b, shape, xp, work_dtype)))
+    out = fft2shift(xp.fft.ifft2(fa * fb))
+    complex_dtype = numpy.issubdtype(dtype, numpy.complexfloating)
+    return (out if complex_dtype else xp.real(out)).astype(dtype)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -615,6 +671,16 @@ class SeparableFilter(Filter):
     and can therefore be applied one axis at a time (see
     [`convolve2d_separable`][phaser.utils.image.convolve2d_separable]).
     """
+
+    @t.overload
+    def __mul__(self, other: 'SeparableFilter') -> 'CompositeSeparableFilter': ...
+    @t.overload
+    def __mul__(self, other: 'Filter') -> 'Filter': ...
+
+    def __mul__(self, other: 'Filter') -> 'Filter':
+        if not isinstance(other, Filter):
+            return NotImplemented
+        return _compose_filters(self, other)
 
     @abc.abstractmethod
     def psf_separable(
@@ -852,6 +918,113 @@ class SquarePixelFilter(SeparableFilter, AnalyticFilter):
         ))
 
 
+def _compact_psf(
+    f: Filter, samp: Sampling, *, xp: t.Any, dtype: DTypeLike
+) -> NDArray[numpy.inexact]:
+    """
+    Return the most compact available representation of `f`'s point spread function
+    (i.e. not padded/embedded to `samp.shape`), for use by
+    [`CompositeFilter.psf`][phaser.utils.image.CompositeFilter.psf].
+    """
+    if isinstance(f, SeparableFilter):
+        y_kernel, x_kernel = f.psf_separable(samp, xp=xp, dtype=dtype)
+        return y_kernel[:, None] * x_kernel[None, :]
+    if isinstance(f, PsfFilter):
+        return _cast_filter(xp.asarray(f.kernel), dtype)
+    return f.psf(samp, xp=xp, dtype=dtype)
+
+
+@dataclasses.dataclass(frozen=True)
+class CompositeFilter(Filter):
+    """
+    The composition of several filters, applied in sequence (order doesn't matter,
+    since LSI filters commute): point spread functions convolve, transfer functions
+    multiply.
+
+    Construct via [`Filter.__mul__`][phaser.utils.image.Filter.__mul__] (`filt1 * filt2`)
+    rather than directly. The empty composite, `CompositeFilter(())`, is the identity filter.
+    """
+
+    filters: t.Tuple[Filter, ...] = ()
+    symmetric: bool = dataclasses.field(init=False)
+    """Whether every component filter is symmetric."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'symmetric', all(f.symmetric for f in self.filters))
+
+    def transfer_function(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        transfer = xp.ones(_sampling_shape(samp), dtype=dtype)
+        for f in self.filters:
+            transfer = transfer * f.transfer_function(samp, xp=xp, dtype=dtype)
+        return transfer
+
+    def transfer_function_dct(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        transfer = xp.ones(_sampling_shape(samp), dtype=dtype)
+        for f in self.filters:
+            transfer = transfer * f.transfer_function_dct(samp, xp=xp, dtype=dtype)
+        # a symmetric filter's transfer function is real, up to roundoff
+        return xp.real(transfer) if self.symmetric else transfer
+
+    def psf(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> NDArray[numpy.inexact]:
+        """
+        The composite point spread function, computed by directly convolving the
+        components' compact kernels (rather than going through
+        [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
+        FFT over the full `samp.shape` grid regardless of how compact the components are).
+        """
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        if not self.filters:
+            return _embed_psf(xp.ones((1, 1), dtype=dtype), _sampling_shape(samp), xp, dtype)
+        kernel = functools.reduce(
+            lambda a, b: _convolve_kernels_2d(a, b, xp, dtype),
+            (_compact_psf(f, samp, xp=xp, dtype=dtype) for f in self.filters),
+        )
+        return _embed_psf(kernel, _sampling_shape(samp), xp, dtype)
+
+
+@dataclasses.dataclass(frozen=True)
+class CompositeSeparableFilter(SeparableFilter, CompositeFilter):
+    """
+    A [`CompositeFilter`][phaser.utils.image.CompositeFilter] all of whose components are
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s, so the composite point spread
+    function can be built (and convolved) one axis at a time, rather than going through
+    [`CompositeFilter`][phaser.utils.image.CompositeFilter]'s 2D compact convolution.
+    """
+
+    filters: t.Tuple[SeparableFilter, ...] = ()
+
+    def psf_separable(
+        self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    ) -> t.Tuple[NDArray[numpy.inexact], NDArray[numpy.inexact]]:
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
+        if not self.filters:
+            one = xp.ones((1,), dtype=dtype)
+            return (one, one)
+        y_kernels, x_kernels = zip(*(
+            f.psf_separable(samp, xp=xp, dtype=dtype) for f in self.filters
+        ))
+        y_kernel = functools.reduce(lambda a, b: _convolve_kernels_1d(a, b, xp, dtype), y_kernels)
+        x_kernel = functools.reduce(lambda a, b: _convolve_kernels_1d(a, b, xp, dtype), x_kernels)
+        return (y_kernel, x_kernel)
+
+
+def _compose_filters(a: Filter, b: Filter) -> Filter:
+    a_filters = a.filters if isinstance(a, CompositeFilter) else (a,)
+    b_filters = b.filters if isinstance(b, CompositeFilter) else (b,)
+    filters = a_filters + b_filters
+    if all(isinstance(f, SeparableFilter) for f in filters):
+        return CompositeSeparableFilter(t.cast(t.Tuple[SeparableFilter, ...], filters))
+    return CompositeFilter(filters)
+
+
 def _check_transfer(
     transfer: NDArray[numpy.number], shape: t.Tuple[int, int], name: str
 ) -> None:
@@ -1080,6 +1253,7 @@ __all__ = [
     'Filter', 'SeparableFilter', 'AnalyticFilter',
     'PsfFilter', 'SeparablePsfFilter', 'TransferFilter',
     'GaussianFilter', 'SquarePixelFilter',
+    'CompositeFilter', 'CompositeSeparableFilter',
     'convolve2d_recip_wrap', 'convolve2d_recip_reflect', 'convolve2d_recip_reflect_dct',
     'convolve2d_recip',
     'PreparedFilter', 'prepare_convolve2d_recip',
