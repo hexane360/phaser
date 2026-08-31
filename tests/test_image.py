@@ -751,3 +751,62 @@ def test_convolve_kernels_2d(backend: BackendName):
     import scipy.signal
     expected = scipy.signal.convolve2d(a, b, mode='full')
     assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_convolve_kernels_1d_short_circuit(backend: BackendName):
+    """A length-1 kernel on either side short-circuits to a plain scale, agreeing
+    with the general FFT-based convolution."""
+    from phaser.utils.image import _convolve_kernels_1d
+
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(5)
+    a = rng.normal(size=6)
+    scale = numpy.array([2.5])
+
+    left = to_numpy(_convolve_kernels_1d(xp.array(scale), xp.array(a), xp, numpy.float64))
+    right = to_numpy(_convolve_kernels_1d(xp.array(a), xp.array(scale), xp, numpy.float64))
+    expected = numpy.convolve(a, scale, mode='full')
+    assert_allclose(left, expected, rtol=1e-10, atol=1e-10)
+    assert_allclose(right, expected, rtol=1e-10, atol=1e-10)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_filter_scalar_multiply(backend: BackendName):
+    """Scaling a filter by a real factor scales both its psf and transfer function."""
+    xp = get_backend_module(backend)
+    samp = _unit_sampling((16, 16))
+
+    filt = GaussianFilter(1.5)
+    scaled = filt * 2.0
+
+    expected_transfer = to_numpy(filt.transfer_function(samp, xp=xp)) * 2.0
+    expected_psf = to_numpy(filt.psf(samp, xp=xp)) * 2.0
+    assert_allclose(to_numpy(scaled.transfer_function(samp, xp=xp)), expected_transfer, rtol=1e-8, atol=1e-8)
+    assert_allclose(to_numpy(scaled.psf(samp, xp=xp)), expected_psf, rtol=1e-8, atol=1e-8)
+
+    rscaled = 2.0 * filt
+    assert_allclose(to_numpy(rscaled.transfer_function(samp, xp=xp)), expected_transfer, rtol=1e-8, atol=1e-8)
+    assert_allclose(to_numpy(rscaled.psf(samp, xp=xp)), expected_psf, rtol=1e-8, atol=1e-8)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_filter_scalar_multiply_preserves_separable(backend: BackendName):
+    """Scaling a `SeparableFilter` stays separable, including under further composition."""
+    scaled = GaussianFilter(1.5) * 2.0
+    assert isinstance(scaled, CompositeSeparableFilter)
+
+    further = scaled * SquarePixelFilter()
+    assert isinstance(further, CompositeSeparableFilter)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_filter_scalar_multiply_preserves_symmetric(backend: BackendName):
+    """Scaling a symmetric filter by a real factor keeps it symmetric."""
+    assert (GaussianFilter(1.5) * 2.0).symmetric
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_filter_scalar_multiply_type_error(backend: BackendName):
+    with pytest.raises(TypeError):
+        GaussianFilter(1.5) * 'x'  # type: ignore

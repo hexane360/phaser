@@ -572,15 +572,26 @@ class Filter(abc.ABC):
         # a symmetric filter's transfer function is real, up to roundoff
         return transfer.real if self.symmetric else transfer
 
-    def __mul__(self, other: 'Filter') -> 'Filter':
+    def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter':
         """
-        Compose two filters, i.e. the filter obtained by applying `self` then `other`
-        (or in either order, since LSI filters commute): point spread functions convolve,
-        transfer functions multiply.
+        Compose with another filter, or scale by a real amplitude factor.
+
+        Composing two filters (`filt1 * filt2`) is the filter obtained by applying
+        `self` then `other` (or in either order, since LSI filters commute): point
+        spread functions convolve, transfer functions multiply. Scaling by a scalar
+        (`filt * 2.`) multiplies both the point spread function and transfer function
+        by that scalar.
         """
-        if not isinstance(other, Filter):
-            return NotImplemented
-        return _compose_filters(self, other)
+        if isinstance(other, Filter):
+            return _compose_filters(self, other)
+        if isinstance(other, (int, float)):
+            return _scale_filter(self, float(other))
+        return NotImplemented
+
+    def __rmul__(self, other: float) -> 'Filter':
+        if isinstance(other, (int, float)):
+            return _scale_filter(self, float(other))
+        return NotImplemented
 
 
 def _embed_psf(
@@ -617,6 +628,10 @@ def _convolve_kernels_1d(
     Full linear convolution of two centered 1D kernels (`numpy.convolve(a, b, 'full')`),
     keeping the same 'centered at `n // 2`' convention as [`_embed_psf`][phaser.utils.image._embed_psf].
     """
+    if a.shape[-1] == 1:
+        return (b * a[..., 0]).astype(dtype)
+    if b.shape[-1] == 1:
+        return (a * b[..., 0]).astype(dtype)
     n = a.shape[-1] + b.shape[-1] - 1
     work_dtype = to_complex_dtype(dtype)
     fa = xp.fft.fft(xp.fft.ifftshift(_pad_centered_1d(a, n, xp, work_dtype)))
@@ -675,12 +690,14 @@ class SeparableFilter(Filter):
     @t.overload
     def __mul__(self, other: 'SeparableFilter') -> 'CompositeSeparableFilter': ...
     @t.overload
-    def __mul__(self, other: 'Filter') -> 'Filter': ...
+    def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter': ...
 
-    def __mul__(self, other: 'Filter') -> 'Filter':
-        if not isinstance(other, Filter):
-            return NotImplemented
-        return _compose_filters(self, other)
+    def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter':
+        if isinstance(other, Filter):
+            return _compose_filters(self, other)
+        if isinstance(other, (int, float)):
+            return _scale_filter(self, float(other))
+        return NotImplemented
 
     @abc.abstractmethod
     def psf_separable(
@@ -1023,6 +1040,11 @@ def _compose_filters(a: Filter, b: Filter) -> Filter:
     if all(isinstance(f, SeparableFilter) for f in filters):
         return CompositeSeparableFilter(t.cast(t.Tuple[SeparableFilter, ...], filters))
     return CompositeFilter(filters)
+
+
+def _scale_filter(filt: Filter, scale: float) -> Filter:
+    one = numpy.array([scale])
+    return _compose_filters(filt, SeparablePsfFilter(one, numpy.array([1.0]), symmetric=True))
 
 
 def _check_transfer(
