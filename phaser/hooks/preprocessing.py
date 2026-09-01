@@ -99,6 +99,9 @@ def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
     xp = get_array_module(raw_data['patterns'])
     filt = props.mtf(raw_data)
 
+    # TODO: nice representation for `filt`, print out here
+    logger.info("Applying detector MTF to raw patterns")
+
     patterns = raw_data['patterns']
     # sigma/psf_radius are in detector pixels, so use a unit sampling
     samp = Sampling(patterns.shape[-2:], sampling=(1., 1.))
