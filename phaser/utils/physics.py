@@ -6,7 +6,7 @@ import math
 
 class _Constants():
     e_rest_energy: float = 5.1099906e5
-    """Electron rest energy [keV] or mass [keV/c^2]."""
+    """Electron rest energy [eV] or mass [eV/c^2]."""
     e_rest_mass: float = 9.1093837e-31
     """Electron rest mass [kg]"""
     e_spin: float = 3.2910598e-16
@@ -30,6 +30,11 @@ C: _Constants = _Constants()
 class Electron:
     energy: float
     """Electron kinetic energy [eV]"""
+
+    @staticmethod
+    def from_wavelength(wavelength: float) -> 'Electron':
+        total_energy = math.sqrt((C.hc / wavelength)**2 + C.e_rest_energy**2)
+        return Electron(total_energy - C.e_rest_energy)
 
     @property
     def rest_energy(self) -> float:

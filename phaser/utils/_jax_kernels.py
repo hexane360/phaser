@@ -1,13 +1,13 @@
 
-from functools import partial
 import typing as t
+from functools import partial
 
-from numpy.typing import ArrayLike
 import jax  # pyright: ignore[reportMissingImports]
-import jax.numpy as jnp    # pyright: ignore[reportMissingImports]
+import jax.numpy as jnp  # pyright: ignore[reportMissingImports]
+import numpy
+from numpy.typing import ArrayLike
 
 from phaser.utils.image import _InterpBoundaryMode
-
 
 Device: t.TypeAlias = t.Any
 
@@ -16,7 +16,7 @@ def to_nd(arr: jax.Array, n: int) -> jax.Array:
     if arr.ndim > n:
         arr = arr.reshape(-1, *arr.shape[arr.ndim - n + 1:])
     elif arr.ndim < n:
-        arr = jax.lax.expand_dims(arr, tuple(range((n - arr.ndim))))
+        arr = jax.lax.expand_dims(arr, tuple(range(n - arr.ndim)))
 
     return arr
 
@@ -36,7 +36,7 @@ def set_cutouts(obj: jax.Array, cutouts: jax.Array, start_idxs: jax.Array) -> ja
         return (obj, None)
 
     start_idxs = jnp.atleast_2d(start_idxs)
-    (cutouts, start_idxs) = map(lambda a: _flatten_ndim(a, start_idxs.ndim - 2), (cutouts, start_idxs))
+    (cutouts, start_idxs) = (_flatten_ndim(a, start_idxs.ndim - 2) for a in (cutouts, start_idxs))
     return jax.lax.scan(inner, to_3d(obj), (cutouts, start_idxs))[0].reshape(obj.shape)
 
 
@@ -50,7 +50,7 @@ def add_cutouts(obj: jax.Array, cutouts: jax.Array, start_idxs: jax.Array) -> ja
         return (obj, None)
 
     start_idxs = jnp.atleast_2d(start_idxs)
-    (cutouts, start_idxs) = map(lambda a: _flatten_ndim(a, start_idxs.ndim - 2), (cutouts, start_idxs))
+    (cutouts, start_idxs) = (_flatten_ndim(a, start_idxs.ndim - 2) for a in (cutouts, start_idxs))
     return jax.lax.scan(inner, to_3d(obj), (cutouts, start_idxs))[0].reshape(obj.shape)
 
 
@@ -130,7 +130,7 @@ _INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
 
 def convolve1d(
     arr: jnp.ndarray, weights: jnp.ndarray, axis: int = -1, *,
-    mode: _InterpBoundaryMode, cval: float = 0.
+    mode: _InterpBoundaryMode, cval: t.Union[complex, numpy.number] = 0.
 ) -> jnp.ndarray:
     r = len(weights) // 2
     pad_mode = _INTERP_TO_PAD.get(mode, mode)
@@ -155,6 +155,35 @@ def convolve1d(
 
     # unflatten, untranspose
     return jnp.moveaxis(arr.reshape(out_shape_t), -1, axis)
+
+
+def convolve2d(
+    arr: jnp.ndarray, weights: jnp.ndarray, *,
+    mode: _InterpBoundaryMode, cval: t.Union[complex, numpy.number] = 0.
+) -> jnp.ndarray:
+    pad_mode = _INTERP_TO_PAD.get(mode, mode)
+    pad_kwargs = {'constant_values': cval} if pad_mode == 'constant' else {}
+
+    # pad array
+    out_shape_t = arr.shape
+    arr = jnp.pad(
+        arr,
+        ((0, 0),) * (arr.ndim - weights.ndim) + tuple(
+            (w - w // 2 - 1, w // 2) for w in weights.shape
+        ),
+        mode=pad_mode, **pad_kwargs
+    )
+
+    # convolve
+    arr = jax.lax.conv_general_dilated(
+        arr.reshape(-1, 1, arr.shape[-2], arr.shape[-1]),
+        jnp.flip(weights)[None, None].astype(arr.dtype),
+        window_strides=(1,1), padding='VALID',
+        dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+    )
+
+    # unflatten
+    return arr.reshape(out_shape_t)
 
 
 def get_devices() -> t.Tuple[Device, ...]:

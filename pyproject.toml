@@ -144,6 +144,12 @@ ignore = [
     "RUF100",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# ignores for notebooks
+"**/*.ipynb" = [
+    "I001", "E741",
+]
+
 [tool.ruff.lint.isort]
 known-first-party = [
     "pane", "jupyter_ws_tunnel",

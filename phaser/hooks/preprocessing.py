@@ -7,11 +7,16 @@ from numpy.typing import NDArray
 
 from phaser.state import Patterns, ReconsState, ScanState
 from phaser.types import cast_length
-from phaser.utils.image import affine_transform
+from phaser.utils.image import (
+    affine_transform,
+    prepare_convolve2d,
+    prepare_convolve2d_recip,
+)
 from phaser.utils.misc import create_rng, create_sparse_groupings, freeze
 from phaser.utils.num import Sampling, cast_array_module, get_array_module, to_numpy
 
 from . import (
+    ApplyMtfProps,
     BinProps,
     CropDataProps,
     DropNanProps,
@@ -87,6 +92,28 @@ def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
     logger.info(f"Mean pattern intensity: {numpy.nanmean(numpy.nansum(patterns, axis=(-1, -2)))}")
 
     raw_data['patterns'] = xp.asarray(patterns)
+    return raw_data
+
+
+def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
+    xp = get_array_module(raw_data['patterns'])
+    filt = props.mtf(raw_data)
+
+    # TODO: nice representation for `filt`, print out here
+    logger.info("Applying detector MTF to raw patterns")
+
+    patterns = raw_data['patterns']
+    # sigma/psf_radius are in detector pixels, so use a unit sampling
+    samp = Sampling(patterns.shape[-2:], sampling=(1., 1.))
+
+    prepare = prepare_convolve2d if props.domain == 'real' else prepare_convolve2d_recip
+    prepared = prepare(filt, samp, xp=xp, dtype=patterns.dtype)
+
+    grouping = 128
+    for group in create_sparse_groupings(patterns.shape[:-2], grouping):
+        patterns[tuple(group)] = prepared(xp.asarray(patterns[tuple(group)]))
+
+    raw_data['patterns'] = patterns
     return raw_data
 
 

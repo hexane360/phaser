@@ -1,12 +1,38 @@
-from pathlib import Path
 import typing as t
+from pathlib import Path
 
-from .types import Dataclass, Slices, BackendName, SimpleFlag, ReconsVars, IsVersion, EmptyDict
-from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
-from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
+from .hooks import (
+    EngineHook,
+    ObjectHook,
+    PostInitHook,
+    PostLoadHook,
+    ProbeHook,
+    RawDataHook,
+    ScanHook,
+    TiltHook,
+)
+from .hooks.filter import FilterHook
+from .hooks.regularization import (
+    CostRegularizerHook,
+    GroupConstraintHook,
+    IterConstraintHook,
+)
 from .hooks.schedule import FlagLike, ScheduleLike
-from .hooks.regularization import IterConstraintHook, GroupConstraintHook, CostRegularizerHook
-
+from .hooks.solver import (
+    ConventionalSolverHook,
+    GradientSolverHook,
+    NoiseModelHook,
+    PositionSolverHook,
+)
+from .types import (
+    BackendName,
+    Dataclass,
+    EmptyDict,
+    IsVersion,
+    ReconsVars,
+    SimpleFlag,
+    Slices,
+)
 
 SaveType: t.TypeAlias = t.Literal[
     'probe', 'probe_mag', 'probe_recip', 'probe_recip_mag',
@@ -38,6 +64,11 @@ class SaveOptions(Dataclass, kw_only=True):
     out_dir: str = "{name}"
     img_fmt: str = "{type}_iter{iter.total_iter:03}.{ext}"
     hdf5_fmt: str = "iter{iter.total_iter:03}.h5"
+
+
+class MtfPlan(Dataclass, kw_only=True):
+    filter: FilterHook
+    domain: t.Literal['real', 'recip'] = 'recip'
 
 
 class EnginePlan(Dataclass, kw_only=True):
@@ -97,6 +128,9 @@ class EnginePlan(Dataclass, kw_only=True):
     check_every_group: bool = False
     send_every_group: bool = False
 
+    mtf: t.Union[MtfPlan, FilterHook, None] = None
+    """Detector MTF to apply to simulated diffraction pattern."""
+
 
 class AmplitudeNoisePlan(Dataclass, kw_only=True):
     gaussian_variance: float = 0.1
@@ -147,7 +181,7 @@ class ConventionalEnginePlan(EnginePlan, kw_only=True):
     iter_constraints: t.List[IterConstraintHook]
 
 
-class GradientEnginePlan(EnginePlan):
+class GradientEnginePlan(EnginePlan, kw_only=True):
     noise_model: NoiseModelHook
     solvers: t.Dict[ReconsVars, GradientSolverHook]
 

@@ -1,8 +1,10 @@
 import typing as t
 
 import numpy
+import scipy.fft
+import scipy.ndimage
 from numpy.typing import ArrayLike
-from numpy.testing import assert_array_almost_equal, assert_array_equal
+from numpy.testing import assert_allclose, assert_array_almost_equal, assert_array_equal
 import pytest
 
 from .utils import with_backends # mock_importerror
@@ -12,6 +14,7 @@ from phaser.utils.num import (
     get_backend_module,
     to_real_dtype, to_complex_dtype,
     fft2, ifft2, abs2,
+    dct2, idct2,
     to_numpy, as_array,
     ufunc_outer,
     pad, _PadMode
@@ -307,3 +310,57 @@ def test_pad_nd(
         to_numpy(pad(xp.array(in_arr), pad_width, mode=mode, cval=3)),
         numpy.pad(in_arr, pad_width, mode=mode, **kwargs)  # type: ignore
     )
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('shape', [(4, 4), (5, 7), (3, 8, 8), (1, 1), (2, 1, 6, 5)])
+@pytest.mark.parametrize('dtype', [
+    numpy.float32, numpy.float64, numpy.complex64, numpy.complex128,
+])
+@pytest.mark.parametrize(('f', 'ref'), [(dct2, 'dctn'), (idct2, 'idctn')])
+def test_dct2(shape, dtype, f, ref, backend: BackendName):
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape).astype(dtype)
+    if numpy.iscomplexobj(arr):
+        arr = arr + 1.j * rng.normal(size=shape).astype(dtype)
+
+    xp = get_backend_module(backend)
+
+    expected = getattr(scipy.fft, ref)(arr, type=2, axes=(-2, -1), norm='ortho')
+    actual = to_numpy(f(xp.array(arr)))
+    assert actual.dtype == arr.dtype
+
+    tol = 1e-5 if arr.dtype.itemsize <= 8 else 1e-12
+    assert_allclose(actual, expected, rtol=tol, atol=tol)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('shape', [(4, 4), (5, 7), (3, 8, 8)])
+def test_dct2_roundtrip(shape, backend: BackendName):
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=shape) + 1.j * rng.normal(size=shape)
+
+    xp = get_backend_module(backend)
+    assert_allclose(to_numpy(idct2(dct2(xp.array(arr)))), arr, rtol=1e-12, atol=1e-12)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_dct2_symmetric_convolution(backend: BackendName):
+    """`dct2` diagonalizes convolution under half-sample symmetric boundary conditions."""
+    rng = numpy.random.default_rng(42)
+    arr = rng.normal(size=(9, 11))
+    weights = numpy.array([[1., 2., 1.], [2., 4., 2.], [1., 2., 1.]]) / 16.
+
+    # transfer function of `weights`, sampled on the dct frequency grid
+    ks = tuple(numpy.arange(n) / (2. * n) for n in arr.shape)
+    ms = tuple(numpy.arange(n) - n // 2 for n in weights.shape)
+    transfer = numpy.einsum(
+        'mn,ym,xn->yx', weights,
+        *(numpy.cos(2. * numpy.pi * numpy.outer(k, m)) for (k, m) in zip(ks, ms))
+    )
+
+    xp = get_backend_module(backend)
+    actual = to_numpy(idct2(dct2(xp.array(arr)) * xp.array(transfer)))
+    expected = scipy.ndimage.convolve(arr, weights, mode='reflect')
+
+    assert_allclose(actual, expected, rtol=1e-10, atol=1e-10)

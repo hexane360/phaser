@@ -25,6 +25,7 @@ Device: t.TypeAlias = t.Any
 Float: t.TypeAlias = t.Union[float, numpy.floating]
 NumT = t.TypeVar('NumT', bound=numpy.number)
 FloatT = t.TypeVar('FloatT', bound=numpy.floating)
+InexactT = t.TypeVar('InexactT', bound=numpy.inexact)
 ComplexT = t.TypeVar('ComplexT', bound=numpy.complexfloating)
 DTypeT = t.TypeVar('DTypeT', bound=numpy.generic)
 T = t.TypeVar('T')
@@ -450,7 +451,7 @@ class _JitKernel(t.Generic[P, T]):
 
             @functools.wraps(f)
             def jax_f(*args: P.args, **kwargs: P.kwargs) -> T:
-                logger.info(f"JIT-compiling kernel '{self.__qualname__}'...")
+                logger.info(f"JIT-compiling kernel '{self.__qualname__}'...")  # type: ignore
                 return self.inner(*args, **kwargs)
 
             self.jax_jit = jax.jit(
@@ -699,6 +700,54 @@ def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
     """
     xp = get_array_module(a)
     return xp.fft.ifftshift(a, axes=(-2, -1))
+
+
+@t.overload
+def dct2(a: NDArray[InexactT]) -> NDArray[InexactT]:
+    ...
+
+@t.overload
+def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
+    ...
+
+def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
+    """
+    Perform a type-II DCT on the last two axes of `a`, orthonormalized.
+    """
+    return _dct2(a, inverse=False)
+
+
+@t.overload
+def idct2(a: NDArray[InexactT]) -> NDArray[InexactT]:
+    ...
+
+@t.overload
+def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
+    ...
+
+def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
+    """
+    Invert [`dct2`][phaser.utils.num.dct2] (i.e. a type-III DCT, orthonormalized).
+    """
+    return _dct2(a, inverse=True)
+
+
+def _dct2(a: ArrayLike, inverse: bool) -> NDArray[numpy.inexact]:
+    xp = get_array_module(a)
+    a = xp.asarray(a)
+
+    # not every backend supports complex input natively
+    if xp.iscomplexobj(a):
+        return _dct2(a.real, inverse) + 1.j * _dct2(a.imag, inverse)  # type: ignore
+
+    if xp_is_torch(xp):
+        from ._torch_kernels import dct2, idct2
+
+        return t.cast(NDArray[numpy.inexact], (idct2 if inverse else dct2)(a))  # type: ignore
+
+    scipy = get_scipy_module(a)
+    f = scipy.fft.idctn if inverse else scipy.fft.dctn
+    return f(a, type=2, axes=(-2, -1), norm='ortho')
 
 
 def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) -> t.Tuple[NDArray[DTypeT], ...]:
@@ -1096,6 +1145,7 @@ __all__ = [
     'jit', 'fuse', 'debug_callback',
     'to_complex_dtype', 'to_real_dtype',
     'fft2', 'ifft2', 'fft2shift', 'ifft2shift',
+    'dct2', 'idct2',
     'abs2', 'split_array', 'unstack',
     'at', 'ufunc_outer', 'check_finite',
     'Sampling', 'IndexLike',
