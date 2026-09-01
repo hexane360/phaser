@@ -40,7 +40,7 @@ def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> ScanState:
     assert ii.shape == jj.shape == scan.shape[:-1]
 
     return ScanState(
-        scan, scan.copy(), tilt=None, meta=frozendict(
+        scan, xp.asarray(scan, copy=True), tilt=None, meta=frozendict(
             type='raster',
             raster_rows=tuple(map(tuple, ii.tolist())),
             raster_cols=tuple(map(tuple, jj.tolist())),
