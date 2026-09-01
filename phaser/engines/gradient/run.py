@@ -14,7 +14,7 @@ from phaser.plan import GradientEnginePlan
 from phaser.state import ProgressState, ReconsState
 from phaser.types import ReconsVar, process_flag
 from phaser.utils import tree
-from phaser.utils.image import PreparedFilter, PreparedPsf
+from phaser.utils.image import PreparedOTF, PreparedPSF
 from phaser.utils.num import (
     Float,
     abs2,
@@ -467,7 +467,7 @@ def run_group(
     iter_grads: t.Dict[ReconsVar, t.Any],
     solver_states: SolverStates,
     props: t.Optional[NDArray[numpy.complexfloating]],
-    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
+    mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
     group_patterns: NDArray[numpy.floating],
     pattern_mask: NDArray[numpy.floating],
     probe_int: t.Union[float, numpy.floating],
@@ -523,7 +523,7 @@ def run_model(
     sim: ReconsState,
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]], # base propagator, shape (n_slices-1, ny, nx)
-    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
+    mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
     group_patterns: NDArray[numpy.floating],
     pattern_mask: NDArray[numpy.floating],
     noise_model: NoiseModel[t.Any],
@@ -559,7 +559,7 @@ def run_model(
 
     model_intensity = xp.sum(abs2(model_wave), axis=1)
     if mtf is not None:
-        model_intensity = t.cast(NDArray[numpy.floating], mtf(model_intensity))
+        model_intensity = mtf(model_intensity)
     (loss, solver_states.noise_model_state) = noise_model.calc_loss(
         model_wave, model_intensity, group_patterns, pattern_mask, solver_states.noise_model_state
     )

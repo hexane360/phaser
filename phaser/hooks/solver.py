@@ -13,7 +13,7 @@ if t.TYPE_CHECKING:
     from phaser.execute import Observer
     from phaser.plan import ConventionalEnginePlan, GradientEnginePlan  # noqa: F401
     from phaser.state import ReconsState
-    from phaser.utils.image import PreparedFilter, PreparedPsf
+    from phaser.utils.image import PreparedOTF, PreparedPSF
 
 
 StateT = t.TypeVar('StateT')
@@ -51,7 +51,7 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
         exp_patterns: NDArray[numpy.floating],
         mask: NDArray[numpy.floating],
         state: StateT,
-        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']] = None,
+        mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], StateT]:
         """
         Return the calculated wave update `chi` in reciprocal space.
@@ -134,7 +134,7 @@ class ConventionalSolver(abc.ABC):
         patterns: NDArray[numpy.floating],
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
-        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']],
+        mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']],
         update_object: bool,
         update_probe: bool,
         update_positions: bool,

@@ -10,7 +10,7 @@ from phaser.utils.num import get_array_module, Float, to_numpy
 from phaser.state import ReconsState
 
 if t.TYPE_CHECKING:
-    from phaser.utils.image import PreparedFilter, PreparedPsf
+    from phaser.utils.image import PreparedOTF, PreparedPSF
 
 
 class AmplitudeNoiseModel(NoiseModel[None]):
@@ -54,7 +54,7 @@ class AmplitudeNoiseModel(NoiseModel[None]):
         exp_patterns: NDArray[numpy.floating],
         mask: NDArray[numpy.floating],
         state: None,
-        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']] = None,
+        mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], None]:
         xp = get_array_module(model_wave, model_intensity, exp_patterns, mask)
         patterns = xp.maximum(exp_patterns, 0.0)
@@ -115,6 +115,6 @@ class PoissonNoiseModel(NoiseModel[None]):
         exp_patterns: NDArray[numpy.floating],
         mask: NDArray[numpy.floating],
         state: None,
-        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']] = None,
+        mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], None]:
         raise NotImplementedError()

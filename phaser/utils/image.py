@@ -5,12 +5,12 @@ Utilities for image processing & filtering
 import abc
 import dataclasses
 import functools
-import math
 import typing as t
 import warnings
 
 import numpy
 from numpy.typing import ArrayLike, DTypeLike, NDArray
+from typing_extensions import Self
 
 from .num import (
     Float,
@@ -36,6 +36,9 @@ from .tree import tree_dataclass
 
 NumT = t.TypeVar('NumT', bound=numpy.number)
 InexactT = t.TypeVar('InexactT', bound=numpy.inexact)
+ComplexT = t.TypeVar('ComplexT', bound=numpy.complexfloating)
+NumT_co = t.TypeVar('NumT_co', bound=numpy.number, covariant=True)
+InexactT_co = t.TypeVar('InexactT_co', bound=numpy.inexact, covariant=True)
 
 
 def apply_flips(
@@ -445,6 +448,15 @@ def _cast_filter(arr: NDArray[numpy.number], dtype: DTypeLike) -> NDArray[numpy.
     return arr.astype(to_complex_dtype(dtype) if xp.iscomplexobj(arr) else dtype)
 
 
+def _cast_transfer(arr: NDArray[numpy.number], dtype: DTypeLike, symmetric: bool) -> NDArray[numpy.inexact]:
+    """
+    Cast a transfer function to `dtype`, forcing it complex unless `symmetric`.
+    `dtype` must be resolved (non-`None`).
+    """
+    xp = get_array_module(arr)
+    return arr.astype(to_complex_dtype(dtype)) if not symmetric else xp.real(arr).astype(dtype)
+
+
 def _check_real_psf(psf: NDArray[numpy.number], complex_target: bool, xp: t.Any, name: str) -> None:
     """A complex point spread function can only be used to filter a complex array."""
     if xp.iscomplexobj(psf) and not complex_target:
@@ -542,10 +554,11 @@ class Filter(abc.ABC):
 
         Returns: Array of shape `samp.shape`.
         """
-        xp = _resolve_xp(xp)
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
         kernel = self.psf(samp, xp=xp, dtype=dtype)
         psf = _embed_psf(kernel, _sampling_shape(samp), xp, kernel.dtype)
-        return xp.fft.fft2(ifft2shift(psf))
+        transfer = xp.fft.fft2(ifft2shift(psf))
+        return _cast_transfer(transfer, dtype, self.symmetric)
 
     def transfer_function_sym(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
@@ -568,13 +581,14 @@ class Filter(abc.ABC):
 
     def transfer_function_dct(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-    ) -> NDArray[numpy.inexact]:
+    ) -> NDArray[numpy.floating]:
         """
         Return the transfer function of the filter on the grid diagonalized by a type-II
         DCT, i.e. the frequencies `j / (2 n s)`, `j` in `[0, n)`. This is the non-negative
         quadrant of [`transfer_function_sym`][phaser.utils.image.Filter.transfer_function_sym].
 
-        Only real for a [`symmetric`][phaser.utils.image.Filter.symmetric] filter.
+        Only meaningful for a [`symmetric`][phaser.utils.image.Filter.symmetric] filter
+        (calling it otherwise is a logic error); always returns real.
 
         Parameters:
             samp: Sampling of the data to filter.
@@ -584,9 +598,9 @@ class Filter(abc.ABC):
         Returns: Array of shape `samp.shape`.
         """
         (n, m) = _sampling_shape(samp)
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
         transfer = self.transfer_function_sym(samp, xp=xp, dtype=dtype)[..., :n, :m]
-        # a symmetric filter's transfer function is real, up to roundoff
-        return transfer.real if self.symmetric else transfer
+        return xp.real(transfer).astype(to_real_dtype(dtype))
 
     def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter':
         """
@@ -774,21 +788,24 @@ class AnalyticFilter(Filter):
     def transfer_function(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        xp = _resolve_xp(xp)
+        xp, dtype = _resolve_xp_dtype(xp, dtype)
         kyy, kxx = samp.recip_grid(dtype=dtype, xp=xp)
-        return xp.asarray(self.transfer_at(kyy, kxx, samp))
+        return _cast_transfer(xp.asarray(self.transfer_at(kyy, kxx, samp)), dtype, self.symmetric)
 
     def transfer_function_dct(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-    ) -> NDArray[numpy.inexact]:
+    ) -> NDArray[numpy.floating]:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
+        real_dtype = to_real_dtype(dtype)
         # evaluate directly on the dct grid
+        # (samp.sampling is a numpy.float64 array, so dividing by an element of it
+        # is a 'strong' scalar under NEP 50 and would silently upcast a float32 'dtype')
         ks = tuple(
-            xp.arange(n, dtype=dtype) / (2. * n * s)
+            xp.arange(n, dtype=real_dtype) / xp.asarray(2. * n * s, dtype=real_dtype)
             for (n, s) in zip(_sampling_shape(samp), samp.sampling)
         )
         kyy, kxx = xp.meshgrid(*ks, indexing='ij')
-        return xp.asarray(self.transfer_at(kyy, kxx, samp))
+        return xp.real(xp.asarray(self.transfer_at(kyy, kxx, samp))).astype(real_dtype)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -851,17 +868,16 @@ class TransferFilter(Filter):
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
         xp, dtype = _resolve_xp_dtype(xp, dtype, self.transfer)
-        return _cast_filter(self._check(_sampling_shape(samp), xp), dtype)
+        return _cast_transfer(self._check(_sampling_shape(samp), xp), dtype, self.symmetric)
 
     def transfer_function_sym(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
         xp, dtype = _resolve_xp_dtype(xp, dtype, self.transfer)
-        transfer = _cast_filter(self._check(_sampling_shape(samp), xp), dtype)
-        complex_in = bool(xp.iscomplexobj(transfer))
+        transfer = _cast_transfer(self._check(_sampling_shape(samp), xp), dtype, self.symmetric)
         psf = _upsample_axis(_upsample_axis(xp.fft.ifft2(transfer), -2, xp), -1, xp)
         upsampled = xp.fft.fft2(psf)
-        return upsampled if complex_in else upsampled.real
+        return _cast_transfer(upsampled, dtype, self.symmetric)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1003,13 +1019,12 @@ class ProductFilter(Filter):
 
     def transfer_function_dct(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-    ) -> NDArray[numpy.inexact]:
+    ) -> NDArray[numpy.floating]:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         transfer = xp.ones(_sampling_shape(samp), dtype=dtype)
         for f in self.filters:
             transfer = transfer * f.transfer_function_dct(samp, xp=xp, dtype=dtype)
-        # a symmetric filter's transfer function is real, up to roundoff
-        return xp.real(transfer) if self.symmetric else transfer
+        return xp.real(transfer).astype(to_real_dtype(dtype))
 
     def psf(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
@@ -1106,13 +1121,12 @@ class SumFilter(Filter):
 
     def transfer_function_dct(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-    ) -> NDArray[numpy.inexact]:
+    ) -> NDArray[numpy.floating]:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         transfer = xp.zeros(_sampling_shape(samp), dtype=dtype)
         for f in self.filters:
             transfer = transfer + f.transfer_function_dct(samp, xp=xp, dtype=dtype)
-        # a symmetric filter's transfer function is real, up to roundoff
-        return xp.real(transfer) if self.symmetric else transfer
+        return xp.real(transfer).astype(to_real_dtype(dtype))
 
     def psf(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
@@ -1168,16 +1182,16 @@ def _check_transfer(
 
 
 def _cast_output(
-    out: NDArray[numpy.inexact], arr: NDArray[numpy.inexact]
-) -> NDArray[numpy.inexact]:
+    out: NDArray[numpy.inexact], arr: NDArray[InexactT]
+) -> NDArray[InexactT]:
     """Cast `out` to `arr`'s dtype. If `arr` is real, the transfer function is
     assumed to be Hermitian, so only the real part of `out` is kept (up to roundoff)."""
     xp = get_array_module(arr)
     complex_out = bool(xp.iscomplexobj(arr))
-    return (out if complex_out else out.real).astype(arr.dtype)
+    return t.cast(NDArray[InexactT], (out if complex_out else out.real).astype(arr.dtype))
 
 
-def convolve2d_recip_wrap(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
+def convolve2d_recip_wrap(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
     """
     Convolve the last two axes of `arr` with the transfer function `transfer`
     and with periodic boundary conditions.
@@ -1198,7 +1212,7 @@ def convolve2d_recip_wrap(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> N
     return _cast_output(xp.fft.ifft2(xp.fft.fft2(arr) * transfer), arr)
 
 
-def convolve2d_recip_reflect(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
+def convolve2d_recip_reflect(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
     """
     Convolve the last two axes of `arr` with the transfer function `transfer`
     and with reflecting boundary conditions.
@@ -1264,7 +1278,7 @@ def _fold_symmetric_axis(arr: NDArray[numpy.inexact], axis: int, n: int, xp: t.A
     return out
 
 
-def convolve2d_recip_reflect_adjoint(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
+def convolve2d_recip_reflect_adjoint(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
     """
     Apply the adjoint (transpose) of
     [`convolve2d_recip_reflect`][phaser.utils.image.convolve2d_recip_reflect] with the
@@ -1295,7 +1309,7 @@ def convolve2d_recip_reflect_adjoint(arr: NDArray[numpy.inexact], transfer: Arra
     return _cast_output(out, arr)
 
 
-def convolve2d_recip_reflect_dct(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
+def convolve2d_recip_reflect_dct(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
     """
     Convolve the last two axes of `arr` with the transfer function `transfer`
     and reflecting boundary conditions, utilizing a DCT.
@@ -1327,19 +1341,19 @@ _RECIP_CONVOLVERS: t.Dict[_RecipBoundaryMode, t.Callable[[t.Any, ArrayLike], t.A
 
 
 @tree_dataclass(frozen=True, static_fields=('mode', 'shape', 'symmetric'))
-class PreparedFilter:
+class PreparedOTF(t.Generic[InexactT_co]):
     """
     A [`Filter`][phaser.utils.image.Filter] evaluated for a given sampling and boundary
     mode, ready to be applied by calling it.
     """
 
-    transfer: NDArray[numpy.inexact]
+    transfer: NDArray[InexactT_co]
     mode: _RecipBoundaryMode
     shape: t.Tuple[int, int]
     symmetric: bool = False
     """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
 
-    def __call__(self, arr: NDArray[numpy.inexact]) -> NDArray[numpy.inexact]:
+    def __call__(self, arr: NDArray[InexactT]) -> NDArray[InexactT]:
         """
         Convolve the last two axes of `arr` with this filter.
 
@@ -1350,20 +1364,21 @@ class PreparedFilter:
                  filter's transfer function is assumed to be Hermitian and only the
                  real part of the result is kept.
         """
-        shape = _canonicalize_shape(get_array_module(arr).asarray(arr), 'PreparedFilter')
+        shape = _canonicalize_shape(get_array_module(arr).asarray(arr), 'PreparedOTF')
         if shape != self.shape:
-            raise ValueError(f"PreparedFilter: Filter was prepared for shape {self.shape},"
+            raise ValueError(f"PreparedOTF: Filter was prepared for shape {self.shape},"
                              f" instead got shape {shape}")
 
-        return _RECIP_CONVOLVERS[self.mode](arr, self.transfer)
+        return t.cast(NDArray[InexactT], _RECIP_CONVOLVERS[self.mode](arr, self.transfer))
 
-    def adjoint(self) -> 'PreparedFilter':
+    def adjoint(self) -> Self:
         """
         Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
         `<self(x), y> == <x, g(y)>` for all `x`, `y`.
 
         A [`symmetric`][phaser.utils.image.Filter.symmetric] filter is self-adjoint
-        (`transfer` is already real), so this simply returns `self` in that case.
+        (the transfer function is already real-valued), so this simply returns `self`
+        in that case.
         """
         if self.symmetric:
             return self
@@ -1373,11 +1388,35 @@ class PreparedFilter:
             return dataclasses.replace(self, transfer=self.transfer.conj(), mode='reflect')
         return dataclasses.replace(self, transfer=self.transfer.conj())
 
-
+@t.overload
 def prepare_convolve2d_recip(
     filt: Filter, samp: Sampling, *,
-    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-) -> PreparedFilter:
+    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
+    dtype: type[ComplexT],
+) -> PreparedOTF[ComplexT]: ...
+@t.overload
+def prepare_convolve2d_recip(
+    filt: Filter, samp: Sampling, *,
+    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
+    dtype: type[numpy.float32],
+) -> PreparedOTF[numpy.float32] | PreparedOTF[numpy.complex64]: ...
+@t.overload
+def prepare_convolve2d_recip(
+    filt: Filter, samp: Sampling, *,
+    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
+    dtype: type[numpy.float64],
+) -> PreparedOTF[numpy.float64] | PreparedOTF[numpy.complex128]: ...
+@t.overload
+def prepare_convolve2d_recip(
+    filt: Filter, samp: Sampling, *,
+    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
+    dtype: t.Optional[DTypeLike] = None,
+) -> PreparedOTF[numpy.floating] | PreparedOTF[numpy.complexfloating]: ...
+def prepare_convolve2d_recip(
+    filt: Filter, samp: Sampling, *,
+    mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
+    dtype: t.Optional[DTypeLike] = None
+) -> PreparedOTF[numpy.floating] | PreparedOTF[numpy.complexfloating]:
     """
     Evaluate `filt` for data sampled on `samp`.
 
@@ -1389,23 +1428,34 @@ def prepare_convolve2d_recip(
         xp: Array module to evaluate on.
         dtype: Floating point precision to work in.
 
-    Returns: A [`PreparedFilter`][phaser.utils.image.PreparedFilter], ready to be called on an array.
+    Returns: A [`PreparedOTF`][phaser.utils.image.PreparedOTF], ready to be called on an array.
+             Real iff `dtype` is real (or unspecified) and `filt` is
+             [`symmetric`][phaser.utils.image.Filter.symmetric]; complex otherwise.
     """
+    xp, dtype = _resolve_xp_dtype(xp, dtype)
 
     # a symmetric filter can be applied under symmetric boundaries by a smaller dct
     if mode == 'reflect' and filt.symmetric:
-        return PreparedFilter(
-            filt.transfer_function_dct(samp, xp=xp, dtype=dtype), 'reflect_dct', _sampling_shape(samp),
-            symmetric=True,
+        transfer = filt.transfer_function_dct(samp, xp=xp, dtype=dtype)
+        if numpy.issubdtype(dtype, numpy.complexfloating):
+            transfer = transfer.astype(to_complex_dtype(dtype))
+        # this cast is needed to take the union outside the typevar
+        return t.cast(
+            PreparedOTF[numpy.floating] | PreparedOTF[numpy.complexfloating],
+            PreparedOTF(transfer, 'reflect_dct', _sampling_shape(samp), symmetric=True),
         )
 
     f = filt.transfer_function_sym if mode == 'reflect' else filt.transfer_function
-    return PreparedFilter(f(samp, xp=xp, dtype=dtype), mode, _sampling_shape(samp), symmetric=filt.symmetric)
+    # this cast is needed to take the union outside the typevar
+    return t.cast(
+        PreparedOTF[numpy.floating] | PreparedOTF[numpy.complexfloating],
+        PreparedOTF(f(samp, xp=xp, dtype=dtype), mode, _sampling_shape(samp), symmetric=filt.symmetric)
+    )
 
 
 def convolve2d_recip(
-    arr: NDArray[numpy.inexact], filt: Filter, samp: Sampling, *, mode: _FilterBoundaryMode = 'reflect',
-) -> NDArray[numpy.inexact]:
+    arr: NDArray[InexactT], filt: Filter, samp: Sampling, *, mode: _FilterBoundaryMode = 'reflect',
+) -> NDArray[InexactT]:
     """
     Convolve `arr` with `filt`, evaluated at `samp`.
 
@@ -1420,15 +1470,15 @@ def convolve2d_recip(
 
 
 @tree_dataclass(frozen=True, static_fields=('mode', 'symmetric'))
-class PreparedPsf:
+class PreparedPSF(t.Generic[NumT_co]):
     """
     A [`Filter`][phaser.utils.image.Filter]'s point spread function, evaluated for a
     given sampling and boundary mode, ready to be applied by calling it.
     """
 
-    psf: t.Union[NDArray[numpy.inexact], t.Tuple[NDArray[numpy.inexact], NDArray[numpy.inexact]]]
+    psf: t.Union[NDArray[NumT_co], t.Tuple[NDArray[NumT_co], NDArray[NumT_co]]]
     mode: _InterpBoundaryMode
-    cval: t.Union[numpy.number, float] = 0.
+    cval: t.Union[NumT_co, float] = 0.
     """Fill value, for `mode='constant'` and `mode='grid-constant'`."""
     symmetric: bool = False
     """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
@@ -1446,7 +1496,7 @@ class PreparedPsf:
             return convolve2d_separable(arr, *self.psf, mode=self.mode, cval=t.cast(float, self.cval))
         return convolve2d(arr, self.psf, mode=self.mode, cval=t.cast(float, self.cval))
 
-    def adjoint(self) -> 'PreparedPsf':
+    def adjoint(self) -> Self:
         """
         Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
         `<self(x), y> == <x, g(y)>` for all `x`, `y`.
@@ -1462,7 +1512,7 @@ class PreparedPsf:
             return self
         if self.mode != 'grid-wrap':
             raise NotImplementedError(
-                f"PreparedPsf.adjoint() is not implemented for an asymmetric filter"
+                f"PreparedPSF.adjoint() is not implemented for an asymmetric filter"
                 f" under mode={self.mode!r}"
             )
         xp = get_array_module(*(self.psf if isinstance(self.psf, tuple) else (self.psf,)))
@@ -1473,11 +1523,23 @@ class PreparedPsf:
         return dataclasses.replace(self, psf=psf)
 
 
+@t.overload
+def prepare_convolve2d(
+    filt: Filter, samp: Sampling, *,
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.,
+    xp: t.Any = None, dtype: type[NumT],
+) -> PreparedPSF[NumT]: ...
+@t.overload
 def prepare_convolve2d(
     filt: Filter, samp: Sampling, *,
     mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = 0.,
     xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
-) -> PreparedPsf:
+) -> PreparedPSF[numpy.number]: ...
+def prepare_convolve2d(
+    filt: Filter, samp: Sampling, *,
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = 0.,
+    xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+) -> PreparedPSF[numpy.number]:
     """
     Evaluate `filt`'s point spread function for data sampled on `samp`, ready for
     direct spatial-domain convolution.
@@ -1490,14 +1552,13 @@ def prepare_convolve2d(
         xp: Array module to evaluate on.
         dtype: Floating point precision to work in.
 
-    Returns: A [`PreparedPsf`][phaser.utils.image.PreparedPsf], ready to be called on an array.
+    Returns: A [`PreparedPSF`][phaser.utils.image.PreparedPSF], ready to be called on an array.
     """
     if isinstance(filt, SeparableFilter):
         psf = filt.psf_separable(samp, xp=xp, dtype=dtype)
     else:
-        xp, dtype = _resolve_xp_dtype(xp, dtype)
         psf = filt.psf(samp, xp=xp, dtype=dtype)
-    return PreparedPsf(psf, mode, cval, symmetric=filt.symmetric)
+    return PreparedPSF(psf, mode, cval, symmetric=filt.symmetric)
 
 
 __all__ = [
@@ -1512,7 +1573,7 @@ __all__ = [
     'SumFilter', 'SumSeparableFilter',
     'convolve2d_recip_wrap', 'convolve2d_recip_reflect', 'convolve2d_recip_reflect_dct',
     'convolve2d_recip',
-    'PreparedFilter', 'prepare_convolve2d_recip',
-    'PreparedPsf', 'prepare_convolve2d',
+    'PreparedOTF', 'prepare_convolve2d_recip',
+    'PreparedPSF', 'prepare_convolve2d',
     'scale_matrix', 'rotation_matrix', 'translation_matrix',
 ]

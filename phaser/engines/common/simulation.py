@@ -12,8 +12,8 @@ from phaser.hooks.solver import NoiseModel
 from phaser.plan import MtfPlan
 from phaser.state import ReconsState
 from phaser.utils.image import (
-    PreparedFilter,
-    PreparedPsf,
+    PreparedOTF,
+    PreparedPSF,
     prepare_convolve2d,
     prepare_convolve2d_recip,
 )
@@ -219,7 +219,7 @@ def prepare_mtf(
     state: ReconsState,
     dtype: t.Type[numpy.floating],
     xp: t.Any,
-) -> t.Union[PreparedFilter, PreparedPsf]:
+) -> t.Union[PreparedOTF[numpy.inexact], PreparedPSF[numpy.floating]]:
     """
     Prepare a detector MTF for application to simulated diffraction pattern
     intensities, sampled at `state.probe.sampling`'s shape (in detector pixels).

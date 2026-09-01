@@ -7,17 +7,17 @@ from numpy.testing import assert_allclose, assert_array_almost_equal
 from numpy.typing import ArrayLike, NDArray
 
 from phaser.utils.image import (
-    _FilterBoundaryMode,
-    _InterpBoundaryMode,
-    ProductFilter,
-    ProductSeparableFilter,
     Filter,
     GaussianFilter,
-    PreparedPsf,
+    PreparedPSF,
+    ProductFilter,
+    ProductSeparableFilter,
     PsfFilter,
     SeparablePsfFilter,
     SquarePixelFilter,
     TransferFilter,
+    _FilterBoundaryMode,
+    _InterpBoundaryMode,
     affine_transform,
     convolve1d,
     convolve2d,
@@ -338,7 +338,7 @@ def test_convolve2d_complex_psf(mode: _InterpBoundaryMode, backend: BackendName)
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 @pytest.mark.parametrize('mode', ['reflect', 'nearest', 'grid-wrap'])
 def test_prepare_convolve2d(mode: _InterpBoundaryMode, backend: BackendName):
-    """A `PreparedPsf` applies exactly what `convolve2d`'s `Filter` overload does."""
+    """A `PreparedPSF` applies exactly what `convolve2d`'s `Filter` overload does."""
     xp = get_backend_module(backend)
     rng = numpy.random.default_rng(42)
     arr = rng.normal(size=(3, 9, 11))
@@ -346,7 +346,7 @@ def test_prepare_convolve2d(mode: _InterpBoundaryMode, backend: BackendName):
 
     filt = PsfFilter(_KERNELS[1])
     prepared = prepare_convolve2d(filt, samp, mode=mode, xp=xp)
-    assert isinstance(prepared, PreparedPsf)
+    assert isinstance(prepared, PreparedPSF)
 
     assert_allclose(
         to_numpy(prepared(xp.array(arr))),
@@ -377,7 +377,7 @@ def test_prepare_convolve2d_separable(backend: BackendName):
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 @pytest.mark.parametrize('mode', ['reflect', 'nearest', 'grid-wrap'])
 def test_prepared_psf_adjoint_symmetric(mode: _InterpBoundaryMode, backend: BackendName):
-    """`PreparedPsf.adjoint()` is a no-op for a symmetric filter."""
+    """`PreparedPSF.adjoint()` is a no-op for a symmetric filter."""
     xp = get_backend_module(backend)
     samp = _unit_sampling((9, 11))
 
@@ -387,7 +387,7 @@ def test_prepared_psf_adjoint_symmetric(mode: _InterpBoundaryMode, backend: Back
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_prepared_psf_adjoint_inner_product(backend: BackendName):
-    """For an asymmetric filter under `mode='grid-wrap'`, `PreparedPsf.adjoint()`
+    """For an asymmetric filter under `mode='grid-wrap'`, `PreparedPSF.adjoint()`
     satisfies `<Mx, y> == <x, M^T y>`."""
     xp = get_backend_module(backend)
     rng = numpy.random.default_rng(1234)
@@ -418,8 +418,8 @@ def test_prepared_psf_adjoint_not_implemented(mode: _InterpBoundaryMode, backend
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
-def test_prepared_filter_adjoint_symmetric(backend: BackendName):
-    """`PreparedFilter.adjoint()` is a no-op for a symmetric filter."""
+def test_prepared_otf_adjoint_symmetric(backend: BackendName):
+    """`PreparedOTF.adjoint()` is a no-op for a symmetric filter."""
     xp = get_backend_module(backend)
     samp = _unit_sampling((9, 11))
 
@@ -428,8 +428,8 @@ def test_prepared_filter_adjoint_symmetric(backend: BackendName):
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
-def test_prepared_filter_adjoint_inner_product(backend: BackendName):
-    """For an asymmetric filter, `PreparedFilter.adjoint()` satisfies `<Mx, y> == <x, M^T y>`."""
+def test_prepared_otf_adjoint_inner_product(backend: BackendName):
+    """For an asymmetric filter, `PreparedOTF.adjoint()` satisfies `<Mx, y> == <x, M^T y>`."""
     xp = get_backend_module(backend)
     rng = numpy.random.default_rng(1234)
     samp = _unit_sampling((9, 11))
@@ -446,8 +446,8 @@ def test_prepared_filter_adjoint_inner_product(backend: BackendName):
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
-def test_prepared_filter_adjoint_reflect_inner_product(backend: BackendName):
-    """For an asymmetric filter under `mode='reflect'`, `PreparedFilter.adjoint()`
+def test_prepared_otf_adjoint_reflect_inner_product(backend: BackendName):
+    """For an asymmetric filter under `mode='reflect'`, `PreparedOTF.adjoint()`
     satisfies `<Mx, y> == <x, M^T y>`."""
     xp = get_backend_module(backend)
     rng = numpy.random.default_rng(1234)
@@ -471,7 +471,7 @@ def test_prepared_filter_adjoint_reflect_inner_product(backend: BackendName):
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_prepare_convolve2d_cval(backend: BackendName):
-    """`PreparedPsf.cval` is used as the fill value under `'constant'`/`'grid-constant'` modes."""
+    """`PreparedPSF.cval` is used as the fill value under `'constant'`/`'grid-constant'` modes."""
     xp = get_backend_module(backend)
     rng = numpy.random.default_rng(42)
     arr = rng.normal(size=(9, 11))
