@@ -6,16 +6,37 @@ import numpy
 from numpy.typing import NDArray
 from typing_extensions import Self
 
-from phaser.utils.num import (
-    get_array_module, to_real_dtype, to_complex_dtype,
-    fft2, ifft2, is_jax, to_numpy, block_until_ready, ufunc_outer
-)
-from phaser.utils.tree import tree_dataclass
-from phaser.utils.misc import FloatKey, create_compact_groupings, create_sparse_groupings, shuffled
-from phaser.utils.optics import fresnel_propagator, fourier_shift_filter
-from phaser.state import ReconsState
-from phaser.hooks.solver import NoiseModel
+from phaser.hooks.filter import FilterArgs, FilterHook
 from phaser.hooks.regularization import GroupConstraint, IterConstraint, StateT
+from phaser.hooks.solver import NoiseModel
+from phaser.plan import MtfPlan
+from phaser.state import ReconsState
+from phaser.utils.image import (
+    PreparedFilter,
+    PreparedPsf,
+    prepare_convolve2d,
+    prepare_convolve2d_recip,
+)
+from phaser.utils.misc import (
+    FloatKey,
+    create_compact_groupings,
+    create_sparse_groupings,
+    shuffled,
+)
+from phaser.utils.num import (
+    Sampling,
+    block_until_ready,
+    fft2,
+    get_array_module,
+    ifft2,
+    is_jax,
+    to_complex_dtype,
+    to_numpy,
+    to_real_dtype,
+    ufunc_outer,
+)
+from phaser.utils.optics import fourier_shift_filter, fresnel_propagator
+from phaser.utils.tree import tree_dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +212,29 @@ def make_propagators(state: ReconsState, bwlim_frac: t.Optional[float] = 2/3) ->
         [props[FloatKey(z)] for z in delta_zs],
         axis = 0
     )
+
+
+def prepare_mtf(
+    mtf: t.Union[MtfPlan, FilterHook],
+    state: ReconsState,
+    dtype: t.Type[numpy.floating],
+    xp: t.Any,
+) -> t.Union[PreparedFilter, PreparedPsf]:
+    """
+    Prepare a detector MTF for application to simulated diffraction pattern
+    intensities, sampled at `state.probe.sampling`'s shape (in detector pixels).
+    """
+    mtf_args: FilterArgs = {'wavelength': float(state.wavelength)}
+    if isinstance(mtf, MtfPlan):
+        filt = mtf.filter(mtf_args)
+        domain = mtf.domain
+    else:
+        filt = mtf(mtf_args)
+        domain = 'recip'
+
+    samp = Sampling(state.probe.data.shape[-2:], sampling=(1., 1.))
+    prepare = prepare_convolve2d if domain == 'real' else prepare_convolve2d_recip
+    return prepare(filt, samp, xp=xp, dtype=dtype)
 
 
 def tilt_propagators(

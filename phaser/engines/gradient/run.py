@@ -14,6 +14,7 @@ from phaser.plan import GradientEnginePlan
 from phaser.state import ProgressState, ReconsState
 from phaser.types import ReconsVar, process_flag
 from phaser.utils import tree
+from phaser.utils.image import PreparedFilter, PreparedPsf
 from phaser.utils.num import (
     Float,
     abs2,
@@ -35,6 +36,7 @@ from phaser.utils.optics import fourier_shift_filter
 from ..common.simulation import (
     GroupManager,
     make_propagators,
+    prepare_mtf,
     slice_forwards,
     stream_patterns,
     tilt_propagators,
@@ -287,6 +289,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         )
 
     propagators = make_propagators(state, props.bwlim_frac)
+    mtf = None if props.mtf is None else prepare_mtf(props.mtf, state, dtype, xp)
 
     # runs rescaling
     rescale_factors = []
@@ -372,6 +375,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
                 iter_grads=iter_grads,
                 solver_states=solver_states,
                 props=propagators,
+                mtf=mtf,
                 group_patterns=group_patterns, #load_group(group),
                 pattern_mask=pattern_mask,
                 probe_int=probe_int,
@@ -463,6 +467,7 @@ def run_group(
     iter_grads: t.Dict[ReconsVar, t.Any],
     solver_states: SolverStates,
     props: t.Optional[NDArray[numpy.complexfloating]],
+    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
     group_patterns: NDArray[numpy.floating],
     pattern_mask: NDArray[numpy.floating],
     probe_int: t.Union[float, numpy.floating],
@@ -474,7 +479,7 @@ def run_group(
 
     (grad, (solver_states, group_losses)) = tree.grad(run_model, has_aux=True, xp=xp, sign=-1)(
         *extract_vars(state, vars, group),
-        group=group, props=props, group_patterns=group_patterns, pattern_mask=pattern_mask,
+        group=group, props=props, mtf=mtf, group_patterns=group_patterns, pattern_mask=pattern_mask,
         noise_model=noise_model, regularizers=regularizers, solver_states=solver_states,
         xp=xp, dtype=dtype, jit_unroll_slices=jit_unroll_slices
     )
@@ -518,6 +523,7 @@ def run_model(
     sim: ReconsState,
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]], # base propagator, shape (n_slices-1, ny, nx)
+    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
     group_patterns: NDArray[numpy.floating],
     pattern_mask: NDArray[numpy.floating],
     noise_model: NoiseModel[t.Any],
@@ -552,6 +558,8 @@ def run_model(
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
 
     model_intensity = xp.sum(abs2(model_wave), axis=1)
+    if mtf is not None:
+        model_intensity = t.cast(NDArray[numpy.floating], mtf(model_intensity))
     (loss, solver_states.noise_model_state) = noise_model.calc_loss(
         model_wave, model_intensity, group_patterns, pattern_mask, solver_states.noise_model_state
     )

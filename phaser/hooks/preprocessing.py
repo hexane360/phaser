@@ -7,7 +7,11 @@ from numpy.typing import NDArray
 
 from phaser.state import Patterns, ReconsState, ScanState
 from phaser.types import cast_length
-from phaser.utils.image import affine_transform, prepare_convolve2d, prepare_convolve2d_recip
+from phaser.utils.image import (
+    affine_transform,
+    prepare_convolve2d,
+    prepare_convolve2d_recip,
+)
 from phaser.utils.misc import create_rng, create_sparse_groupings, freeze
 from phaser.utils.num import Sampling, cast_array_module, get_array_module, to_numpy
 

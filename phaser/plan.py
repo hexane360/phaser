@@ -1,12 +1,38 @@
-from pathlib import Path
 import typing as t
+from pathlib import Path
 
-from .types import Dataclass, Slices, BackendName, SimpleFlag, ReconsVars, IsVersion, EmptyDict
-from .hooks import RawDataHook, ProbeHook, ObjectHook, ScanHook, EngineHook, PostInitHook, PostLoadHook, TiltHook
-from .hooks.solver import NoiseModelHook, ConventionalSolverHook, PositionSolverHook, GradientSolverHook
+from .hooks import (
+    EngineHook,
+    ObjectHook,
+    PostInitHook,
+    PostLoadHook,
+    ProbeHook,
+    RawDataHook,
+    ScanHook,
+    TiltHook,
+)
+from .hooks.filter import FilterHook
+from .hooks.regularization import (
+    CostRegularizerHook,
+    GroupConstraintHook,
+    IterConstraintHook,
+)
 from .hooks.schedule import FlagLike, ScheduleLike
-from .hooks.regularization import IterConstraintHook, GroupConstraintHook, CostRegularizerHook
-
+from .hooks.solver import (
+    ConventionalSolverHook,
+    GradientSolverHook,
+    NoiseModelHook,
+    PositionSolverHook,
+)
+from .types import (
+    BackendName,
+    Dataclass,
+    EmptyDict,
+    IsVersion,
+    ReconsVars,
+    SimpleFlag,
+    Slices,
+)
 
 SaveType: t.TypeAlias = t.Literal[
     'probe', 'probe_mag', 'probe_recip', 'probe_recip_mag',
@@ -147,13 +173,21 @@ class ConventionalEnginePlan(EnginePlan, kw_only=True):
     iter_constraints: t.List[IterConstraintHook]
 
 
-class GradientEnginePlan(EnginePlan):
+class MtfPlan(Dataclass, kw_only=True):
+    filter: FilterHook
+    domain: t.Literal['real', 'recip'] = 'recip'
+
+
+class GradientEnginePlan(EnginePlan, kw_only=True):
     noise_model: NoiseModelHook
     solvers: t.Dict[ReconsVars, GradientSolverHook]
 
     regularizers: t.List[CostRegularizerHook]
     group_constraints: t.List[GroupConstraintHook]
     iter_constraints: t.List[IterConstraintHook]
+
+    mtf: t.Union[MtfPlan, FilterHook, None] = None
+    """Detector MTF to apply to simulated diffraction pattern."""
 
 
 class SGDSolverPlan(Dataclass, kw_only=True):
