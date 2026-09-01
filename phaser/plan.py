@@ -66,6 +66,11 @@ class SaveOptions(Dataclass, kw_only=True):
     hdf5_fmt: str = "iter{iter.total_iter:03}.h5"
 
 
+class MtfPlan(Dataclass, kw_only=True):
+    filter: FilterHook
+    domain: t.Literal['real', 'recip'] = 'recip'
+
+
 class EnginePlan(Dataclass, kw_only=True):
     sim_shape: t.Optional[t.Tuple[int, int]] = None
     resize_method: t.Literal['pad_crop', 'resample'] = 'pad_crop'
@@ -123,6 +128,9 @@ class EnginePlan(Dataclass, kw_only=True):
     check_every_group: bool = False
     send_every_group: bool = False
 
+    mtf: t.Union[MtfPlan, FilterHook, None] = None
+    """Detector MTF to apply to simulated diffraction pattern."""
+
 
 class AmplitudeNoisePlan(Dataclass, kw_only=True):
     gaussian_variance: float = 0.1
@@ -173,11 +181,6 @@ class ConventionalEnginePlan(EnginePlan, kw_only=True):
     iter_constraints: t.List[IterConstraintHook]
 
 
-class MtfPlan(Dataclass, kw_only=True):
-    filter: FilterHook
-    domain: t.Literal['real', 'recip'] = 'recip'
-
-
 class GradientEnginePlan(EnginePlan, kw_only=True):
     noise_model: NoiseModelHook
     solvers: t.Dict[ReconsVars, GradientSolverHook]
@@ -185,9 +188,6 @@ class GradientEnginePlan(EnginePlan, kw_only=True):
     regularizers: t.List[CostRegularizerHook]
     group_constraints: t.List[GroupConstraintHook]
     iter_constraints: t.List[IterConstraintHook]
-
-    mtf: t.Union[MtfPlan, FilterHook, None] = None
-    """Detector MTF to apply to simulated diffraction pattern."""
 
 
 class SGDSolverPlan(Dataclass, kw_only=True):

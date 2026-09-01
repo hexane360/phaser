@@ -375,6 +375,101 @@ def test_prepare_convolve2d_separable(backend: BackendName):
 
 
 @with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'nearest', 'grid-wrap'])
+def test_prepared_psf_adjoint_symmetric(mode: _InterpBoundaryMode, backend: BackendName):
+    """`PreparedPsf.adjoint()` is a no-op for a symmetric filter."""
+    xp = get_backend_module(backend)
+    samp = _unit_sampling((9, 11))
+
+    prepared = prepare_convolve2d(GaussianFilter(1.5), samp, mode=mode, xp=xp)
+    assert prepared.adjoint() is prepared
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepared_psf_adjoint_inner_product(backend: BackendName):
+    """For an asymmetric filter under `mode='grid-wrap'`, `PreparedPsf.adjoint()`
+    satisfies `<Mx, y> == <x, M^T y>`."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(1234)
+    samp = _unit_sampling((9, 11))
+    x = rng.normal(size=(9, 11))
+    y = rng.normal(size=(9, 11))
+
+    filt = PsfFilter(_KERNELS[2], symmetric=False)
+    prepared = prepare_convolve2d(filt, samp, mode='grid-wrap', xp=xp)
+    assert not prepared.symmetric
+
+    lhs = numpy.sum(to_numpy(prepared(xp.array(x))) * y)
+    rhs = numpy.sum(x * to_numpy(prepared.adjoint()(xp.array(y))))
+    assert_allclose(lhs, rhs, rtol=1e-8, atol=1e-8)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+@pytest.mark.parametrize('mode', ['reflect', 'nearest'])
+def test_prepared_psf_adjoint_not_implemented(mode: _InterpBoundaryMode, backend: BackendName):
+    """The transpose of a padded (non-periodic) boundary mode isn't implemented."""
+    xp = get_backend_module(backend)
+    samp = _unit_sampling((9, 11))
+    filt = PsfFilter(_KERNELS[2], symmetric=False)
+    prepared = prepare_convolve2d(filt, samp, mode=mode, xp=xp)
+
+    with pytest.raises(NotImplementedError):
+        prepared.adjoint()
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepared_filter_adjoint_symmetric(backend: BackendName):
+    """`PreparedFilter.adjoint()` is a no-op for a symmetric filter."""
+    xp = get_backend_module(backend)
+    samp = _unit_sampling((9, 11))
+
+    prepared = prepare_convolve2d_recip(GaussianFilter(1.5), samp, mode='grid-wrap', xp=xp)
+    assert prepared.adjoint() is prepared
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepared_filter_adjoint_inner_product(backend: BackendName):
+    """For an asymmetric filter, `PreparedFilter.adjoint()` satisfies `<Mx, y> == <x, M^T y>`."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(1234)
+    samp = _unit_sampling((9, 11))
+    x = rng.normal(size=(9, 11))
+    y = rng.normal(size=(9, 11))
+
+    filt = PsfFilter(_KERNELS[2], symmetric=False)
+    prepared = prepare_convolve2d_recip(filt, samp, mode='grid-wrap', xp=xp)
+    assert not prepared.symmetric
+
+    lhs = numpy.sum(to_numpy(prepared(xp.array(x))) * y)
+    rhs = numpy.sum(x * to_numpy(prepared.adjoint()(xp.array(y))))
+    assert_allclose(lhs, rhs, rtol=1e-8, atol=1e-8)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
+def test_prepared_filter_adjoint_reflect_inner_product(backend: BackendName):
+    """For an asymmetric filter under `mode='reflect'`, `PreparedFilter.adjoint()`
+    satisfies `<Mx, y> == <x, M^T y>`."""
+    xp = get_backend_module(backend)
+    rng = numpy.random.default_rng(1234)
+    samp = _unit_sampling((9, 11))
+    x = rng.normal(size=(9, 11))
+    y = rng.normal(size=(9, 11))
+
+    filt = PsfFilter(_KERNELS[2], symmetric=False)
+    prepared = prepare_convolve2d_recip(filt, samp, mode='reflect', xp=xp)
+    assert not prepared.symmetric
+
+    lhs = numpy.sum(to_numpy(prepared(xp.array(x))) * y)
+    rhs = numpy.sum(x * to_numpy(prepared.adjoint()(xp.array(y))))
+    assert_allclose(lhs, rhs, rtol=1e-8, atol=1e-8)
+
+    # adjoint of the adjoint recovers the original filter
+    lhs2 = numpy.sum(to_numpy(prepared.adjoint()(xp.array(x))) * y)
+    rhs2 = numpy.sum(x * to_numpy(prepared.adjoint().adjoint()(xp.array(y))))
+    assert_allclose(lhs2, rhs2, rtol=1e-8, atol=1e-8)
+
+
+@with_backends('numpy', 'jax', 'cupy', 'torch')
 def test_prepare_convolve2d_cval(backend: BackendName):
     """`PreparedPsf.cval` is used as the fill value under `'constant'`/`'grid-constant'` modes."""
     xp = get_backend_module(backend)

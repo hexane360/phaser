@@ -183,6 +183,18 @@ def maximum(
     return torch.maximum(x1, x2)
 
 
+def flip(
+    arr: torch.Tensor, axis: t.Union[int, t.Tuple[int, ...], None] = None,
+) -> torch.Tensor:
+    # torch.flip's second parameter is `dims`, not `dim` like most other torch
+    # reductions, so it can't go through `_wrap_call`'s generic axis -> dim rename
+    if axis is None:
+        axis = tuple(range(arr.ndim))
+    elif isinstance(axis, int):
+        axis = (axis,)
+    return torch.flip(arr, axis)
+
+
 def cumsum(
     arr: torch.Tensor, axis: t.Optional[int] = None,
 ) -> torch.Tensor:
@@ -645,6 +657,7 @@ mock_torch = _MockModule(torch, {
     'torch.min': min, 'torch.max': max,
     'torch.nanmin': nanmin, 'torch.nanmax': nanmax,
     'torch.minimum': minimum, 'torch.maximum': maximum,
+    'torch.flip': flip,
     'torch.cumsum': cumsum,
     'torch.unwrap': unwrap,
     'torch.indices': indices,

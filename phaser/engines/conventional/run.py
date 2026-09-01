@@ -7,7 +7,7 @@ from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
 from phaser.state import ReconsState, ProgressState
 from phaser.types import process_flag, flag_any_true
-from ..common.simulation import SimulationState, make_propagators, GroupManager
+from ..common.simulation import SimulationState, make_propagators, prepare_mtf, GroupManager
 
 
 def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
@@ -76,6 +76,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
     start_i = int(sim.state.iter.total_iter)
 
     propagators = make_propagators(sim.state, props.bwlim_frac)
+    mtf = None if props.mtf is None else prepare_mtf(props.mtf, sim.state, dtype, xp)
 
     # runs rescaling
     sim = solver.presolve(
@@ -96,7 +97,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
         sim, pos_update, group_errors = solver.run_iteration(
             sim, groups.iter(sim.state.scan.data, i, iter_shuffle_groups),
-            patterns=patterns, pattern_mask=pattern_mask, propagators=propagators,
+            patterns=patterns, pattern_mask=pattern_mask, propagators=propagators, mtf=mtf,
             update_object=update_object({'state': sim.state, 'niter': props.niter}),
             update_probe=update_probe({'state': sim.state, 'niter': props.niter}),
             update_positions=iter_update_positions,

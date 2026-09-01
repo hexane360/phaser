@@ -13,6 +13,7 @@ if t.TYPE_CHECKING:
     from phaser.execute import Observer
     from phaser.plan import ConventionalEnginePlan, GradientEnginePlan  # noqa: F401
     from phaser.state import ReconsState
+    from phaser.utils.image import PreparedFilter, PreparedPsf
 
 
 StateT = t.TypeVar('StateT')
@@ -48,11 +49,16 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
         model_wave: NDArray[numpy.complexfloating],
         model_intensity: NDArray[numpy.floating],
         exp_patterns: NDArray[numpy.floating],
-        mask: NDArray[numpy.floating], 
+        mask: NDArray[numpy.floating],
         state: StateT,
+        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], StateT]:
         """
         Return the calculated wave update `chi` in reciprocal space.
+
+        If `mtf` is given, `model_intensity` has already been blurred by it; the
+        intensity-domain residual must be backprojected through `mtf.adjoint()`
+        before being combined with the (unblurred) `model_wave`.
 
         May be called in a JAX jit context, so must have no side effects.
         """
@@ -128,6 +134,7 @@ class ConventionalSolver(abc.ABC):
         patterns: NDArray[numpy.floating],
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
+        mtf: t.Optional[t.Union['PreparedFilter', 'PreparedPsf']],
         update_object: bool,
         update_probe: bool,
         update_positions: bool,

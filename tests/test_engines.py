@@ -58,6 +58,42 @@ def test_position_update_preserves_initial():
     assert_array_equal(scan.initial, initial)
 
 
+@pytest.mark.parametrize('solver', ['lsqml', 'epie'])
+def test_conventional_mtf(solver: str):
+    def make_plan(mtf) -> ReconsPlan:
+        return ReconsPlan.from_data({
+            'name': 'test',
+            'backend': 'numpy',
+            'raw_data': 'tests.test_engines:load_random',
+            'engines': [{
+                'type': 'conventional',
+                'probe_modes': 1,
+                'niter': 2,
+                'grouping': 16,
+                'noise_model': {'type': 'amplitude'},
+                'solver': {'type': solver},
+                'iter_constraints': [],
+                'group_constraints': [],
+                'mtf': mtf,
+            }],
+        })
+
+    def run(mtf):
+        plan = make_plan(mtf)
+        recons = initialize_reconstruction(plan)
+        for engine in plan.engines:
+            recons = execute_engine(recons, engine)
+        return recons.state
+
+    state_no_mtf = run(None)
+    assert numpy.all(numpy.isfinite(numpy.asarray(state_no_mtf.progress['detector_loss'].values)))
+
+    state_mtf = run({'filter': {'type': 'gaussian', 'sigma': 1.0}, 'domain': 'recip'})
+    assert numpy.all(numpy.isfinite(numpy.asarray(state_mtf.progress['detector_loss'].values)))
+
+    assert not numpy.allclose(state_no_mtf.object.data, state_mtf.object.data)
+
+
 @pytest.mark.jax
 def test_gradient_mtf():
     try:

@@ -6,6 +6,7 @@ import numpy
 from numpy.typing import NDArray
 
 from phaser.utils.num import cast_array_module, at, abs2, fft2, ifft2, jit, check_finite, to_complex_dtype, to_numpy, xp_is_jax
+from phaser.utils.image import PreparedFilter, PreparedPsf
 from phaser.hooks.solver import ConventionalSolver
 from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
@@ -85,6 +86,7 @@ class LSQMLSolver(ConventionalSolver):
         patterns: NDArray[numpy.floating],
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
+        mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
         update_object: bool,
         update_probe: bool,
         update_positions: bool,
@@ -109,7 +111,7 @@ class LSQMLSolver(ConventionalSolver):
             group_calc_error = calc_error and calc_error_mask[group_i]
 
             (sim, new_obj_mag, new_probe_mag, errors, group_pos_update) = lsqml_run(
-                sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators,
+                sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators, mtf=mtf,
                 obj_mag=self.obj_mag, probe_mag=self.probe_mag,
                 new_obj_mag=new_obj_mag, new_probe_mag=new_probe_mag,
                 beta_object=beta_object, beta_probe=beta_probe,
@@ -194,6 +196,7 @@ def lsqml_run(
     group_patterns: NDArray[numpy.floating], *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
+    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
     obj_mag: NDArray[numpy.floating],
     probe_mag: NDArray[numpy.floating],
     new_obj_mag: NDArray[numpy.floating],
@@ -247,12 +250,16 @@ def lsqml_run(
     model_wave = fft2(psi[-1] * group_obj[:, -1, None])
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
+    if mtf is not None:
+        model_intensity = t.cast(NDArray[numpy.floating], mtf(model_intensity))
     # experimental data
     # group_patterns = xp.array(sim.patterns[tuple(group)])[:, None]
 
     errors = xp.sqrt(xp.nansum((model_intensity - group_patterns[:, None])**2, axis=(1, -1, -2))) if calc_error else None
 
-    (chi, sim.noise_model_state) = sim.noise_model.calc_wave_update(model_wave, model_intensity, group_patterns[:, None], pattern_mask, sim.noise_model_state)
+    (chi, sim.noise_model_state) = sim.noise_model.calc_wave_update(
+        model_wave, model_intensity, group_patterns[:, None], pattern_mask, sim.noise_model_state, mtf=mtf
+    )
     chi = ifft2(chi)
 
     def update_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
@@ -367,6 +374,7 @@ class EPIESolver(ConventionalSolver):
         patterns: NDArray[numpy.floating],
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
+        mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
         update_object: bool,
         update_probe: bool,
         update_positions: bool,
@@ -390,6 +398,7 @@ class EPIESolver(ConventionalSolver):
                 sim, group, group_patterns,
                 pattern_mask=pattern_mask,
                 props=propagators,
+                mtf=mtf,
                 beta_object=beta_object,
                 beta_probe=beta_probe,
                 update_object=update_object,
@@ -454,6 +463,7 @@ def epie_run(
     group_patterns: NDArray[numpy.floating], *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
+    mtf: t.Optional[t.Union[PreparedFilter, PreparedPsf]],
     beta_object: float = 0.9,
     beta_probe: float = 0.9,
     update_object: bool = True,
@@ -485,10 +495,12 @@ def epie_run(
     model_wave = fft2(psi[-1] * group_obj[:, -1, None])
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
+    if mtf is not None:
+        model_intensity = t.cast(NDArray[numpy.floating], mtf(model_intensity))
 
     errors = xp.sqrt(xp.nansum((model_intensity - group_patterns[:, None])**2, axis=(1, -1, -2))) if calc_error else None
     (chi, sim.noise_model_state) = sim.noise_model.calc_wave_update(
-        model_wave, model_intensity, group_patterns[:, None], pattern_mask, sim.noise_model_state
+        model_wave, model_intensity, group_patterns[:, None], pattern_mask, sim.noise_model_state, mtf=mtf
     )
     chi = ifft2(chi)
 

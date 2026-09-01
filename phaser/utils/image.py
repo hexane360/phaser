@@ -157,7 +157,7 @@ def scale_to_integral_type(
 
 _InterpBoundaryMode: t.TypeAlias = t.Literal['constant', 'nearest', 'mirror', 'reflect', 'wrap', 'grid-mirror', 'grid-wrap', 'grid-constant']
 _FilterBoundaryMode: t.TypeAlias = t.Literal['reflect', 'grid-wrap']
-_RecipBoundaryMode: t.TypeAlias = t.Union[_FilterBoundaryMode, t.Literal['reflect_dct']]
+_RecipBoundaryMode: t.TypeAlias = t.Union[_FilterBoundaryMode, t.Literal['reflect_dct', 'reflect_adjoint']]
 
 
 def to_affine_matrix(arr: ArrayLike, ndim: int = 2) -> NDArray[numpy.floating]:
@@ -1223,6 +1223,78 @@ def convolve2d_recip_reflect(arr: NDArray[numpy.inexact], transfer: ArrayLike) -
     return _cast_output(out[..., ly:ly + n, lx:lx + m], arr)
 
 
+def _zero_embed(
+    arr: NDArray[numpy.inexact], shape: t.Tuple[int, int], offset: t.Tuple[int, int], xp: t.Any
+) -> NDArray[numpy.inexact]:
+    """Embed `arr` into a zeros array of `shape`, at `offset` along the last two axes.
+    The adjoint of cropping the same region back out."""
+    (n, m) = arr.shape[-2:]
+    (ly, lx) = offset
+    out = xp.zeros(arr.shape[:-2] + shape, dtype=arr.dtype)
+    idx = (..., slice(ly, ly + n), slice(lx, lx + m))
+    return at(out, idx).set(arr)
+
+
+def _fold_symmetric_axis(arr: NDArray[numpy.inexact], axis: int, n: int, xp: t.Any) -> NDArray[numpy.inexact]:
+    """Fold a length-`2n` axis back down to length `n`, the adjoint of the half-sample
+    symmetric padding used by [`pad(..., mode='symmetric')`][phaser.utils.image.pad]
+    with left width `n // 2`."""
+    (l, r) = (n // 2, n - n // 2)
+
+    idx_direct = [slice(None)] * arr.ndim
+    idx_direct[axis] = slice(l, l + n)
+    out = arr[tuple(idx_direct)]
+
+    if l > 0:
+        idx_left = [slice(None)] * arr.ndim
+        idx_left[axis] = slice(0, l)
+        left = xp.flip(arr[tuple(idx_left)], axis=axis)
+        idx_out = [slice(None)] * out.ndim
+        idx_out[axis] = slice(0, l)
+        out = at(out, tuple(idx_out)).add(left)
+
+    if r > 0:
+        idx_right = [slice(None)] * arr.ndim
+        idx_right[axis] = slice(l + n, 2 * n)
+        right = xp.flip(arr[tuple(idx_right)], axis=axis)
+        idx_out = [slice(None)] * out.ndim
+        idx_out[axis] = slice(l, n)
+        out = at(out, tuple(idx_out)).add(right)
+
+    return out
+
+
+def convolve2d_recip_reflect_adjoint(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
+    """
+    Apply the adjoint (transpose) of
+    [`convolve2d_recip_reflect`][phaser.utils.image.convolve2d_recip_reflect] with the
+    same (already-conjugated) `transfer`.
+
+    `convolve2d_recip_reflect` is `Crop . IFFT2 . diag(transfer) . FFT2 . Pad`.
+    Therefore, this computes the adjoint `Pad^T . IFFT2 . diag(transfer) . FFT2 . Crop^T`,
+    wher `Crop^T` is zero-embedding and `Pad^T` is folding.
+
+    Parameters:
+        arr: Array to filter. Must be floating point or complex.
+        transfer: Transfer function, of twice the shape of the last two axes of `arr`,
+                  sampled on the doubled grid's fft frequencies.
+
+    Returns: Array of the same shape and dtype as `arr`. If `arr` is real, `transfer`
+             is assumed to be Hermitian and only the real part of the result is kept.
+    """
+    xp = get_array_module(arr, transfer)
+    arr, transfer = xp.asarray(arr), xp.asarray(transfer)
+    (n, m) = _canonicalize_shape(arr, 'convolve2d_recip_reflect_adjoint')
+    _check_transfer(transfer, (2 * n, 2 * m), 'convolve2d_recip_reflect_adjoint')
+
+    (ly, lx) = (n // 2, m // 2)
+    embedded = _zero_embed(arr, (2 * n, 2 * m), (ly, lx), xp)
+    out = xp.fft.ifft2(xp.fft.fft2(embedded) * transfer)
+    out = _fold_symmetric_axis(out, -2, n, xp)
+    out = _fold_symmetric_axis(out, -1, m, xp)
+    return _cast_output(out, arr)
+
+
 def convolve2d_recip_reflect_dct(arr: NDArray[numpy.inexact], transfer: ArrayLike) -> NDArray[numpy.inexact]:
     """
     Convolve the last two axes of `arr` with the transfer function `transfer`
@@ -1250,10 +1322,11 @@ _RECIP_CONVOLVERS: t.Dict[_RecipBoundaryMode, t.Callable[[t.Any, ArrayLike], t.A
     'grid-wrap': convolve2d_recip_wrap,
     'reflect': convolve2d_recip_reflect,
     'reflect_dct': convolve2d_recip_reflect_dct,
+    'reflect_adjoint': convolve2d_recip_reflect_adjoint,
 }
 
 
-@tree_dataclass(frozen=True, static_fields=('mode', 'shape'))
+@tree_dataclass(frozen=True, static_fields=('mode', 'shape', 'symmetric'))
 class PreparedFilter:
     """
     A [`Filter`][phaser.utils.image.Filter] evaluated for a given sampling and boundary
@@ -1263,6 +1336,8 @@ class PreparedFilter:
     transfer: NDArray[numpy.inexact]
     mode: _RecipBoundaryMode
     shape: t.Tuple[int, int]
+    symmetric: bool = False
+    """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
 
     def __call__(self, arr: NDArray[numpy.inexact]) -> NDArray[numpy.inexact]:
         """
@@ -1281,6 +1356,22 @@ class PreparedFilter:
                              f" instead got shape {shape}")
 
         return _RECIP_CONVOLVERS[self.mode](arr, self.transfer)
+
+    def adjoint(self) -> 'PreparedFilter':
+        """
+        Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
+        `<self(x), y> == <x, g(y)>` for all `x`, `y`.
+
+        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter is self-adjoint
+        (`transfer` is already real), so this simply returns `self` in that case.
+        """
+        if self.symmetric:
+            return self
+        if self.mode == 'reflect':
+            return dataclasses.replace(self, transfer=self.transfer.conj(), mode='reflect_adjoint')
+        if self.mode == 'reflect_adjoint':
+            return dataclasses.replace(self, transfer=self.transfer.conj(), mode='reflect')
+        return dataclasses.replace(self, transfer=self.transfer.conj())
 
 
 def prepare_convolve2d_recip(
@@ -1304,11 +1395,12 @@ def prepare_convolve2d_recip(
     # a symmetric filter can be applied under symmetric boundaries by a smaller dct
     if mode == 'reflect' and filt.symmetric:
         return PreparedFilter(
-            filt.transfer_function_dct(samp, xp=xp, dtype=dtype), 'reflect_dct', _sampling_shape(samp)
+            filt.transfer_function_dct(samp, xp=xp, dtype=dtype), 'reflect_dct', _sampling_shape(samp),
+            symmetric=True,
         )
 
     f = filt.transfer_function_sym if mode == 'reflect' else filt.transfer_function
-    return PreparedFilter(f(samp, xp=xp, dtype=dtype), mode, _sampling_shape(samp))
+    return PreparedFilter(f(samp, xp=xp, dtype=dtype), mode, _sampling_shape(samp), symmetric=filt.symmetric)
 
 
 def convolve2d_recip(
@@ -1327,7 +1419,7 @@ def convolve2d_recip(
     return prepare_convolve2d_recip(filt, samp, mode=mode, xp=xp, dtype=to_real_dtype(arr.dtype))(arr)
 
 
-@tree_dataclass(frozen=True, static_fields=('mode',))
+@tree_dataclass(frozen=True, static_fields=('mode', 'symmetric'))
 class PreparedPsf:
     """
     A [`Filter`][phaser.utils.image.Filter]'s point spread function, evaluated for a
@@ -1338,6 +1430,8 @@ class PreparedPsf:
     mode: _InterpBoundaryMode
     cval: t.Union[numpy.number, float] = 0.
     """Fill value, for `mode='constant'` and `mode='grid-constant'`."""
+    symmetric: bool = False
+    """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
 
     def __call__(self, arr: NDArray[NumT]) -> NDArray[NumT]:
         """
@@ -1351,6 +1445,32 @@ class PreparedPsf:
         if isinstance(self.psf, tuple):
             return convolve2d_separable(arr, *self.psf, mode=self.mode, cval=t.cast(float, self.cval))
         return convolve2d(arr, self.psf, mode=self.mode, cval=t.cast(float, self.cval))
+
+    def adjoint(self) -> 'PreparedPsf':
+        """
+        Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
+        `<self(x), y> == <x, g(y)>` for all `x`, `y`.
+
+        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter's PSF is already
+        even about the origin, so this simply returns `self` in that case. Otherwise,
+        for `mode='grid-wrap'` (periodic boundaries), the adjoint of correlation is
+        correlation with the kernel reversed about its center. Other boundary modes
+        pad the array before correlating, and transposing that padding exactly isn't
+        implemented.
+        """
+        if self.symmetric:
+            return self
+        if self.mode != 'grid-wrap':
+            raise NotImplementedError(
+                f"PreparedPsf.adjoint() is not implemented for an asymmetric filter"
+                f" under mode={self.mode!r}"
+            )
+        xp = get_array_module(*(self.psf if isinstance(self.psf, tuple) else (self.psf,)))
+        psf = (
+            tuple(xp.flip(p, axis=-1) for p in self.psf)
+            if isinstance(self.psf, tuple) else xp.flip(self.psf, axis=(-2, -1))
+        )
+        return dataclasses.replace(self, psf=psf)
 
 
 def prepare_convolve2d(
@@ -1377,7 +1497,7 @@ def prepare_convolve2d(
     else:
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         psf = filt.psf(samp, xp=xp, dtype=dtype)
-    return PreparedPsf(psf, mode, cval)
+    return PreparedPsf(psf, mode, cval, symmetric=filt.symmetric)
 
 
 __all__ = [
