@@ -31,18 +31,16 @@ jobs:
         id: version
         # outputs project, version, and tag
         run: python .github/scripts/get_versioninfo.py
+      - name: Extract release notes
+        run: python .github/scripts/extract_changelog.py '${{ steps.version.outputs.version }}' release_notes.md
       - name: Build wheels
         run: python -m build
-     #- name: Upload wheels
-     #   uses: actions/upload-artifact@v3
-     #   with:
-     #     path: dist/*
       - name: Create tag & release
         uses: ncipollo/release-action@v1
         with:
           tag: '${{ steps.version.outputs.tag }}'
           commit: '${{ github.event.head_commit.id }}'
-          body: '${{ steps.version.outputs.project }} version ${{ steps.version.outputs.version }}'
+          bodyFile: 'release_notes.md'
           name: 'Version ${{ steps.version.outputs.version }}'
           artifacts: 'dist/*'
       - name: Deploy to PyPi
