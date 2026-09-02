@@ -1,0 +1,1140 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../plan/">
+      
+      
+        <link rel="next" href="../conventions/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.11">
+    
+    
+      
+        <title>Algorithm details - phaser Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.4af4bdda.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300i,400,400i,700,700i%7CSource+Code+Pro:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Open Sans";--md-code-font:"Source Code Pro"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../style.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="deep-orange">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#algorithm-details" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="phaser Documentation" class="md-header__button md-logo" aria-label="phaser Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            phaser Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Algorithm details
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="deep-orange"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="green" data-md-color-accent="deep-orange"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/hexane360/phaser" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="phaser Documentation" class="md-nav__button md-logo" aria-label="phaser Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    phaser Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/hexane360/phaser" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Using phaser
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            Using phaser
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../starting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Getting started
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reconstruction plan files
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Algorithm details
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Algorithm details
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#theory-of-ptychography" class="md-nav__link">
+    <span class="md-ellipsis">
+      Theory of ptychography
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#noise-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      Noise models
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-description-of-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      Detailed description of engines
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed description of engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gradient-descent" class="md-nav__link">
+    <span class="md-ellipsis">
+      Gradient descent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conventional-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conventional engines
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conventional engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epie" class="md-nav__link">
+    <span class="md-ellipsis">
+      ePIE
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lsqml" class="md-nav__link">
+    <span class="md-ellipsis">
+      LSQML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularizations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Regularizations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#position-solving" class="md-nav__link">
+    <span class="md-ellipsis">
+      Position solving
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      References
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="References">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#theory-of-ptychography_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Theory of ptychography
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epie_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      ePIE
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lsqml_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      LSQML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gradient-descent_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Gradient descent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularizationsnoise-modelssolvers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Regularizations/noise models/solvers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../conventions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Conventions &amp; glossary
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    API
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            API
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    phaser.state
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#theory-of-ptychography" class="md-nav__link">
+    <span class="md-ellipsis">
+      Theory of ptychography
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#noise-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      Noise models
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-description-of-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      Detailed description of engines
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed description of engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gradient-descent" class="md-nav__link">
+    <span class="md-ellipsis">
+      Gradient descent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conventional-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      Conventional engines
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Conventional engines">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epie" class="md-nav__link">
+    <span class="md-ellipsis">
+      ePIE
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lsqml" class="md-nav__link">
+    <span class="md-ellipsis">
+      LSQML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularizations" class="md-nav__link">
+    <span class="md-ellipsis">
+      Regularizations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#position-solving" class="md-nav__link">
+    <span class="md-ellipsis">
+      Position solving
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      References
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="References">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#theory-of-ptychography_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Theory of ptychography
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epie_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      ePIE
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lsqml_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      LSQML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gradient-descent_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Gradient descent
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#regularizationsnoise-modelssolvers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Regularizations/noise models/solvers
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="algorithm-details">Algorithm details</h1>
+<h2 id="theory-of-ptychography">Theory of ptychography</h2>
+<p>Ptychography is an inverse problem where, given a series of diffraction patterns taken under shifted illumination, we attempt to reconstruct the experimental conditions 'most likely' to give us those diffraction patterns.
+These diffraction patterns are most often collected on a pixellated camera, but can also be collected with a segmented detector.</p>
+<p>In general, we have three variables in ptychography:</p>
+<ul>
+<li>The 'probe' <span class="arithmatex">\(P\)</span>, a complex field variable indicating the amplitude and phase of the incident wavefunction. In the case of mixed-state ptychography, we have a set of mutually incoherent probes <span class="arithmatex">\(P_k\)</span>, which we call 'probe modes'.</li>
+<li>The 'object' <span class="arithmatex">\(O\)</span>, which imparts a phase shift and attenuation to the wavefunction. The object can be two dimensional or three dimensional, in which case slices are separated by gaps of thickness <span class="arithmatex">\(\Delta z_i\)</span>. In electron microscopy, the object slices are sometimes referred to as "transmission functions".</li>
+<li>Probe positions <span class="arithmatex">\(X_j\)</span>. For each position, the probe is shifted to that location and a diffraction pattern taken.</li>
+</ul>
+<p>Our forward model is the multislice method, which is capable of modeling interaction with a thick specimen as well as multiple scattering. Given a set of probe modes <span class="arithmatex">\(P_k\)</span>, a 3D object <span class="arithmatex">\(O_i\)</span>, and a probe position <span class="arithmatex">\(P_j\)</span>, we iteratively calculate the wavefunction at each slice given the wavefunction at the slice before:</p>
+<div class="arithmatex">\[\begin{aligned}
+\Psi_{0,k}(\vec{r}) &amp;= P_k(\vec{r} - X_j) \\
+\Psi_{i+1,k}(\vec{r}) &amp;= (\Psi_{i,k}(\vec{r}) \cdot O_i(\vec{r})) * p(\Delta z_i)
+\end{aligned}\]</div>
+<p>In the above, <span class="arithmatex">\(p(\Delta z)\)</span> indicates a Fresnel free-space propagation kernel of distance <span class="arithmatex">\(\Delta z\)</span>, which is convolved with the wavefunction.</p>
+<p>Finally, given the exit wavefunction <span class="arithmatex">\(\Psi_{n,k}\)</span>, we calculate the final intensity in reciprocal space:</p>
+<div class="arithmatex">\[
+I(\vec{k}) = \sum_{k} \left| \mathcal{F}(\Psi_{n, k})(\vec{k}) \right|^2
+\]</div>
+<p>The inverse problem consists of taking measured diffraction patterns <span class="arithmatex">\(I_exp\)</span> and recovering the probe <span class="arithmatex">\(P\)</span> and object <span class="arithmatex">\(O\)</span>.
+In the case of single-slice ptychography (where the object is 2D), and the probe positions <span class="arithmatex">\(P_j\)</span> are perfectly known (and do not fall onto a perfect raster grid), the solution is unambiguous up to a scaling factor of intensity and an affine phase ramp of the object [5].
+In practice, the probe positions <span class="arithmatex">\(P_j\)</span> are not known perfectly, and initial estimates are updated as the algorithm proceeds. This can introduce additional ambiguity, as in the geometrical optics limit, a change in first order aberrations is equivalent to a linear transformation of the probe positions [4].</p>
+<h2 id="noise-models">Noise models</h2>
+<p>Ptychography is an overdetermined nonlinear inverse problem. Because the problem is overdetermined, the vast majority of experimental data has no exact solution; any experimental noise whatsoever will likely perturb the problem into this region. This is overcome by the use of maximum likelihood estimation; rather than attempting to find an exact solution, we attempt to find the probe and object 'most likely' to generate the recorded data under some noise model.</p>
+<p>The choice of noise model in ptychography has been well-covered in the literature [19,12,18]. Given a modeled intensity <span class="arithmatex">\(I(\vec{k})\)</span> and a measured intensity <span class="arithmatex">\(I_{exp}(\vec{k})\)</span>, we desire to maximize the probability <span class="arithmatex">\(P(I | I_{exp})\)</span>, i.e. we would like to find the most likely intensity given the experimental data. This is known as the maximum a posteriori estimate. This probability can be obtained using Bayes' theorem:</p>
+<div class="arithmatex">\[
+P(I | I_{exp}) = \frac{P(I_{exp} | I) P(I)}{P(I_{exp})}
+\]</div>
+<p>However, we usually lack good estimates of the prior probabilities <span class="arithmatex">\(P(I)\)</span>. Using a uniform prior distribution of <span class="arithmatex">\(P(I)\)</span>, maximizing <span class="arithmatex">\(P(I | I_{exp})\)</span> is equivalent to maximizing the likelihood <span class="arithmatex">\(P(I_{exp} | I)\)</span>:</p>
+<div class="arithmatex">\[
+\max_{I} P(I_{exp} | I) = \max_{I} \prod_{\vec{k}} P(I(\vec{k}) | I_{exp}(\vec{k})) \\
+\]</div>
+<p>The Gauss-Markov theorem shows that when noise is independent and of constant variance, least squares is the best unbiased linear estimator. We show the maximum-likelihood solution in the case of Gaussian noise of variance <span class="arithmatex">\(\sigma^2\)</span>:</p>
+<div class="arithmatex">\[\begin{aligned}
+P(I | I_{exp}) &amp;= \prod_{\vec{k}} \frac{1}{\sigma \sqrt{2 \pi}} \exp \frac{-(I(\vec{k}) - I_{exp}(\vec{k}))^2}{2 \sigma^2} \\
+\mathcal{L}(I) = - \log P(I | I_{exp}) &amp;= \sum_{\vec{k}} \frac{1}{2 \sigma^2} \left( I(\vec{k}) - I_{exp}(\vec{k}) \right)^2 + \log \left( \sigma \sqrt{2 \pi} \right)
+\end{aligned}\]</div>
+<p>As is customary, we define the loss function <span class="arithmatex">\(\mathcal{L}(I)\)</span> as the negative log-likelihood. The second term above is a normalization constant and can be ignored.</p>
+<p>In the case of Poisson noise, variance is <strong>not</strong> constant, but scales with mean intensity. The maximum likelihood solution is:</p>
+<div class="arithmatex">\[\begin{aligned}
+P(I | I_{exp}) &amp;= \prod_{\vec{k}} \frac{I(\vec{k})^{I_{exp}(\vec{k})} e^{-I(\vec{k})}}{I_{exp}(\vec{k})!} \\
+\mathcal{L}(I) &amp;= \sum_{\vec{k}} I(\vec{k}) - I_{exp}(\vec{k}) \log I(\vec{k}) + \log\left(I_{exp}(\vec{k})!\right) \\
+\mathcal{L}(I) &amp;\approx \sum_{\vec{k}} \left(I(\vec{k}) - I_{exp}(\vec{k})\right) - I_{exp}(\vec{k}) \left( \log I(\vec{k}) - \log I_{exp}(\vec{k}) \right)
+\end{aligned}\]</div>
+<p>where at the last step we have applied Stirling's approximation. In practice, a small offset <span class="arithmatex">\(\epsilon\)</span> must be added to prevent divergences inside the logarithms.
+This epsilon can be rationalized as a minimum signal recognizable by the detector. Setting this value high (e.g. 0.1 <span class="arithmatex">\(e^-\)</span>) has the effect of ignoring updates from weak-intensity areas.</p>
+<p>When counts are moderate, a variance stabilizing transform can be applied to Poisson distributed data to be approximately Gaussian with a constant variance, allowing the use of a least-squares estimator. This leads to the amplitude and Anscombe noise models. Given a transformation <span class="arithmatex">\(x \mapsto 2 \sqrt{x + c}\)</span>, we can model the transformed variable as Gaussian with variance 1:</p>
+<div class="arithmatex">\[\begin{aligned}
+\mathcal{L}(I) = \sum_{\vec{k}} \frac{1}{2} \left( \sqrt{I(\vec{k}) + c} - \sqrt{I_{exp}(\vec{k}) + c} \right)^2
+\end{aligned}\]</div>
+<p><span class="arithmatex">\(c = 0\)</span> leads to the amplitude noise model, while <span class="arithmatex">\(c = 3/8\)</span> leads to the Anscombe noise model.
+The amplitude and Ascombe noise models have the benefit that additive Gaussian noise can be considered analytically, as discussed by Godard et al. [19].</p>
+<p>For the conventional engines, gradients of the loss functions are taken analytically:</p>
+<div class="arithmatex">\[\begin{aligned}
+\nabla \mathcal{L_{p}}(\Psi) &amp;= \left(1 - \frac{I_{exp}(\vec{k})}{\epsilon + I(\vec{k})} \right) \Psi(\vec{k}) \\
+\nabla \mathcal{L_{a}}(\Psi) &amp;= \left(1 - \frac{\sqrt{I_{exp}(\vec{k}) + c}}{\epsilon + \sqrt{I(\vec{k}) + c}} \right) \Psi(\vec{k})
+\end{aligned}\]</div>
+<p>As noted by Leidl et al [18], these two gradients show significant differences in their spatial extent, with the Poisson gradient providing the largest updates at large scattering angles (where signals are weak).</p>
+<p>Using these gradients, an optimal step size can be calculated [12], and a total wavefunction update can be found as <span class="arithmatex">\(\Delta \Psi(\vec{k}) = - \alpha \nabla \mathcal{L}(\Psi)\)</span>. For instance, for the amplitude/Anscome loss function:</p>
+<div class="arithmatex">\[
+\Delta \Psi(\vec{k}) = \frac{\sqrt{I_{exp}(\vec{k}) + c}}{\epsilon + \sqrt{I(\vec{k}) + c}} \Psi(\vec{k}) - \Psi(\vec{k})
+\]</div>
+<p>In the amplitude noise model, this corresponds to the classic modulus constraint of the ePIE method.</p>
+<h2 id="detailed-description-of-engines">Detailed description of engines</h2>
+<h3 id="gradient-descent">Gradient descent</h3>
+<p>The gradient descent engine employs traditional machine learning algorithms to fit the system to the experimental data, minimizing the loss function <span class="arithmatex">\(\mathcal{L}\)</span>.
+Autodifferentiation is used to obtain the gradients <span class="arithmatex">\(\nabla \mathcal{L}\)</span>.
+Since the loss function <span class="arithmatex">\(\mathcal{L}\)</span> is a non-constant real function, it is not holomorphic. However, Wirtinger derivatives can be used [13] to overcome this challenge. For real functions, the two Wirtinger derivatives are equivalent:</p>
+<div class="arithmatex">\[
+\overline{\frac{\partial f}{\partial z}} = \frac{\partial f}{\partial \tilde{z}}
+\]</div>
+<p>And the gradient <span class="arithmatex">\(\mathbb{R} \to \mathbb{C}\)</span> can be taken as:</p>
+<div class="arithmatex">\[
+\nabla \mathcal{L} = \overline{\frac{\partial \mathcal{L}}{\partial z}}
+\]</div>
+<p>With the gradient descent engine, solvers can be specified per reconstruction variable in a dictionary.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'gradient'</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">solvers</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">object</span><span class="p">:</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'sgd'</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nt">learning_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e+0</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span><span class="nt">momentum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">probe</span><span class="p">:</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'adam'</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span><span class="nt">learning_rate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e+1</span>
+</span></code></pre></div>
+<p>In the above example, the object is updated using stochastic gradient descent (SGD) with Nesterov momentum [20], while the probe is updated using adaptive moment estimation (Adam) [21].
+Both of these solvers are commonly used in machine learning.
+Another solver option is SGD with a step size given by a Polyak-Ribere conjugate gradient algorithm [22].</p>
+<p>Regularizations can be specified in two main forms: Costs which are added to the loss function <span class="arithmatex">\(\mathcal{L}\)</span> per group, and as constraints which are applied per-group or per-iteration.
+Costs are specified in units of electrons—equivalent to one electron on the wrong place of the detector.</p>
+<p>Below are some example regularizations:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">regularizations</span><span class="p">:</span><span class="w">  </span><span class="c1"># cost regularizations, applied per group</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">obj_l1</span><span class="w">  </span><span class="c1"># L1 regularization of object</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">cost</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">15.0</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="nt">group_constraints</span><span class="p">:</span><span class="w">  </span><span class="c1"># constraints, applied per group</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">clamp_object_amplitude</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">amplitude</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.1</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="nt">iter_constraints</span><span class="p">:</span><span class="w">  </span><span class="c1"># constraints, applied per iteration</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">layers</span><span class="w">  </span><span class="c1"># low-pass filter object in Z direction</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">sigma</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50.0</span>
+</span></code></pre></div>
+<h3 id="conventional-engines">Conventional engines</h3>
+<p>Along with the gradient descent engine, phaser implements two conventional ptychography algorithms, ePIE and LSQML. The key difference between the gradient descent engine and the conventional engines is that, in the context of multislice ptychography, the conventional engines form an estimate of the optimized wavefront <span class="arithmatex">\(\Psi\)</span> at the detector and on each layer. This optimized <span class="arithmatex">\(\Psi\)</span> is used while calculating the gradient of the previous step. In contrast, in the gradient descent engine, the gradients are all taken simultaneously, and a step is taken in the direciton of the gradient. </p>
+<h4 id="epie">ePIE</h4>
+<p>In the ePIE algorithm, we first use the noise model to compute a wavefront update <span class="arithmatex">\(\chi(\vec{k})\)</span> on the detector, and backwards propagate it to the exit plane of the sample. Then, at each slice, we split the wavefront update to the object slice and to the previous wavefront/probe:</p>
+<div class="arithmatex">\[\begin{aligned}
+\chi_{n}(\vec{r}) &amp;= \mathcal{F}^{-1}(\chi(\vec{k})) \\
+\chi_{i-1} &amp;= \frac{O_i^*(\vec{r})}{\max_{\vec{r}} \left| O_i(\vec{r}) \right|^2} \chi_i(\vec{r}) \\
+\Delta O_i &amp;= \frac{P_i^*(\vec{r})}{\max_{\vec{r}} \left| \Psi_i(\vec{r}) \right|^2} \chi_i(\vec{r}) \\
+\end{aligned}\]</div>
+<p>Finally, we calculate the updates to the probe and object. Probe updates are averaged across the group/batch of positions, while object updates are summed across the group:</p>
+<div class="arithmatex">\[\begin{aligned}
+P(\vec{r}) &amp;\mathrel{+}= \beta_{probe} \frac{\sum_{k} \chi_{0,k}(\vec{r})}{N_k} \\
+O_i(\vec{r}) &amp;\mathrel{+}= \beta_{object} \sum_{k} \Delta O_{i,k}(\vec{r})
+\end{aligned}\]</div>
+<p>This multislice generalization of ePIE (sometimes called 3PIE) was introduced by Maiden et al [8] and is further discussed by Tsai et al [11].
+We recognize <span class="arithmatex">\(O^*(\vec{r})\)</span> as the Wirtinger derivative <span class="arithmatex">\(\frac{\partial}{\partial \tilde{z}}\)</span> of <span class="arithmatex">\(P O\)</span> with respect to <span class="arithmatex">\(P\)</span>, showing that single-slice ePIE can be considered a gradient descent method.
+For multislice, 3PIE diverges from pure gradient descent in that an update step is taken each slice, prior to the backpropagation of gradients to the previous slice.</p>
+<p>In <code>phaser</code>, the ePIE solver can be specified as follows:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># inside engine</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'conventional'</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">noise_model</span><span class="p">:</span><span class="w"> </span><span class="s">'amplitude'</span><span class="w">  </span><span class="c1"># for instance</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="nt">solver</span><span class="p">:</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">epie</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="c1"># parameters, as described above</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">beta_object</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">beta_probe</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+</span></code></pre></div>
+<h4 id="lsqml">LSQML</h4>
+<p>The LSQML method is implemented as described in Odstrčil et al. [12]. In <code>phaser</code>, the LSQML solver can be specified as follows:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># inside engine</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'conventional'</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">noise_model</span><span class="p">:</span><span class="w"> </span><span class="s">'amplitude'</span><span class="w">  </span><span class="c1"># for instance</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="nt">solver</span><span class="p">:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lsqml</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="c1"># scaling of probe and object updates</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">beta_object</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="nt">beta_probe</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">  </span><span class="c1"># gamma in [12]. eq. 23</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="nt">gamma</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e-4</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span><span class="c1"># delta_P and delta_O in [12] eq. 25</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">  </span><span class="nt">illum_reg_object</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e-2</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">  </span><span class="nt">illum_reg_probe</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e-2</span>
+</span></code></pre></div>
+<h4 id="regularizations">Regularizations</h4>
+<p>For the conventional engines, constraint-based regularizations are supported (<code>group_constraints</code> and <code>iter_constraints</code>) but not cost-based regularizations. </p>
+<h4 id="position-solving">Position solving</h4>
+<p>For the conventional engines, position solving is performed using the gradient of the loss with respect to a shift in probe position, scaled by the update step size. Two position solvers are supported, a steepest descent solver and a momentum-accelerated solver:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'conventional'</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">solver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nt">position_solver</span><span class="p">:</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="s">'momentum'</span><span class="w">  </span><span class="c1"># or 'steepest_descent'</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="c1"># can specify a maximum step size, in realspace units</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">max_step_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="c1"># fraction of optimal step size to take</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="nt">step_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0e-2</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="c1"># momentum decay rate</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="nt">momentum</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
+</span></code></pre></div>
+<h2 id="references">References</h2>
+<p>The following is an incomplete bibliograpy of relevant papers.</p>
+<h3 id="theory-of-ptychography_1">Theory of ptychography</h3>
+<p>[1] Lin, J. A. &amp; Cowley, J. M. Reconstruction from in-line electron holograms by digital processing. Ultramicroscopy 19, 179–190 (1986).</p>
+<p>[2] Rodenburg, J. M. The phase problem, microdiffraction and wavelength-limited resolution — a discussion. Ultramicroscopy 27, 413–422 (1989).</p>
+<p>[3] Rodenburg, J. M. Ptychography and Related Diffractive Imaging Methods. in Advances in Imaging and Electron Physics (ed. Hawkes) vol. 150 87–184 (Elsevier, 2008).</p>
+<p>[4] Cao, S. Large Field of View Electron Ptychography. (University of Sheffield, 2017).</p>
+<p>[5] Fannjiang, A. Raster Grid Pathology and the Cure. Multiscale Model. Simul. 17, 973–995 (2019).</p>
+<h3 id="epie_1">ePIE</h3>
+<p>[6] Maiden, A. M. &amp; Rodenburg, J. M. An improved ptychographical phase retrieval algorithm for diffractive imaging. Ultramicroscopy 109, 1256–1262 (2009).</p>
+<p>[7] Thibault, P., Dierolf, M., Bunk, O., Menzel, A. &amp; Pfeiffer, F. Probe retrieval in ptychographic coherent diffractive imaging. Ultramicroscopy 109, 338–343 (2009).</p>
+<p>[8] Maiden, A. M., Humphry, M. J. &amp; Rodenburg, J. M. Ptychographic transmission microscopy in three dimensions using a multi-slice approach. Journal of the Optical Society of America A 29, 1606 (2012).</p>
+<h3 id="lsqml_1">LSQML</h3>
+<p>[9] Thibault, P. &amp; Guizar-Sicairos, M. Maximum-likelihood refinement for coherent diffractive imaging. New J. Phys. 14, 063004 (2012).</p>
+<p>[10] Thibault, P. &amp; Menzel, A. Reconstructing state mixtures from diffraction measurements. Nature 494, 68–71 (2013).</p>
+<p>[11] Tsai, E. H. R., Usov, I., Diaz, A., Menzel, A. &amp; Guizar-Sicairos, M. X-ray ptychography with extended depth of field. Opt. Express, OE 24, 29089–29108 (2016).</p>
+<p>[12] Odstrčil, M., Menzel, A. &amp; Guizar-Sicairos, M. Iterative least-squares solver for generalized maximum-likelihood ptychography. Optics Express 26, 3108 (2018).</p>
+<h3 id="gradient-descent_1">Gradient descent</h3>
+<p>[13] Candès, E. J., Li, X. &amp; Soltanolkotabi, M. Phase Retrieval via Wirtinger Flow: Theory and Algorithms. IEEE Transactions on Information Theory 61, 1985–2007 (2015).</p>
+<p>[14] Ghosh, S., Nashed, Y. S. G., Cossairt, O. &amp; Katsaggelos, A. ADP: Automatic differentiation ptychography. in 2018 IEEE International Conference on Computational Photography (ICCP) 1–10 (2018). <a href="https://doi.org/10.1109/ICCPHOT.2018.8368470">https://doi.org/10.1109/ICCPHOT.2018.8368470</a>.</p>
+<p>[15] Xu, R. et al. Accelerated Wirtinger Flow: A fast algorithm for ptychography. Preprint at <a href="https://doi.org/10.48550/arXiv.1806.05546">https://doi.org/10.48550/arXiv.1806.05546</a> (2018).</p>
+<p>[16] Kandel, S. et al. Using automatic differentiation as a general framework for ptychographic reconstruction. Opt. Express, OE 27, 18653–18672 (2019).</p>
+<p>[17] Schloz, M. et al. Overcoming information reduced data and experimentally uncertain parameters in ptychography with regularized optimization. Opt. Express, OE 28, 28306–28323 (2020).</p>
+<p>[18] Leidl, M. L., Diederichs, B., Sachse, C. &amp; Müller-Caspary, K. Influence of loss function and electron dose on ptychography of 2D materials using the Wirtinger flow. Micron 185, 103688 (2024).</p>
+<h3 id="regularizationsnoise-modelssolvers">Regularizations/noise models/solvers</h3>
+<p>[19] Godard, P., Allain, M., Chamard, V. &amp; Rodenburg, J. Noise models for low counting rate coherent diffraction imaging. Opt. Express, OE 20, 25914–25934 (2012).</p>
+<p>[20] Sutskever, I., Martens, J., Dahl, G. &amp; Hinton, G. On the importance of initialization and momentum in deep learning. in Proceedings of the 30th International Conference on Machine Learning 1139–1147 (PMLR, 2013).</p>
+<p>[21] Kingma, D. P. &amp; Ba, J. Adam: A Method for Stochastic Optimization. Preprint at <a href="https://doi.org/10.48550/arXiv.1412.6980">https://doi.org/10.48550/arXiv.1412.6980</a> (2017).</p>
+<p>[22] Loizou, N., Vaswani, S., Laradji, I. &amp; Lacoste-Julien, S. Stochastic Polyak Step-size for SGD: An Adaptive Learning Rate for Fast Convergence. Preprint at <a href="https://doi.org/10.48550/arXiv.2002.10542">https://doi.org/10.48550/arXiv.2002.10542</a> (2021).</p>
+<p>[23] Tanksalvala, M. et al. Nondestructive, high-resolution, chemically specific 3D nanostructure characterization using phase-sensitive EUV imaging reflectometry. Science Advances 7, eabd9667 (2021).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c8b220af.min.js"></script>
+      
+        <script src="../../javascript/mathjax.js"></script>
+      
+        <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@4.0.0-beta.7/tex-mml-chtml.min.js"></script>
+      
+    
+  </body>
+</html>
