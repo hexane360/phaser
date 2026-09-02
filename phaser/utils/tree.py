@@ -160,37 +160,53 @@ def grad(
     has_aux: bool = False, *, xp: t.Optional[t.Any] = None,
     sign: float = 1.0,
 ) -> t.Callable[..., Tree]:
-    from phaser.utils.num import xp_is_torch, xp_is_jax
+    from phaser.utils.num import xp_is_jax, xp_is_torch
 
     if xp is None or xp_is_jax(xp):
         import jax  # type: ignore
-        f = jax.grad(f, argnums, has_aux=has_aux)
-        # conjugate to get Wirtinger derivative (not required on torch)
-        conj = True
-    elif xp_is_torch(xp):
-        import torch.func  # type: ignore
-        f = torch.func.grad(f, argnums, has_aux=has_aux)
-        # torch conjugates automatically
-        conj = False
-    else:
+        jax_f = jax.grad(f, argnums, has_aux=has_aux)
+
+        @functools.wraps(jax_f)
+        def jax_wrapper(*args: t.Any, **kwargs: t.Any) -> Tree:
+            (grad, aux) = jax_f(*args, **kwargs) if has_aux else (jax_f(*args, **kwargs), None)
+            # conjugate to get Wirtinger derivative (not required on torch)
+            grad = map(lambda arr: arr.conj() * sign, grad, is_leaf=lambda x: x is None)
+            return (grad, aux) if has_aux else grad
+
+        return jax_wrapper
+
+    if not xp_is_torch(xp):
         raise ValueError("`grad` is only supported for backends 'jax' and 'torch'")
 
+    import torch.func  # type: ignore
+    from torch.utils._pytree import tree_flatten, tree_unflatten  # type: ignore
+
+    # hack to hide non-tensor aux types from torch.func
+    box: t.List[t.Tuple[t.Any, t.List[bool], t.List[t.Any]]] = []
+
     @functools.wraps(f)
-    def wrapper(*args: t.Any, **kwargs: t.Any) -> Tree:
-        if has_aux:
-            (grad, aux) = f(*args, **kwargs)
-        else:
-            aux = None
-            grad = f(*args, **kwargs)
+    def tensor_only_aux(*args: t.Any, **kwargs: t.Any) -> t.Tuple[t.Any, t.List[t.Any]]:
+        (out, aux) = f(*args, **kwargs)
+        (leaves, spec) = tree_flatten(aux)
+        mask = [isinstance(leaf, torch.Tensor) for leaf in leaves]
+        box.append((spec, mask, [leaf for (leaf, m) in zip(leaves, mask) if not m]))
+        return (out, [leaf for (leaf, m) in zip(leaves, mask) if m])
 
-        if conj:
-            grad = map(lambda arr: arr.conj() * sign, grad, is_leaf=lambda x: x is None)
-        else:
-            grad = map(lambda arr: arr * sign, grad, is_leaf=lambda x: x is None)
+    torch_f = torch.func.grad(tensor_only_aux if has_aux else f, argnums, has_aux=has_aux)
 
-        return (grad, aux) if has_aux else grad
+    @functools.wraps(torch_f)
+    def torch_wrapper(*args: t.Any, **kwargs: t.Any) -> Tree:
+        # torch conjugates automatically
+        if not has_aux:
+            return map(lambda arr: arr * sign, torch_f(*args, **kwargs), is_leaf=lambda x: x is None)
 
-    return wrapper
+        (grad, aux_leaves) = torch_f(*args, **kwargs)
+        (spec, mask, others) = box.pop()
+        (tensors, rest) = (iter(aux_leaves), iter(others))
+        aux = tree_unflatten([next(tensors) if m else next(rest) for m in mask], spec)
+        return (map(lambda arr: arr * sign, grad, is_leaf=lambda x: x is None), aux)
+
+    return torch_wrapper
 
 
 def value_and_grad(
@@ -199,7 +215,7 @@ def value_and_grad(
     has_aux: bool = False, *, xp: t.Optional[t.Any] = None,
     sign: float = 1.0,
 ) -> t.Callable[..., t.Tuple[Tree, Tree]]:
-    from phaser.utils.num import xp_is_torch, xp_is_jax
+    from phaser.utils.num import xp_is_jax, xp_is_torch
 
     if xp is None or xp_is_jax(xp):
         import jax  # type: ignore
@@ -319,7 +335,7 @@ def update_moment(updates: Tree, moments: Tree, decay: float, order: int) -> Tre
 
 
 def update_moment_per_elem_norm(updates: Tree, moments: Tree, decay: float, order: int) -> Tree:
-    from phaser.utils.num import get_array_module, abs2
+    from phaser.utils.num import abs2, get_array_module
     xp = get_array_module(updates, moments)
 
     def orderth_norm(g):
@@ -423,13 +439,13 @@ def _register_dataclass(cls: type, static_fields: t.Sequence[str], drop_fields: 
         return trees, hashed
 
     def _register_jax():
-        from jax.tree_util import register_pytree_with_keys, GetAttrKey
+        from jax.tree_util import GetAttrKey, register_pytree_with_keys
 
         flatten_with_keys = make_flatten_with_keys(GetAttrKey)
         register_pytree_with_keys(cls, flatten_with_keys, unflatten, flatten)
 
     def _register_torch():
-        from torch.utils._pytree import register_pytree_node, GetAttrKey
+        from torch.utils._pytree import GetAttrKey, register_pytree_node
 
         flatten_with_keys = make_flatten_with_keys(GetAttrKey)
         register_pytree_node(

@@ -138,8 +138,8 @@ ignore = [
     "UP006", "UP007", "UP045",
     # allow root logger
     "LOG015",
-    # allow dict(key=val)
-    "C408",
+    # allow dict(key=val), list(iterable)
+    "C408", "C400",
     # allow unused noqa
     "RUF100",
 ]
