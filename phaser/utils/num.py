@@ -277,7 +277,7 @@ def get_array_module(*arrs: t.Optional[ArrayLike]):
     if (xp := _BACKEND_LOADER.get('torch')) is not None:
         from torch.utils._pytree import tree_leaves
         if any(
-            isinstance(arr, (xp._MockTensor, xp._C.TensorBase))  # type: ignore
+            isinstance(arr, xp._C.TensorBase)  # type: ignore
             for arr in chain.from_iterable(map(tree_leaves, arrs))
         ):
             return xp
@@ -301,7 +301,7 @@ def get_scipy_module(*arrs: t.Optional[ArrayLike]):
             if any(isinstance(arr, xp.ndarray) for arr in arrs):
                 return sys.modules['jax.scipy']
         if (xp := _BACKEND_LOADER.get('torch')) is not None:
-            if any(isinstance(arr, (xp._MockTensor, xp._C.TensorBase)) for arr in arrs):  # type: ignore
+            if any(isinstance(arr, xp._C.TensorBase) for arr in arrs):  # type: ignore
                 raise ValueError("`get_scipy_module` is not supported for the PyTorch backend")
         if (xp := _BACKEND_LOADER.get('cupy')) is not None:
             f = sys.modules['cupyx.scipy'].get_array_module
@@ -379,8 +379,8 @@ def is_torch(arr: t.Any) -> bool:
         return False
 
     return any(
-        isinstance(arr, (torch._MockTensor, torch._C.TensorBase))
-        for arr in torch.utils._pytree.tree_leaves(arr)  
+        isinstance(arr, torch._C.TensorBase)
+        for arr in torch.utils._pytree.tree_leaves(arr)
     )
 
 

@@ -15,7 +15,7 @@ from phaser.utils.num import _PadMode
 
 def get_cutouts(obj: torch.Tensor, start_idxs: torch.Tensor, cutout_shape: t.Tuple[int, int]) -> torch.Tensor:
     #out_shape = (*start_idxs.shape[:-1], *obj.shape[:-2], *cutout_shape)
-    ys, xs = torch.arange(cutout_shape[0]), torch.arange(cutout_shape[1])
+    ys, xs = torch.arange(cutout_shape[0], device=obj.device), torch.arange(cutout_shape[1], device=obj.device)
     yy, xx = torch.meshgrid(ys, xs, indexing='ij')
     yy = start_idxs[..., 0][..., None, None] + yy
     xx = start_idxs[..., 1][..., None, None] + xx
@@ -26,21 +26,6 @@ def get_cutouts(obj: torch.Tensor, start_idxs: torch.Tensor, cutout_shape: t.Tup
         out = torch.permute(out, (*(i + obj.ndim - 2 for i in range(start_idxs.ndim - 1)), *range(obj.ndim - 2), -2, -1))
         #assert out.shape == out_shape
     return out
-
-
-class _MockTensor(torch.Tensor):
-    #@property
-    #def dtype(self) -> t.Type[numpy.generic]:
-    #    return to_numpy_dtype(super().dtype)
-
-    @property
-    def T(self) -> '_MockTensor': # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.ndim <= 2:
-            return _MockTensor(super().T)
-        return t.cast(_MockTensor, self.permute(*range(self.ndim - 1, -1, -1)))
-
-    def astype(self, dtype: t.Union[str, torch.dtype, t.Type[numpy.generic]]) -> '_MockTensor':
-        return t.cast(_MockTensor, self.to(to_torch_dtype(dtype)))
 
 
 _TORCH_TO_NUMPY_DTYPE: t.Dict[torch.dtype, t.Type[numpy.generic]] = {
@@ -94,6 +79,26 @@ def to_numpy_dtype(dtype: t.Union[str, torch.dtype, numpy.dtype, t.Type[numpy.ge
     if isinstance(dtype, torch.dtype):
         return _TORCH_TO_NUMPY_DTYPE[dtype]
     return dtype
+
+
+def _tensor_astype(self: torch.Tensor, dtype: t.Union[str, torch.dtype, t.Type[numpy.generic]]) -> torch.Tensor:
+    return self.to(to_torch_dtype(dtype))
+
+
+def _tensor_T(self: torch.Tensor) -> torch.Tensor:
+    # torch's native `.T` is 2D-only and deprecated for other ranks - though it still
+    # computes the same full-axis-reversal permutation today, just with a UserWarning
+    # (which itself suggests this exact replacement). Doing it explicitly gives numpy's
+    # `.T` semantics without the warning, and without depending on deprecated behavior.
+    return self.permute(tuple(range(self.ndim - 1, -1, -1)))
+
+
+# Patch numpy-style `.astype`/`.T` directly onto `torch.Tensor` (rather than wrapping
+# results in a subclass, as a previous `_MockTensor` design did) so generic
+# backend-agnostic code can call them uniformly, without ever introducing a tensor
+# subclass for `torch.compile`'s Dynamo tracer (or FakeTensor) to trip over.
+torch.Tensor.astype = _tensor_astype  # pyright: ignore[reportAttributeAccessIssue]
+torch.Tensor.T = property(_tensor_T)  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _mirror(idx: torch.Tensor, size: int) -> torch.Tensor:
@@ -165,9 +170,9 @@ def minimum(
     x1: ArrayLike, x2: ArrayLike
 ) -> torch.Tensor:
     if not isinstance(x1, torch.Tensor):
-        x1 = _MockTensor(torch.asarray(x1))
+        x1 = torch.asarray(x1)
     if not isinstance(x2, torch.Tensor):
-        x2 = _MockTensor(torch.asarray(x2))
+        x2 = torch.asarray(x2)
 
     return torch.minimum(x1, x2)
 
@@ -176,9 +181,9 @@ def maximum(
     x1: ArrayLike, x2: ArrayLike
 ) -> torch.Tensor:
     if not isinstance(x1, torch.Tensor):
-        x1 = _MockTensor(torch.asarray(x1))
+        x1 = torch.asarray(x1)
     if not isinstance(x2, torch.Tensor):
-        x2 = _MockTensor(torch.asarray(x2))
+        x2 = torch.asarray(x2)
 
     return torch.maximum(x1, x2)
 
@@ -264,10 +269,10 @@ def pad(
         cval_arr = cval.numpy(force=True) if isinstance(cval, torch.Tensor) else numpy.asarray(cval)
         if numpy.iscomplexobj(cval_arr) and torch.is_complex(arr):
             cval = complex(cval_arr)
-            return _MockTensor(torch.complex(
+            return torch.complex(
                 pad(arr.real, pad_width, mode=mode, cval=cval.real),
                 pad(arr.imag, pad_width, mode=mode, cval=cval.imag),
-            ))
+            )
         cval = complex(cval_arr).real
 
     widths = (pad_width, pad_width) if isinstance(pad_width, int) else pad_width
@@ -290,7 +295,7 @@ def pad(
     ):
         widths = tuple(itertools.chain.from_iterable(t.cast(t.Sequence[t.Tuple[int, int]], reversed(widths))))
         kwargs = {'value': float(t.cast(float | numpy.number, cval))} if mode == 'constant' else {}
-        return _MockTensor(F.pad(arr.reshape(1, *arr.shape), widths, mode=_PAD_MODE_MAP[mode], **kwargs)[0])
+        return F.pad(arr.reshape(1, *arr.shape), widths, mode=_PAD_MODE_MAP[mode], **kwargs)[0]
 
     # slow path
     for dim, (p, size) in enumerate(zip(widths, arr.shape)):
@@ -303,7 +308,7 @@ def pad(
         idxs = torch.cat([left_idx, idxs, right_idx]).to(arr.device)
         arr = arr.index_select(dim, idxs)
 
-    return _MockTensor(arr)
+    return arr
 
 
 def unwrap(arr: torch.Tensor, discont: t.Optional[float] = None, axis: int = -1, *,
@@ -331,7 +336,7 @@ def unwrap(arr: torch.Tensor, discont: t.Optional[float] = None, axis: int = -1,
 
     prepend_shape = list(arr.shape)
     prepend_shape[axis] = 1
-    return arr + torch.cat([torch.zeros(prepend_shape, dtype=dtype), torch.cumsum(phase_correct, axis)], dim=axis)
+    return arr + torch.cat([torch.zeros(prepend_shape, dtype=dtype, device=arr.device), torch.cumsum(phase_correct, axis)], dim=axis)
 
 
 def indices(
@@ -346,12 +351,12 @@ def indices(
 
     if sparse:
         return tuple(
-            _MockTensor(torch.arange(s, dtype=dtype, device=device).reshape((1,) * i + (s,) + (1,) * (n - i - 1)))
+            torch.arange(s, dtype=dtype, device=device).reshape((1,) * i + (s,) + (1,) * (n - i - 1))
             for (i, s) in enumerate(shape)
         )
 
     arrs = tuple(torch.arange(s, dtype=dtype, device=device) for s in shape)
-    return _MockTensor(torch.stack(torch.meshgrid(*arrs, indexing='ij'), dim=0))
+    return torch.stack(torch.meshgrid(*arrs, indexing='ij'), dim=0)
 
 
 def size(arr: torch.Tensor, axis: t.Optional[int]) -> int:
@@ -361,16 +366,30 @@ def size(arr: torch.Tensor, axis: t.Optional[int]) -> int:
 def asarray(
     arr: t.Any, dtype: t.Union[str, torch.dtype, numpy.dtype, t.Type[numpy.generic], None] = None, *,
     copy: t.Optional[bool] = None,
-) -> _MockTensor:
+) -> torch.Tensor:
     dtype = to_torch_dtype(dtype) if dtype is not None else None
     requires_grad = arr.requires_grad if isinstance(arr, torch.Tensor) else False
 
-    if isinstance(arr, numpy.ndarray) and arr.flags['WRITEABLE'] and not copy:
-        device = torch.get_default_device()
-        if device.type == 'cuda':
-            return _MockTensor(torch.from_numpy(arr).to(device=device, dtype=dtype, non_blocking=True))
+    if isinstance(arr, torch.Tensor):
+        return torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy)
 
-    return _MockTensor(torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy))
+    # Neither a numpy buffer nor a bare Python sequence/scalar has an existing
+    # device to preserve, so target the default device explicitly - regardless of
+    # `copy`, which only decides *how* (see below), not *whether*. Plain
+    # `torch.asarray(...)` on a numpy buffer would otherwise always land on CPU,
+    # since it just wraps the existing (CPU) buffer.
+    device = torch.get_default_device()
+    if device.type == 'cpu':
+        return torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy)
+
+    if isinstance(arr, numpy.ndarray) and arr.flags['WRITEABLE'] and not copy:
+        # `non_blocking` async transfers are only a proven-safe optimization on
+        # CUDA; MPS has been observed to hand back a still-uninitialized buffer
+        # (garbage values) when the source numpy array's lifetime isn't
+        # externally pinned, so transfer synchronously there instead.
+        return torch.from_numpy(arr).to(device=device, dtype=dtype, non_blocking=(device.type == 'cuda'))
+
+    return torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy, device=device)
 
 
 def affine_transform(
@@ -401,9 +420,9 @@ def affine_transform(
 
     cval = torch.asarray(cval, dtype=input.dtype)
 
-    return _MockTensor(torch.vmap(
+    return torch.vmap(
         lambda a: map_coordinates(a, coords, order=order, mode=mode, cval=cval)
-    )(input.reshape(-1, *input.shape[-n_axes:])).reshape((*input.shape[:-n_axes], *output_shape)))
+    )(input.reshape(-1, *input.shape[-n_axes:])).reshape((*input.shape[:-n_axes], *output_shape))
 
 
 def map_coordinates(
@@ -443,7 +462,7 @@ def map_coordinates(
             ))
         else:
             idx = torch.round(ax_coords).type(torch.int32)
-            ax_nodes.append(((remap_fn(idx, size), torch.ones((), dtype=weight_dtype)),))
+            ax_nodes.append(((remap_fn(idx, size), torch.ones((), dtype=weight_dtype, device=arr.device)),))
 
     outputs = []
     for corner in itertools.product(*ax_nodes):
@@ -451,7 +470,7 @@ def map_coordinates(
         outputs.append(arr[idxs] * functools.reduce(operator.mul, weights))
 
     result = functools.reduce(operator.add, outputs)
-    return _MockTensor(result.type(arr.dtype))
+    return result.type(arr.dtype)
 
 
 def _map_coordinates_constant(
@@ -478,7 +497,7 @@ def _map_coordinates_constant(
             ))
         else:
             idx = torch.round(ax_coords).type(torch.int32)
-            ax_nodes.append(((clip(idx, size), is_valid(idx, size), torch.ones((), dtype=weight_dtype)),))
+            ax_nodes.append(((clip(idx, size), is_valid(idx, size), torch.ones((), dtype=weight_dtype, device=arr.device)),))
 
     outputs = []
     for corner in itertools.product(*ax_nodes):
@@ -639,18 +658,15 @@ def _wrap_call(f, *args: t.Any, **kwargs: t.Any) -> t.Any:
         if not args[0].flags['W']:
             raise ValueError()
 
-    result = f(*args, **kwargs)
     # TODO: deal with tuples of output, pytrees, etc. here
     # this will result in some nasty bugs
-    if isinstance(result, torch.Tensor):
-        return _MockTensor(result)
-    return result
+    return f(*args, **kwargs)
 
 
 mock_torch = _MockModule(torch, {
-    'torch.array': functools.update_wrapper(lambda *args, **kwargs: _MockTensor(_wrap_call(torch.asarray, *args, **kwargs)), torch.asarray),  # type: ignore
+    'torch.array': functools.update_wrapper(lambda *args, **kwargs: _wrap_call(torch.asarray, *args, **kwargs), torch.asarray),  # type: ignore
     'torch.asarray': asarray,
-    'torch.mod': functools.update_wrapper(lambda *args, **kwargs: _MockTensor(_wrap_call(torch.remainder, *args, **kwargs)), torch.remainder),  # type: ignore
+    'torch.mod': functools.update_wrapper(lambda *args, **kwargs: _wrap_call(torch.remainder, *args, **kwargs), torch.remainder),  # type: ignore
     'torch.split': split,
     'torch.pad': pad,
     'torch.nan_to_num': nan_to_num,
@@ -665,5 +681,3 @@ mock_torch = _MockModule(torch, {
     'torch.iscomplexobj': lambda arr: torch.is_complex(arr),
     'torch.isrealobj': lambda arr: not torch.is_complex(arr),
 }, _wrap_call)
-
-mock_torch._MockTensor = _MockTensor  # type: ignore

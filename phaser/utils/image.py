@@ -299,11 +299,13 @@ def convolve1d(
     axis = _canonicalize_axis(axis, arr.ndim)
 
     if xp_is_torch(xp):
-        from ._torch_kernels import _MockTensor, convolve1d
+        import torch
+
+        from ._torch_kernels import convolve1d
 
         return t.cast(NDArray[NumT], convolve1d(
-            t.cast(_MockTensor, arr),
-            t.cast(_MockTensor, weights),
+            t.cast(torch.Tensor, arr),
+            t.cast(torch.Tensor, weights),
             axis=axis, mode=mode, cval=cval
         ))
 

@@ -571,7 +571,11 @@ def run_model(
             group, sim, solver_states.regularizer_states[reg_i]
         )
         losses[reg.name()] = reg_loss
-        loss += reg_loss
+        # NOT `loss += reg_loss`: on torch, `+=` on a tensor is an in-place `add_`,
+        # which would also mutate `losses['detector_loss']` (line above) since it's
+        # the same tensor object, silently turning the per-term breakdown into a
+        # running total instead of the detector-only loss.
+        loss = loss + reg_loss
 
     losses['total_loss'] = loss
 
