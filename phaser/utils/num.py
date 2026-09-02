@@ -867,7 +867,7 @@ def check_finite(*arrs: NDArray[numpy.inexact], context: t.Optional[str] = None)
         raise ValueError("NaN or inf encountered")
 
 
-@tree_dataclass(frozen=True, init=False, drop_fields=('extent',))
+@tree_dataclass(frozen=True, init=False, static_fields=('shape',), drop_fields=('extent', 'shape_tup'))
 class Sampling:
     shape: NDArray[numpy.int_]
     """Sampling shape (n_y, n_x)"""
@@ -875,6 +875,8 @@ class Sampling:
     """Sampling diameter (b, a)"""
     sampling: NDArray[numpy.float64]
     """Sample spacing (s_y, s_x)"""
+    shape_tup: t.Tuple[int, int]
+    """Sampling shape (n_y, n_x), as plain ints"""
 
     def __eq__(self, other: t.Any) -> bool:
         if type(self) is not type(other):
@@ -919,6 +921,11 @@ class Sampling:
         except ValueError as e:
             raise ValueError(f"Expected a shape (n_y, n_x), instead got: {shape}") from e
 
+        # Dynamo proxies any numpy array it touches while tracing, so reading
+        # `self.shape[i]` as a size int inside a compiled region taints it as
+        # data-dependent. Construction always happens outside one.
+        object.__setattr__(self, 'shape_tup', (int(self.shape[0]), int(self.shape[1])))
+
         if extent is not None:
             try:
                 object.__setattr__(self, 'extent', numpy.broadcast_to(
@@ -958,8 +965,8 @@ class Sampling:
             dtype = numpy.common_type(self.extent, self.sampling)
 
         corner = self.corner
-        ys = xp2.linspace(corner[0], corner[0] + self.extent[0], self.shape[0], endpoint=False, dtype=dtype)
-        xs = xp2.linspace(corner[1], corner[1] + self.extent[1], self.shape[1], endpoint=False, dtype=dtype)
+        ys = xp2.linspace(corner[0], corner[0] + self.extent[0], self.shape_tup[0], endpoint=False, dtype=dtype)
+        xs = xp2.linspace(corner[1], corner[1] + self.extent[1], self.shape_tup[1], endpoint=False, dtype=dtype)
         return tuple(xp2.meshgrid(ys, xs, indexing='ij'))  # type: ignore
 
     @t.overload
@@ -987,8 +994,11 @@ class Sampling:
         if dtype is None:
             dtype = max_supported_float(xp2)
 
-        ky: NDArray[numpy.number] = xp2.fft.fftfreq(self.shape[0], self.sampling[0]).astype(dtype)
-        kx: NDArray[numpy.number] = xp2.fft.fftfreq(self.shape[1], self.sampling[1]).astype(dtype)
+        # divide by sampling afterward rather than passing it as `fftfreq`'s `d`, so
+        # `sampling` can stay a genuine dynamic (e.g. tensor) value: `d` is `.item()`
+        # -extracted internally, which isn't traceable under `fullgraph=True`.
+        ky: NDArray[numpy.number] = (xp2.fft.fftfreq(self.shape_tup[0], 1.) / self.sampling[0]).astype(dtype)
+        kx: NDArray[numpy.number] = (xp2.fft.fftfreq(self.shape_tup[1], 1.) / self.sampling[1]).astype(dtype)
 
         if centered:
             ky = xp2.fft.fftshift(ky)
