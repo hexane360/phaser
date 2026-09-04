@@ -143,7 +143,7 @@ class RegularizeLayers:
 
     def apply_iter(self, sim: ReconsState, state: None) -> t.Tuple[ReconsState, None]:
         xp = get_array_module(sim.object.data)
-        dtype = to_real_dtype(sim.object.data)
+        dtype = to_real_dtype(sim.object.data.dtype)
 
         if len(sim.object.thicknesses) < 2:
             return (sim, None)
