@@ -33,12 +33,12 @@ engines:
 
    solver:
      type: 'lsqml'
-     beta_probe: 0.9
-     beta_object: 0.9
-     gamma: 1.0e-2
+     beta_probe: 0.5
+     beta_object: 0.5
 
-     illum_reg_object: 50.0
-     illum_reg_probe: 0.1
+     gamma: 0.0
+     illum_reg_object: 1.0e+5
+     illum_reg_probe: 0.0
 
    position_solver:
      type: momentum

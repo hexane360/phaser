@@ -220,14 +220,20 @@ def lsqml_run(
     n_slices = sim.state.object.data.shape[0]
 
     eps = 1e-16
+    # ensure regularizations are at least `eps`
+    gamma = max(gamma, eps)
+    illum_reg_object = max(illum_reg_object, eps)
+    illum_reg_probe = max(illum_reg_probe, eps)
 
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
 
     group_probe_mag = xp.zeros_like(probe_mag)
-    #group_obj_mag = xp.sum(abs2(group_obj[:, 0]), axis=0)
-    group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    # object mag per probe position
+    pos_obj_mag = abs2(xp.prod(group_obj, axis=1))
+    # object mag summed across group
+    group_obj_mag = xp.sum(pos_obj_mag, axis=0)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
         (group_probe_mag, psi) = state
@@ -255,8 +261,6 @@ def lsqml_run(
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
         model_intensity = mtf(model_intensity)
-    # experimental data
-    # group_patterns = xp.array(sim.patterns[tuple(group)])[:, None]
 
     errors = xp.sqrt(xp.nansum((model_intensity - group_patterns[:, None])**2, axis=(1, -1, -2))) if calc_error else None
 
@@ -272,26 +276,49 @@ def lsqml_run(
 
         if update_object:
             delta_O = chi * xp.conj(psi[slice_i])
-            alpha_O = xp.sum(xp.sum(xp.real(chi * xp.conj(delta_O * psi[slice_i])), axis=(-1, -2), keepdims=True), axis=1) / (xp.sum(abs2(delta_O * psi[slice_i])) + gamma)
+            # per-position illumination, in probe space
+            pos_illum = xp.sum(abs2(psi[slice_i]), axis=1)
 
-            # average object update
+            # Eq. (25b): common update direction (in object space).
             delta_O_avg = xp.zeros_like(sim.state.object.data[0])
             delta_O_avg = obj_grid.add_view_at_pos(delta_O_avg, group_scan, xp.sum(delta_O, axis=1))
-            delta_O_avg /= (group_probe_mag[slice_i] + illum_reg_object)
+            delta_O_avg /= (probe_mag[slice_i] + illum_reg_object)
 
-            obj_update = beta_object * xp.sum(alpha_O * delta_O_avg * group_probe_mag[slice_i], axis=0) / (group_probe_mag[slice_i] + eps)
+            # Eq. (23b): optimal step size per probe position
+            # step sizes computed in probe space, need to move delta_O_avg back to object space
+            prod_O = obj_grid.get_view_at_pos(delta_O_avg, group_scan, psi.shape[-2:])[:, None] * psi[slice_i]
+            # denominator in units of electrons
+            alpha_O = xp.sum(
+                xp.sum(xp.real(chi * xp.conj(prod_O)), axis=(-1, -2), keepdims=True), axis=1
+            ) / (
+                xp.sum(xp.sum(abs2(prod_O), axis=1), axis=(-1, -2), keepdims=True) + gamma
+            )
+
+            # Eq. (27b): weight step size by illumination, back to object space
+            alpha_illum = xp.zeros_like(group_probe_mag[slice_i])
+            alpha_illum = obj_grid.add_view_at_pos(alpha_illum, group_scan, alpha_O * pos_illum)
+
+            # apply final object update
+            obj_update = beta_object/n_slices * delta_O_avg * alpha_illum / (group_probe_mag[slice_i] + eps)
             sim.state.object.data = at(sim.state.object.data, slice_i).add(obj_update)
 
         if prop is not None:
             chi = ifft2(fft2(delta_P) * prop.conj()[:, None])
         elif update_probe:
+            # Eq. (25a)
             delta_P_avg = ifft2(xp.sum(fft2(delta_P) * subpx_filters.conj(), axis=0))
-            delta_P_avg /= (group_obj_mag + illum_reg_probe)
+            delta_P_avg /= (obj_mag + illum_reg_probe)
 
-            # update step per probe mode
-            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * group_obj[:, slice_i, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * group_obj[:, slice_i, None])) + gamma)
+            # Eq. (23a): optimal step size per probe position and probe mode
+            prod_P = delta_P_avg[None] * group_obj[:, slice_i, None]
+            alpha_P = xp.sum(xp.real(chi * xp.conj(prod_P)), axis=(-1, -2), keepdims=True) / (
+                xp.sum(abs2(prod_P), axis=(-1, -2), keepdims=True) + gamma
+            )
 
-            probe_update = beta_probe * xp.sum(alpha_P * delta_P_avg * group_obj_mag, axis=0) / (group_obj_mag + eps)
+            # Eq. (27a)
+            probe_update = beta_probe * delta_P_avg * xp.sum(
+                alpha_P * pos_obj_mag[:, None], axis=0
+            ) / (group_obj_mag + eps)
             sim.state.probe.data += probe_update
 
         return (sim, chi)
