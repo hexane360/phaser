@@ -63,7 +63,7 @@ class LSQMLSolver(ConventionalSolver):
         # precompute obj_mag, probe_mag, and rescale probe intensity
         for (group, group_patterns) in self.iter_patterns(groups, patterns, sim.xp):
             (self.obj_mag, self.probe_mag, group_rescale_factors) = lsqml_dry_run(
-                sim, group, group_patterns, props=propagators, pattern_mask=pattern_mask,
+                sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators,
                 obj_mag=self.obj_mag, probe_mag=self.probe_mag
             )
 
@@ -169,6 +169,8 @@ def lsqml_dry_run(
 
         if prop is not None:
             psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+        else:
+            psi *= group_obj[:, slice_i, None]
 
         return (probe_mag, psi)
 
@@ -176,10 +178,11 @@ def lsqml_dry_run(
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     (probe_mag, psi) = slice_forwards(props, (probe_mag, psi), run_slice)
 
-    # modeled and experimental intensity
-    # summed over incoherent modes and over the pattern
-    model_intensity = xp.sum(abs2(fft2(psi)), axis=(1, -2, -1))
-    exp_intensity = xp.sum(group_patterns * pattern_mask, axis=(-2, -1))
+    # summed over incoherent modes
+    model_intensity = xp.sum(abs2(fft2(psi)), axis=1)
+    # and over patterns
+    model_intensity = xp.sum(model_intensity * pattern_mask, axis=(-2, -1))
+    exp_intensity = xp.nansum(group_patterns * pattern_mask, axis=(-2, -1))
 
     return (obj_mag, probe_mag, exp_intensity / model_intensity)
 
@@ -432,22 +435,22 @@ def epie_dry_run(
     props: t.Optional[NDArray[numpy.complexfloating]],
 ) -> NDArray[numpy.floating]:
     xp = cast_array_module(sim.xp)
-    (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
+    (psi, group_obj, _group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
-
-        return psi
+            return ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+        return psi * group_obj[:, slice_i, None]
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, run_slice)
+    psi = slice_forwards(props, psi, sim_slice)
 
-    # modeled and experimental intensity
-    # summed over incoherent modes and over the pattern
-    model_intensity = xp.sum(abs2(fft2(psi)), axis=(1, -2, -1))
-    exp_intensity = xp.sum(group_patterns * pattern_mask, axis=(-2, -1))
+    # summed over incoherent modes
+    model_intensity = xp.sum(abs2(fft2(psi)), axis=1)
+    # and over patterns
+    model_intensity = xp.sum(model_intensity * pattern_mask, axis=(-2, -1))
+    exp_intensity = xp.nansum(group_patterns * pattern_mask, axis=(-2, -1))
 
     return exp_intensity / model_intensity
 

@@ -296,7 +296,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan.data))):
         group_rescale_factors = dry_run(
             state, group, propagators, group_patterns,
-            xp=xp, dtype=dtype,
+            pattern_mask=pattern_mask, xp=xp, dtype=dtype,
         )
         rescale_factors.append(group_rescale_factors)
 
@@ -582,7 +582,6 @@ def run_model(
     return (loss, (solver_states, losses))
 
 
-# TODO: DRY
 @partial(
     jit,
     static_argnames=('xp', 'dtype'),
@@ -591,7 +590,8 @@ def dry_run(
     sim: ReconsState,
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]],
-    group_patterns: NDArray[numpy.floating],
+    group_patterns: NDArray[numpy.floating], *,
+    pattern_mask: NDArray[numpy.floating],
     xp: t.Any,
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
@@ -611,7 +611,10 @@ def dry_run(
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilt)
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice), shift=False)
-    model_intensity = xp.sum(abs2(model_wave), axis=(1, -2, -1))
-    exp_intensity = xp.sum(group_patterns, axis=(-2, -1))
+    # summed over incoherent modes
+    model_intensity = xp.sum(abs2(fft2(model_wave)), axis=1)
+    # and over patterns
+    model_intensity = xp.sum(model_intensity * pattern_mask, axis=(-2, -1))
+    exp_intensity = xp.nansum(group_patterns * pattern_mask, axis=(-2, -1))
 
     return exp_intensity / model_intensity
