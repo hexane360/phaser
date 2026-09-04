@@ -21,6 +21,7 @@ from . import (
     CropDataProps,
     DropNanProps,
     OffsetProps,
+    PerturbScanProps,
     PoissonProps,
     PostInitArgs,
     RawData,
@@ -154,7 +155,7 @@ def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
     return raw_data
 
 
-def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patterns, ReconsState]:
+def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> tuple[Patterns, ReconsState]:
     xp = get_array_module(args['data'].patterns)
 
     scan = args['state'].scan
@@ -208,7 +209,7 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
     return (args['data'], args['state'])
 
 
-def diffraction_align(args: PostInitArgs, props: t.Any = None) -> t.Tuple[Patterns, ReconsState]:
+def diffraction_align(args: PostInitArgs, props: t.Any = None) -> tuple[Patterns, ReconsState]:
     patterns, state = args['data'], args['state']
 
     xp = cast_array_module(args['xp'])
@@ -246,3 +247,16 @@ def diffraction_align(args: PostInitArgs, props: t.Any = None) -> t.Tuple[Patter
     patterns.pattern_mask = bilinear_shift(patterns.pattern_mask)
 
     return (patterns, state)
+
+
+def perturb_scan(args: PostInitArgs, props: PerturbScanProps) -> tuple[Patterns, ReconsState]:
+    init_scan = args['state'].scan.data
+    xp = get_array_module(init_scan)
+
+    rng = create_rng(args['seed'], 'perturb_scan')
+
+    args['state'].scan.data = init_scan + xp.asarray(
+        rng.normal(scale=props.sigma, size=init_scan.shape)
+    )
+
+    return (args['data'], args['state'])
