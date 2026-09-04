@@ -5,15 +5,16 @@ import numpy
 from numpy.typing import NDArray
 
 from phaser.types import Dataclass, ReconsVar
+
 from . import Hook
 
 if t.TYPE_CHECKING:
-    from phaser.utils.num import Float
     from phaser.engines.common.simulation import SimulationState
     from phaser.execute import Observer
     from phaser.plan import ConventionalEnginePlan, GradientEnginePlan  # noqa: F401
     from phaser.state import ReconsState
     from phaser.utils.image import PreparedOTF, PreparedPSF
+    from phaser.utils.num import Float
 
 
 StateT = t.TypeVar('StateT')
@@ -66,7 +67,7 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
 
 
 class NoiseModelHook(Hook[None, NoiseModel]):
-    known = {}
+    known: t.ClassVar = {}
 
 
 class PositionSolver(HasState[StateT], t.Protocol[StateT]):
@@ -98,10 +99,36 @@ class MomentumPositionSolverProps(Dataclass):
     momentum: float = 0.9
 
 
+class AdaptiveMomentumPositionSolverProps(Dataclass):
+    """
+    Momentum with a friction coefficient estimated from how quickly recent position updates decorrelate.
+    """
+
+    # fraction of optimal step to take
+    step_size: float = 1.0
+    # maximum step size (in data units)
+    max_step_size: t.Optional[float] = None
+    # number of previous iterations to correlate against
+    memory: int = 5
+    # multiplier on the accumulated velocity
+    gain: float = 0.5
+    # friction = friction_scale * decorrelation rate; smaller -> longer memory
+    friction_scale: float = 0.1
+    # friction applied when updates are anticorrelated (momentum disabled)
+    oscillation_friction: float = 0.5
+    # skip momentum for positions whose raw update already exceeds this (in angstroms).
+    # defaults to `max_step_size`.
+    momentum_max_update: t.Optional[float] = None
+    # estimate a separate friction for every scan position, rather than one global value
+    # (as fold_slice does). Off by default, to match fold_slice.
+    per_position: bool = False
+
+
 class PositionSolverHook(Hook[None, PositionSolver]):
-    known = {
+    known: t.ClassVar = {
         'steepest_descent': ('phaser.engines.common.position_correction:SteepestDescentPositionSolver', SteepestDescentPositionSolverProps),
         'momentum': ('phaser.engines.common.position_correction:MomentumPositionSolver', MomentumPositionSolverProps),
+        'adaptive_momentum': ('phaser.engines.common.position_correction:AdaptiveMomentumPositionSolver', AdaptiveMomentumPositionSolverProps),
     }
 
 
@@ -149,7 +176,7 @@ class ConventionalSolver(abc.ABC):
 
 
 class ConventionalSolverHook(Hook['ConventionalEnginePlan', ConventionalSolver]):
-    known = {}
+    known: t.ClassVar = {}
 
 
 class GradientSolver(HasState[StateT], t.Protocol[StateT]):
@@ -174,4 +201,4 @@ class GradientSolverArgs(t.TypedDict):
 
 
 class GradientSolverHook(Hook['GradientSolverArgs', GradientSolver]):
-    known = {}
+    known: t.ClassVar = {}
