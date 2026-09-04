@@ -5,8 +5,7 @@ eval "$(conda 'shell.bash' hook)"
 # load conda env
 conda activate phaser
 
-module prepend-path LD_LIBRARY_PATH "/usr/local/pkg/cuda/cuda-11.8/nsight-systems-2022.4.2/target-linux-x64"
-module load cuda/11.8
+module load cuda/12.9
 
 python_exec="python"
 
