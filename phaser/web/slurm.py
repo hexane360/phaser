@@ -151,14 +151,20 @@ class SlurmManager:
 
         for job in d["jobs"]:
             try:
-                worker = self._slurm_workers[job["job_id"]]
+                job_id = job['job_id']
+                job_state = job['job_state']
+                worker = self._slurm_workers[job_id]
             except KeyError:
                 continue
 
-            if job['job_state'] in ('CONFIGURING', 'RUNNING'):
+            if isinstance(job_state, str):
+                job_state = [job_state]
+
+            if any(j in ('CONFIGURING', 'RUNNING') for j in job_state):
                 if worker.status == 'queued':
                     await worker.set_status('starting')
-            elif job['job_state'] != 'PENDING':
+            elif not any(j == 'PENDING' for j in job_state):
+                self.logger.debug(f"Stopping worker {job_id}, squeue got job_state: {job_state}")
                 if worker.status != 'stopped':
                     # TODO grab some exit information here
                     await worker.set_status('stopped')
