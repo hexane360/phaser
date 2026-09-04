@@ -42,9 +42,9 @@ engines:
 
    position_solver:
      type: momentum
-     momentum: 0.90
-     step_size: 1.0e-3
-     max_step_size: 0.2
+     momentum: 0.50
+     step_size: 0.5
+     max_step_size: 0.1  # angstrom
 
    group_constraints: []
    iter_constraints:

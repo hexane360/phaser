@@ -3,17 +3,20 @@ import typing as t
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import get_array_module
 from phaser.hooks.solver import (
-    PositionSolver, SteepestDescentPositionSolverProps, MomentumPositionSolverProps
+    MomentumPositionSolverProps,
+    PositionSolver,
+    SteepestDescentPositionSolverProps,
 )
 from phaser.state import ReconsState
+from phaser.utils.num import get_array_module
+
 
 
 class SteepestDescentPositionSolver(PositionSolver[None]):
     def __init__(self, args: None, props: SteepestDescentPositionSolverProps):
         self.step_size = props.step_size
-        self.max_step_size = props.step_size
+        self.max_step_size = props.max_step_size
 
     def init_state(self, sim: ReconsState) -> None:
         return None

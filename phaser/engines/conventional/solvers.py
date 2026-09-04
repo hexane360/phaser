@@ -1,18 +1,33 @@
-from functools import partial
 import logging
 import typing as t
+from functools import partial
 
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import cast_array_module, at, abs2, fft2, ifft2, jit, check_finite, to_complex_dtype, to_numpy, xp_is_jax
-from phaser.utils.image import PreparedOTF, PreparedPSF
-from phaser.hooks.solver import ConventionalSolver
-from phaser.types import process_schedule
-from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
-from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    stream_patterns, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    SimulationState,
+    cutout_group,
+    slice_backwards,
+    slice_forwards,
+    stream_patterns,
+    tilt_propagators,
+)
+from phaser.execute import Observer
+from phaser.hooks.solver import ConventionalSolver
+from phaser.plan import ConventionalEnginePlan, EPIESolverPlan, LSQMLSolverPlan
+from phaser.types import process_schedule
+from phaser.utils.image import PreparedOTF, PreparedPSF
+from phaser.utils.num import (
+    abs2,
+    at,
+    cast_array_module,
+    check_finite,
+    fft2,
+    ifft2,
+    jit,
+    to_numpy,
+    xp_is_jax,
 )
 
 
@@ -330,12 +345,11 @@ def lsqml_run(
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
             prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+            return xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) \
+                / (xp.sum(abs2(prod), axis=(1, -1, -2)) + eps)
 
         # update directions
         probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
         pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
     else:
         pos_update = None
@@ -414,8 +428,7 @@ class EPIESolver(ConventionalSolver):
     ) -> t.Tuple[SimulationState, NDArray[numpy.floating], t.List[NDArray[numpy.floating]]]:
         xp = sim.xp
 
-        # TODO: ePIE position update
-        pos_update = xp.zeros_like(sim.state.scan.data)
+        pos_update = xp.zeros_like(sim.state.scan.data, dtype=sim.dtype)
         iter_errors = []
 
         beta_object = process_schedule(self.plan.beta_object)({'state': sim.state, 'niter': self.engine_plan.niter})
@@ -433,6 +446,7 @@ class EPIESolver(ConventionalSolver):
                 beta_probe=beta_probe,
                 update_object=update_object,
                 update_probe=update_probe,
+                update_position=update_positions,
                 jit_unroll_slices=self.jit_unroll_slices,
             )
             if self.engine_plan.check_every_group:
@@ -506,6 +520,8 @@ def epie_run(
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
+    eps = 1e-16
+
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
@@ -569,12 +585,11 @@ def epie_run(
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
             prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+            return xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) \
+                / (xp.sum(abs2(prod), axis=(1, -1, -2)) + eps)
 
         # update directions
         probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
         pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
     else:
         pos_update = None
