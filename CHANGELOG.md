@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-09-05
+
+### Bugfixes
+
+- regularizers: Fix dtype detection in RegularizeLayers
+- web: Fix detection of Slurm job state through `squeue`
+
 ## 0.3.0 — 2026-09-02
 
 Changes since [v0.2](https://github.com/hexane360/phaser/tree/v0.2) (2025-09-05).
