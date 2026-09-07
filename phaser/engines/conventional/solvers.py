@@ -19,6 +19,7 @@ from phaser.plan import ConventionalEnginePlan, EPIESolverPlan, LSQMLSolverPlan
 from phaser.types import process_schedule
 from phaser.utils.image import PreparedOTF, PreparedPSF
 from phaser.utils.num import (
+    Float,
     abs2,
     at,
     cast_array_module,
@@ -219,26 +220,27 @@ def lsqml_run(
     probe_mag: NDArray[numpy.floating],
     new_obj_mag: NDArray[numpy.floating],
     new_probe_mag: NDArray[numpy.floating],
-    beta_object: float = 0.9,
-    beta_probe: float = 0.9,
+    beta_object: Float = 0.9,
+    beta_probe: Float = 0.9,
     update_object: bool = True,
     update_probe: bool = True,
     update_position: bool = True,
     calc_error: bool = True,
     jit_unroll_slices: t.Union[int, bool] = False,
-    illum_reg_object: float,
-    illum_reg_probe: float,
-    gamma: float,
+    illum_reg_object: Float,
+    illum_reg_probe: Float,
+    gamma: Float,
 ) -> t.Tuple[SimulationState, NDArray[numpy.floating], NDArray[numpy.floating], t.Optional[NDArray[numpy.floating]], t.Optional[NDArray[numpy.floating]]]:
     xp = cast_array_module(sim.xp)
+    dtype = sim.ky.dtype
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
-    eps = 1e-16
+    eps = xp.array(1e-16, dtype=dtype)
     # ensure regularizations are at least `eps`
-    gamma = max(gamma, eps)
-    illum_reg_object = max(illum_reg_object, eps)
-    illum_reg_probe = max(illum_reg_probe, eps)
+    gamma = t.cast(numpy.floating, xp.maximum(gamma, eps).astype(dtype))
+    illum_reg_object = t.cast(numpy.floating, xp.maximum(illum_reg_object, eps).astype(dtype))
+    illum_reg_probe = t.cast(numpy.floating, xp.maximum(illum_reg_probe, eps).astype(dtype))
 
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
