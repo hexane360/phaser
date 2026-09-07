@@ -64,7 +64,7 @@ class MomentumPositionSolver(PositionSolver[NDArray[numpy.floating]]):
     ) -> t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating]]:
         xp = get_array_module(positions, gradients, state)
 
-        update = self.step_size * gradients + self.momentum * state
+        update = (1 - self.momentum) * self.step_size * gradients + self.momentum * state
 
         if self.max_step_size is not None:
             update_mag = xp.linalg.norm(update, axis=-1, keepdims=True)
