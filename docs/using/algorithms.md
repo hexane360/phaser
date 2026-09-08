@@ -216,7 +216,7 @@ For the conventional engines, constraint-based regularizations are supported (`g
 
 #### Position solving
 
-For the conventional engines, position solving is performed using the gradient of the loss with respect to a shift in probe position, scaled by the update step size. Two position solvers are supported, a steepest descent solver and a momentum-accelerated solver:
+For the conventional engines, position solving is performed using the gradient of the loss with respect to a shift in probe position, scaled by the update step size. Three position solvers are supported, a steepest descent solver, a momentum-accelerated solver, and an adaptive momentum solver:
 
 ```yaml
 type: 'conventional'
@@ -230,6 +230,43 @@ position_solver:
   step_size: 1.0e-2
   # momentum decay rate
   momentum: 0.9
+```
+
+`adaptive_momentum` estimates its friction from how quickly recent position updates decorrelate, so consistent drift earns a long memory while oscillation disables momentum:
+
+```yaml
+position_solver:
+  type: 'adaptive_momentum'
+  step_size: 1.0
+  max_step_size: ~
+  # number of previous iterations to correlate against
+  memory: 5
+  # multiplier on the accumulated velocity
+  gain: 0.5
+  # friction = friction_scale * decorrelation rate; smaller -> longer memory
+  friction_scale: 0.1
+  # friction applied when updates are anticorrelated (momentum disabled)
+  oscillation_friction: 0.5
+  # skip momentum for positions whose raw update already exceeds this.
+  # defaults to `max_step_size`
+  momentum_max_update: ~
+  # estimate a separate friction for every scan position, rather than one global value
+  per_position: false
+```
+
+Every continuous parameter above (everything except `memory` and `per_position`) accepts a schedule (`constant`, `piecewise`, or `expr`) as well as a constant, so position updates can be ramped in once the object and probe have settled and tapered off at the end:
+
+```yaml
+position_solver:
+  type: 'momentum'
+  max_step_size: 0.1  # angstrom
+  step_size:
+    type: 'expr'
+    expr: '0.5 * min(1., i / 10.)'
+  momentum:
+    type: 'piecewise'
+    init: 0.0
+    steps: {10: 0.9}
 ```
 
 ## References

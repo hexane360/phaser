@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 from phaser.types import Dataclass, ReconsVar
 
 from . import Hook
+from .schedule import FlagArgs, ScheduleLike
 
 if t.TYPE_CHECKING:
     from phaser.engines.common.simulation import SimulationState
@@ -75,7 +76,8 @@ class PositionSolver(HasState[StateT], t.Protocol[StateT]):
         self,
         positions: NDArray[numpy.floating],
         gradients: NDArray[numpy.floating],
-        state: StateT
+        state: StateT,
+        args: FlagArgs,
     ) -> t.Tuple[NDArray[numpy.floating], StateT]:
         """
         Return the calculated position updates
@@ -85,18 +87,18 @@ class PositionSolver(HasState[StateT], t.Protocol[StateT]):
 
 class SteepestDescentPositionSolverProps(Dataclass):
     # fraction of optimal step to take
-    step_size: float = 1e-2
+    step_size: ScheduleLike = 1e-2
     # maximum step size (in angstroms)
-    max_step_size: t.Optional[float] = None
+    max_step_size: t.Optional[ScheduleLike] = None
 
 
 class MomentumPositionSolverProps(Dataclass):
     # fraction of optimal step to take
-    step_size: float = 1e-2
+    step_size: ScheduleLike = 1e-2
     # maximum step size (in angstroms)
-    max_step_size: t.Optional[float] = None
+    max_step_size: t.Optional[ScheduleLike] = None
     # momentum decay rate
-    momentum: float = 0.9
+    momentum: ScheduleLike = 0.9
 
 
 class AdaptiveMomentumPositionSolverProps(Dataclass):
@@ -105,20 +107,20 @@ class AdaptiveMomentumPositionSolverProps(Dataclass):
     """
 
     # fraction of optimal step to take
-    step_size: float = 1.0
+    step_size: ScheduleLike = 1.0
     # maximum step size (in data units)
-    max_step_size: t.Optional[float] = None
+    max_step_size: t.Optional[ScheduleLike] = None
     # number of previous iterations to correlate against
     memory: int = 5
     # multiplier on the accumulated velocity
-    gain: float = 0.5
+    gain: ScheduleLike = 0.5
     # friction = friction_scale * decorrelation rate; smaller -> longer memory
-    friction_scale: float = 0.1
+    friction_scale: ScheduleLike = 0.1
     # friction applied when updates are anticorrelated (momentum disabled)
-    oscillation_friction: float = 0.5
+    oscillation_friction: ScheduleLike = 0.5
     # skip momentum for positions whose raw update already exceeds this (in angstroms).
     # defaults to `max_step_size`.
-    momentum_max_update: t.Optional[float] = None
+    momentum_max_update: t.Optional[ScheduleLike] = None
     # estimate a separate friction for every scan position, rather than one global value
     # (as fold_slice does). Off by default, to match fold_slice.
     per_position: bool = False

@@ -3,6 +3,7 @@ import typing as t
 import numpy
 from numpy.typing import NDArray
 
+from phaser.hooks.schedule import FlagArgs
 from phaser.hooks.solver import (
     AdaptiveMomentumPositionSolverProps,
     MomentumPositionSolverProps,
@@ -10,6 +11,7 @@ from phaser.hooks.solver import (
     SteepestDescentPositionSolverProps,
 )
 from phaser.state import ReconsState
+from phaser.types import process_schedule
 from phaser.utils.num import get_array_module
 
 
@@ -24,8 +26,7 @@ class AdaptiveMomentumState(t.NamedTuple):
 
 class SteepestDescentPositionSolver(PositionSolver[None]):
     def __init__(self, args: None, props: SteepestDescentPositionSolverProps):
-        self.step_size = props.step_size
-        self.max_step_size = props.max_step_size
+        self.props = props
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -34,23 +35,25 @@ class SteepestDescentPositionSolver(PositionSolver[None]):
         self,
         positions: NDArray[numpy.floating],
         gradients: NDArray[numpy.floating],
-        state: None
+        state: None,
+        args: FlagArgs,
     ) -> t.Tuple[NDArray[numpy.floating], None]:
         xp = get_array_module(positions, gradients)
-        update = self.step_size * gradients
+        step_size = process_schedule(self.props.step_size)(args)
+        max_step_size = None if self.props.max_step_size is None else process_schedule(self.props.max_step_size)(args)
 
-        if self.max_step_size is not None:
+        update = step_size * gradients
+
+        if max_step_size is not None:
             update_mag = xp.linalg.norm(update, axis=-1, keepdims=True)
-            update *= xp.minimum(update_mag, self.max_step_size) / update_mag
+            update *= xp.minimum(update_mag, max_step_size) / update_mag
 
         return (update, state)
 
 
 class MomentumPositionSolver(PositionSolver[NDArray[numpy.floating]]):
     def __init__(self, args: None, props: MomentumPositionSolverProps):
-        self.step_size = props.step_size
-        self.max_step_size = props.max_step_size
-        self.momentum = props.momentum
+        self.props = props
 
     def init_state(self, sim: ReconsState) -> NDArray[numpy.floating]:
         xp = get_array_module(sim.scan.data)
@@ -60,15 +63,19 @@ class MomentumPositionSolver(PositionSolver[NDArray[numpy.floating]]):
         self,
         positions: NDArray[numpy.floating],
         gradients: NDArray[numpy.floating],
-        state: NDArray[numpy.floating]
+        state: NDArray[numpy.floating],
+        args: FlagArgs,
     ) -> t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating]]:
         xp = get_array_module(positions, gradients, state)
+        step_size = process_schedule(self.props.step_size)(args)
+        max_step_size = None if self.props.max_step_size is None else process_schedule(self.props.max_step_size)(args)
+        momentum = process_schedule(self.props.momentum)(args)
 
-        update = (1 - self.momentum) * self.step_size * gradients + self.momentum * state
+        update = (1 - momentum) * step_size * gradients + momentum * state
 
-        if self.max_step_size is not None:
+        if max_step_size is not None:
             update_mag = xp.linalg.norm(update, axis=-1, keepdims=True)
-            update *= xp.minimum(update_mag, self.max_step_size) / update_mag
+            update *= xp.minimum(update_mag, max_step_size) / update_mag
 
         # state is just previous update step
         return (update, update)
@@ -82,15 +89,8 @@ class AdaptiveMomentumPositionSolver(PositionSolver[AdaptiveMomentumState]):
     anticorrelation indicates oscillation and disables momentum outright.
     """
     def __init__(self, args: None, props: AdaptiveMomentumPositionSolverProps):
-        self.step_size = props.step_size
-        self.max_step_size = props.max_step_size
+        self.props = props
         self.memory = int(props.memory)
-        self.gain = props.gain
-        self.friction_scale = props.friction_scale
-        self.oscillation_friction = props.oscillation_friction
-        self.momentum_max_update = (
-            props.max_step_size if props.momentum_max_update is None else props.momentum_max_update
-        )
         self.per_position = props.per_position
 
         if self.memory < 1:
@@ -104,7 +104,10 @@ class AdaptiveMomentumPositionSolver(PositionSolver[AdaptiveMomentumState]):
             n_seen=0,
         )
 
-    def _friction(self, history: NDArray[numpy.floating], xp: t.Any) -> t.Any:
+    def _friction(
+        self, history: NDArray[numpy.floating], xp: t.Any,
+        gain: float, friction_scale: float, oscillation_friction: float,
+    ) -> t.Any:
         """
         Estimate friction from the decay of correlation between the newest update and each
         of the `memory` preceding ones.
@@ -139,28 +142,42 @@ class AdaptiveMomentumPositionSolver(PositionSolver[AdaptiveMomentumState]):
 
         # any anticorrelation at any lag means oscillation: kill momentum
         oscillating = xp.any(corrs <= 0.0, axis=0)
-        friction = self.friction_scale * xp.maximum(-slope, 0.0)
+        friction = friction_scale * xp.maximum(-slope, 0.0)
         return (
-            xp.where(oscillating, self.oscillation_friction, friction),
-            xp.where(oscillating, 0.0, self.gain),
+            xp.where(oscillating, oscillation_friction, friction),
+            xp.where(oscillating, 0.0, gain),
         )
 
     def perform_update(
         self,
         positions: NDArray[numpy.floating],
         gradients: NDArray[numpy.floating],
-        state: AdaptiveMomentumState
+        state: AdaptiveMomentumState,
+        args: FlagArgs,
     ) -> t.Tuple[NDArray[numpy.floating], AdaptiveMomentumState]:
         xp = get_array_module(positions, gradients, state.velocity)
+        props = self.props
 
-        update = self.step_size * gradients
+        step_size = process_schedule(props.step_size)(args)
+        max_step_size = None if props.max_step_size is None else process_schedule(props.max_step_size)(args)
+        momentum_max_update = (
+            max_step_size if props.momentum_max_update is None
+            else process_schedule(props.momentum_max_update)(args)
+        )
+
+        update = step_size * gradients
         history = xp.concatenate([update[None], state.history[:-1]], axis=0)
 
         if state.n_seen < self.memory:
             # not enough history yet; behave as plain steepest descent while it fills
             velocity = state.velocity
         else:
-            (friction, gain) = self._friction(history, xp)
+            (friction, gain) = self._friction(
+                history, xp,
+                gain=process_schedule(props.gain)(args),
+                friction_scale=process_schedule(props.friction_scale)(args),
+                oscillation_friction=process_schedule(props.oscillation_friction)(args),
+            )
             if not self.per_position:
                 velocity = state.velocity * (1.0 - friction) + update
                 accelerated = update + gain * velocity
@@ -168,18 +185,18 @@ class AdaptiveMomentumPositionSolver(PositionSolver[AdaptiveMomentumState]):
                 velocity = state.velocity * (1.0 - friction[..., None]) + update
                 accelerated = update + gain[..., None] * velocity
 
-            if self.momentum_max_update is not None:
+            if momentum_max_update is not None:
                 # only accelerate positions that are not already moving quickly. fold_slice
                 # gates on the group maximum; gating per position is the natural analogue
                 # of the per-position clamp below.
                 mag = xp.linalg.norm(update, axis=-1, keepdims=True)
-                accelerated = xp.where(mag < self.momentum_max_update, accelerated, update)
+                accelerated = xp.where(mag < momentum_max_update, accelerated, update)
 
             update = accelerated
 
-        if self.max_step_size is not None:
+        if max_step_size is not None:
             update_mag = xp.linalg.norm(update, axis=-1, keepdims=True)
-            update = update * (xp.minimum(update_mag, self.max_step_size)
+            update = update * (xp.minimum(update_mag, max_step_size)
                                / xp.maximum(update_mag, 1e-30))
 
         return (update, AdaptiveMomentumState(
