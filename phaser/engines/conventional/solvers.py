@@ -1,4 +1,5 @@
 import logging
+import math
 import typing as t
 from functools import partial
 
@@ -240,7 +241,10 @@ def lsqml_run(
     # ensure regularizations are at least `eps`
     gamma = t.cast(numpy.floating, xp.maximum(gamma, eps).astype(dtype))
     illum_reg_object = t.cast(numpy.floating, xp.maximum(illum_reg_object, eps).astype(dtype))
-    illum_reg_probe = t.cast(numpy.floating, xp.maximum(illum_reg_probe, eps).astype(dtype))
+    # normalize illum_reg_probe by # of scan positions
+    illum_reg_probe = t.cast(numpy.floating, xp.maximum(
+        illum_reg_probe * math.prod(sim.state.scan.data.shape[:-1]),
+    eps).astype(dtype))
 
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
