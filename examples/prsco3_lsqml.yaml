@@ -34,9 +34,9 @@ engines:
      beta_probe: 0.1
      beta_object: 0.5
 
-     gamma: 0.0
-     illum_reg_object: 1.0e+5
+     illum_reg_object: 0.01
      illum_reg_probe: 0.0
+     gamma: 0.0
 
    position_solver:
      type: momentum
