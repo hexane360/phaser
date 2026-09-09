@@ -107,7 +107,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         )
         assert_dtype(sim.state.object.data, cdtype)
         assert_dtype(sim.state.probe.data, cdtype)
-        check_finite(sim.state.object.data, sim.state.probe.data, context=f"NaN or inf encountered, iteration {i}")
+        check_finite(sim.state.object.data, sim.state.probe.data, context=f"iteration {i}")
 
         sim = sim.apply_iter_constraints()
 
