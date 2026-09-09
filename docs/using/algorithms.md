@@ -206,9 +206,9 @@ solver:
   gamma: 0.0
 
   # delta_P and delta_O in [12] eq. 25
-  # illum_reg_object is in units of electron dose per pixel
-  illum_reg_object: 1.0e+4
-  # illum_reg_probe is in units of electrons
+  # illum_reg_object is unitless (it's rescaled by the maximum illumination present)
+  illum_reg_object: 0.01
+  # illum_reg_probe is unitless
   illum_reg_probe: 0.0
 ```
 

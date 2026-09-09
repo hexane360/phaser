@@ -157,15 +157,17 @@ class LSQMLSolverPlan(Dataclass, kw_only=True):
     beta_object: ScheduleLike = 1.0
     beta_probe: ScheduleLike = 1.0
 
-    illum_reg_object: ScheduleLike = 1.0e+5
+    illum_reg_object: ScheduleLike = 0.01
     """
     Preconditioner damping the object update in weakly-illuminated regions.
-    In units of electrons per pixel, so damping has more effect at lower doses.
+
+    Dimensionless, acts relative to the region of greatest illumination.
     """
     illum_reg_probe: ScheduleLike = 0.0
     """
     Preconditioner damping the probe update in strongly absorptive regions of the object.
-    Dimensionless.
+
+    Dimensionless. Can be set to zero in most cases.
     """
 
     gamma: ScheduleLike = 0.0

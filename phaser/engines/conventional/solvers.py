@@ -48,6 +48,7 @@ class LSQMLSolver(ConventionalSolver):
 
         self.obj_mag: NDArray[numpy.floating] = xp.zeros(sim.state.probe.data.shape[-2:], dtype=sim.dtype)
         self.probe_mag: NDArray[numpy.floating] = xp.zeros_like(sim.state.object.data, dtype=sim.dtype)
+        self.probe_mag_max: NDArray[numpy.floating] = xp.zeros(sim.state.object.data.shape[:-2], dtype=sim.dtype)
 
         if self.engine_plan.jit_unroll_slices and xp_is_jax(xp):
             self.logger.warning(f"'jit_unroll_slices' set to '{self.engine_plan.jit_unroll_slices!r}'. "
@@ -75,6 +76,7 @@ class LSQMLSolver(ConventionalSolver):
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
     ) -> SimulationState:
+        xp = sim.xp
         rescale_factors = []
 
         # precompute obj_mag, probe_mag, and rescale probe intensity
@@ -93,6 +95,7 @@ class LSQMLSolver(ConventionalSolver):
         self.logger.info(f"Rescaling initial probe intensity by {rescale_factor:.2e}")
         sim.state.probe.data *= numpy.sqrt(rescale_factor)
         self.probe_mag *= rescale_factor
+        self.probe_mag_max = xp.max(self.probe_mag, axis=(-2, -1))
 
         return sim
 
@@ -129,7 +132,7 @@ class LSQMLSolver(ConventionalSolver):
 
             (sim, new_obj_mag, new_probe_mag, errors, group_pos_update) = lsqml_run(
                 sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators, mtf=mtf,
-                obj_mag=self.obj_mag, probe_mag=self.probe_mag,
+                obj_mag=self.obj_mag, probe_mag=self.probe_mag, probe_mag_max=self.probe_mag_max,
                 new_obj_mag=new_obj_mag, new_probe_mag=new_probe_mag,
                 beta_object=beta_object, beta_probe=beta_probe,
                 update_object=update_object,
@@ -158,6 +161,7 @@ class LSQMLSolver(ConventionalSolver):
 
         self.obj_mag = new_obj_mag
         self.probe_mag = new_probe_mag
+        self.probe_mag_max = xp.max(new_probe_mag, axis=(-2, -1))
 
         return (sim, pos_update, iter_errors)
 
@@ -219,6 +223,7 @@ def lsqml_run(
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
     obj_mag: NDArray[numpy.floating],
     probe_mag: NDArray[numpy.floating],
+    probe_mag_max: NDArray[numpy.floating],
     new_obj_mag: NDArray[numpy.floating],
     new_probe_mag: NDArray[numpy.floating],
     beta_object: Float = 0.9,
@@ -240,8 +245,6 @@ def lsqml_run(
     eps = xp.array(1e-16, dtype=dtype)
     # ensure regularizations are at least `eps`
     gamma = t.cast(numpy.floating, xp.maximum(gamma, eps).astype(dtype))
-    illum_reg_object = t.cast(numpy.floating, xp.maximum(illum_reg_object, eps).astype(dtype))
-    # normalize illum_reg_probe by # of scan positions
     illum_reg_probe = t.cast(numpy.floating, xp.maximum(
         illum_reg_probe * math.prod(sim.state.scan.data.shape[:-1]),
     eps).astype(dtype))
@@ -303,7 +306,8 @@ def lsqml_run(
             # Eq. (25b): common update direction (in object space).
             delta_O_avg = xp.zeros_like(sim.state.object.data[0])
             delta_O_avg = obj_grid.add_view_at_pos(delta_O_avg, group_scan, xp.sum(delta_O, axis=1))
-            delta_O_avg /= (probe_mag[slice_i] + illum_reg_object)
+            # scale precond regularization by illumination, ensure at least epsilon
+            delta_O_avg /= (probe_mag[slice_i] + xp.maximum(eps, illum_reg_object * probe_mag_max[slice_i]))
 
             # Eq. (23b): optimal step size per probe position
             # step sizes computed in probe space, need to move delta_O_avg back to object space
