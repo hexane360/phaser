@@ -157,10 +157,25 @@ class LSQMLSolverPlan(Dataclass, kw_only=True):
     beta_object: ScheduleLike = 1.0
     beta_probe: ScheduleLike = 1.0
 
-    illum_reg_object: ScheduleLike = 1e-2
-    illum_reg_probe: ScheduleLike = 1e-2
+    illum_reg_object: ScheduleLike = 0.01
+    """
+    Preconditioner damping the object update in weakly-illuminated regions.
 
-    gamma: ScheduleLike = 1e-4
+    Dimensionless, acts relative to the region of greatest illumination.
+    """
+    illum_reg_probe: ScheduleLike = 0.0
+    """
+    Preconditioner damping the probe update in strongly absorptive regions of the object.
+
+    Dimensionless. Can be set to zero in most cases.
+    """
+
+    gamma: ScheduleLike = 0.0
+    """
+    Damping of the LSQ step.
+
+    In units of electrons, summed across a pattern. Can be set to zero in most cases.
+    """
 
 
 class EPIESolverPlan(Dataclass, kw_only=True):

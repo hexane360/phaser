@@ -863,7 +863,7 @@ def check_finite(*arrs: NDArray[numpy.inexact], context: t.Optional[str] = None)
 
     if not all(xp.all(xp.isfinite(arr)) for arr in arrs):
         if context:
-            raise ValueError(f"NaN or inf encountered in {context}")
+            raise ValueError(f"NaN or inf encountered, {context}")
         raise ValueError("NaN or inf encountered")
 
 

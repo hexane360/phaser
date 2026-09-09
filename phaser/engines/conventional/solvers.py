@@ -1,18 +1,35 @@
-from functools import partial
 import logging
+import math
 import typing as t
+from functools import partial
 
 import numpy
 from numpy.typing import NDArray
 
-from phaser.utils.num import cast_array_module, at, abs2, fft2, ifft2, jit, check_finite, to_complex_dtype, to_numpy, xp_is_jax
-from phaser.utils.image import PreparedOTF, PreparedPSF
-from phaser.hooks.solver import ConventionalSolver
-from phaser.types import process_schedule
-from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
-from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    stream_patterns, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    SimulationState,
+    cutout_group,
+    slice_backwards,
+    slice_forwards,
+    stream_patterns,
+    tilt_propagators,
+)
+from phaser.execute import Observer
+from phaser.hooks.solver import ConventionalSolver
+from phaser.plan import ConventionalEnginePlan, EPIESolverPlan, LSQMLSolverPlan
+from phaser.types import process_schedule
+from phaser.utils.image import PreparedOTF, PreparedPSF
+from phaser.utils.num import (
+    Float,
+    abs2,
+    at,
+    cast_array_module,
+    check_finite,
+    fft2,
+    ifft2,
+    jit,
+    to_numpy,
+    xp_is_jax,
 )
 
 
@@ -31,6 +48,7 @@ class LSQMLSolver(ConventionalSolver):
 
         self.obj_mag: NDArray[numpy.floating] = xp.zeros(sim.state.probe.data.shape[-2:], dtype=sim.dtype)
         self.probe_mag: NDArray[numpy.floating] = xp.zeros_like(sim.state.object.data, dtype=sim.dtype)
+        self.probe_mag_max: NDArray[numpy.floating] = xp.zeros(sim.state.object.data.shape[:-2], dtype=sim.dtype)
 
         if self.engine_plan.jit_unroll_slices and xp_is_jax(xp):
             self.logger.warning(f"'jit_unroll_slices' set to '{self.engine_plan.jit_unroll_slices!r}'. "
@@ -58,12 +76,13 @@ class LSQMLSolver(ConventionalSolver):
         pattern_mask: NDArray[numpy.floating],
         propagators: t.Optional[NDArray[numpy.complexfloating]],
     ) -> SimulationState:
+        xp = sim.xp
         rescale_factors = []
 
         # precompute obj_mag, probe_mag, and rescale probe intensity
         for (group, group_patterns) in self.iter_patterns(groups, patterns, sim.xp):
             (self.obj_mag, self.probe_mag, group_rescale_factors) = lsqml_dry_run(
-                sim, group, group_patterns, props=propagators, pattern_mask=pattern_mask,
+                sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators,
                 obj_mag=self.obj_mag, probe_mag=self.probe_mag
             )
 
@@ -76,6 +95,7 @@ class LSQMLSolver(ConventionalSolver):
         self.logger.info(f"Rescaling initial probe intensity by {rescale_factor:.2e}")
         sim.state.probe.data *= numpy.sqrt(rescale_factor)
         self.probe_mag *= rescale_factor
+        self.probe_mag_max = xp.max(self.probe_mag, axis=(-2, -1))
 
         return sim
 
@@ -112,7 +132,7 @@ class LSQMLSolver(ConventionalSolver):
 
             (sim, new_obj_mag, new_probe_mag, errors, group_pos_update) = lsqml_run(
                 sim, group, group_patterns, pattern_mask=pattern_mask, props=propagators, mtf=mtf,
-                obj_mag=self.obj_mag, probe_mag=self.probe_mag,
+                obj_mag=self.obj_mag, probe_mag=self.probe_mag, probe_mag_max=self.probe_mag_max,
                 new_obj_mag=new_obj_mag, new_probe_mag=new_probe_mag,
                 beta_object=beta_object, beta_probe=beta_probe,
                 update_object=update_object,
@@ -141,6 +161,7 @@ class LSQMLSolver(ConventionalSolver):
 
         self.obj_mag = new_obj_mag
         self.probe_mag = new_probe_mag
+        self.probe_mag_max = xp.max(new_probe_mag, axis=(-2, -1))
 
         return (sim, pos_update, iter_errors)
 
@@ -169,6 +190,8 @@ def lsqml_dry_run(
 
         if prop is not None:
             psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+        else:
+            psi *= group_obj[:, slice_i, None]
 
         return (probe_mag, psi)
 
@@ -176,10 +199,11 @@ def lsqml_dry_run(
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     (probe_mag, psi) = slice_forwards(props, (probe_mag, psi), run_slice)
 
-    # modeled and experimental intensity
-    # summed over incoherent modes and over the pattern
-    model_intensity = xp.sum(abs2(fft2(psi)), axis=(1, -2, -1))
-    exp_intensity = xp.sum(group_patterns * pattern_mask, axis=(-2, -1))
+    # summed over incoherent modes
+    model_intensity = xp.sum(abs2(fft2(psi)), axis=1)
+    # and over patterns
+    model_intensity = xp.sum(model_intensity * pattern_mask, axis=(-2, -1))
+    exp_intensity = xp.nansum(group_patterns * pattern_mask, axis=(-2, -1))
 
     return (obj_mag, probe_mag, exp_intensity / model_intensity)
 
@@ -199,32 +223,41 @@ def lsqml_run(
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
     obj_mag: NDArray[numpy.floating],
     probe_mag: NDArray[numpy.floating],
+    probe_mag_max: NDArray[numpy.floating],
     new_obj_mag: NDArray[numpy.floating],
     new_probe_mag: NDArray[numpy.floating],
-    beta_object: float = 0.9,
-    beta_probe: float = 0.9,
+    beta_object: Float = 0.9,
+    beta_probe: Float = 0.9,
     update_object: bool = True,
     update_probe: bool = True,
     update_position: bool = True,
     calc_error: bool = True,
     jit_unroll_slices: t.Union[int, bool] = False,
-    illum_reg_object: float,
-    illum_reg_probe: float,
-    gamma: float,
+    illum_reg_object: Float,
+    illum_reg_probe: Float,
+    gamma: Float,
 ) -> t.Tuple[SimulationState, NDArray[numpy.floating], NDArray[numpy.floating], t.Optional[NDArray[numpy.floating]], t.Optional[NDArray[numpy.floating]]]:
     xp = cast_array_module(sim.xp)
+    dtype = sim.ky.dtype
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
-    eps = 1e-16
+    eps = xp.array(1e-16, dtype=dtype)
+    # ensure regularizations are at least `eps`
+    gamma = t.cast(numpy.floating, xp.maximum(gamma, eps).astype(dtype))
+    illum_reg_probe = t.cast(numpy.floating, xp.maximum(
+        illum_reg_probe * math.prod(sim.state.scan.data.shape[:-1]),
+    eps).astype(dtype))
 
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
 
     group_probe_mag = xp.zeros_like(probe_mag)
-    #group_obj_mag = xp.sum(abs2(group_obj[:, 0]), axis=0)
-    group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    # object mag per probe position
+    pos_obj_mag = abs2(xp.prod(group_obj, axis=1))
+    # object mag summed across group
+    group_obj_mag = xp.sum(pos_obj_mag, axis=0)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
         (group_probe_mag, psi) = state
@@ -252,8 +285,6 @@ def lsqml_run(
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
         model_intensity = mtf(model_intensity)
-    # experimental data
-    # group_patterns = xp.array(sim.patterns[tuple(group)])[:, None]
 
     errors = xp.sqrt(xp.nansum((model_intensity - group_patterns[:, None])**2, axis=(1, -1, -2))) if calc_error else None
 
@@ -269,26 +300,50 @@ def lsqml_run(
 
         if update_object:
             delta_O = chi * xp.conj(psi[slice_i])
-            alpha_O = xp.sum(xp.sum(xp.real(chi * xp.conj(delta_O * psi[slice_i])), axis=(-1, -2), keepdims=True), axis=1) / (xp.sum(abs2(delta_O * psi[slice_i])) + gamma)
+            # per-position illumination, in probe space
+            pos_illum = xp.sum(abs2(psi[slice_i]), axis=1)
 
-            # average object update
+            # Eq. (25b): common update direction (in object space).
             delta_O_avg = xp.zeros_like(sim.state.object.data[0])
             delta_O_avg = obj_grid.add_view_at_pos(delta_O_avg, group_scan, xp.sum(delta_O, axis=1))
-            delta_O_avg /= (group_probe_mag[slice_i] + illum_reg_object)
+            # scale precond regularization by illumination, ensure at least epsilon
+            delta_O_avg /= (probe_mag[slice_i] + xp.maximum(eps, illum_reg_object * probe_mag_max[slice_i]))
 
-            obj_update = beta_object * xp.sum(alpha_O * delta_O_avg * group_probe_mag[slice_i], axis=0) / (group_probe_mag[slice_i] + eps)
+            # Eq. (23b): optimal step size per probe position
+            # step sizes computed in probe space, need to move delta_O_avg back to object space
+            prod_O = obj_grid.get_view_at_pos(delta_O_avg, group_scan, psi.shape[-2:])[:, None] * psi[slice_i]
+            # denominator in units of electrons
+            alpha_O = xp.sum(
+                xp.sum(xp.real(chi * xp.conj(prod_O)), axis=(-1, -2), keepdims=True), axis=1
+            ) / (
+                xp.sum(xp.sum(abs2(prod_O), axis=1), axis=(-1, -2), keepdims=True) + gamma
+            )
+
+            # Eq. (27b): weight step size by illumination, back to object space
+            alpha_illum = xp.zeros_like(group_probe_mag[slice_i])
+            alpha_illum = obj_grid.add_view_at_pos(alpha_illum, group_scan, alpha_O * pos_illum)
+
+            # apply final object update
+            obj_update = beta_object/n_slices * delta_O_avg * alpha_illum / (group_probe_mag[slice_i] + eps)
             sim.state.object.data = at(sim.state.object.data, slice_i).add(obj_update)
 
         if prop is not None:
             chi = ifft2(fft2(delta_P) * prop.conj()[:, None])
         elif update_probe:
+            # Eq. (25a)
             delta_P_avg = ifft2(xp.sum(fft2(delta_P) * subpx_filters.conj(), axis=0))
-            delta_P_avg /= (group_obj_mag + illum_reg_probe)
+            delta_P_avg /= (obj_mag + illum_reg_probe)
 
-            # update step per probe mode
-            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * group_obj[:, slice_i, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * group_obj[:, slice_i, None])) + gamma)
+            # Eq. (23a): optimal step size per probe position and probe mode
+            prod_P = delta_P_avg[None] * group_obj[:, slice_i, None]
+            alpha_P = xp.sum(xp.real(chi * xp.conj(prod_P)), axis=(-1, -2), keepdims=True) / (
+                xp.sum(abs2(prod_P), axis=(-1, -2), keepdims=True) + gamma
+            )
 
-            probe_update = beta_probe * xp.sum(alpha_P * delta_P_avg * group_obj_mag, axis=0) / (group_obj_mag + eps)
+            # Eq. (27a)
+            probe_update = beta_probe * delta_P_avg * xp.sum(
+                alpha_P * pos_obj_mag[:, None], axis=0
+            ) / (group_obj_mag + eps)
             sim.state.probe.data += probe_update
 
         return (sim, chi)
@@ -300,12 +355,11 @@ def lsqml_run(
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
             prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+            return xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) \
+                / (xp.sum(abs2(prod), axis=(1, -1, -2)) + eps)
 
         # update directions
         probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
         pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
     else:
         pos_update = None
@@ -384,8 +438,7 @@ class EPIESolver(ConventionalSolver):
     ) -> t.Tuple[SimulationState, NDArray[numpy.floating], t.List[NDArray[numpy.floating]]]:
         xp = sim.xp
 
-        # TODO: ePIE position update
-        pos_update = xp.zeros_like(sim.state.scan.data)
+        pos_update = xp.zeros_like(sim.state.scan.data, dtype=sim.dtype)
         iter_errors = []
 
         beta_object = process_schedule(self.plan.beta_object)({'state': sim.state, 'niter': self.engine_plan.niter})
@@ -403,6 +456,7 @@ class EPIESolver(ConventionalSolver):
                 beta_probe=beta_probe,
                 update_object=update_object,
                 update_probe=update_probe,
+                update_position=update_positions,
                 jit_unroll_slices=self.jit_unroll_slices,
             )
             if self.engine_plan.check_every_group:
@@ -432,22 +486,22 @@ def epie_dry_run(
     props: t.Optional[NDArray[numpy.complexfloating]],
 ) -> NDArray[numpy.floating]:
     xp = cast_array_module(sim.xp)
-    (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
+    (psi, group_obj, _group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
-
-        return psi
+            return ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+        return psi * group_obj[:, slice_i, None]
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, run_slice)
+    psi = slice_forwards(props, psi, sim_slice)
 
-    # modeled and experimental intensity
-    # summed over incoherent modes and over the pattern
-    model_intensity = xp.sum(abs2(fft2(psi)), axis=(1, -2, -1))
-    exp_intensity = xp.sum(group_patterns * pattern_mask, axis=(-2, -1))
+    # summed over incoherent modes
+    model_intensity = xp.sum(abs2(fft2(psi)), axis=1)
+    # and over patterns
+    model_intensity = xp.sum(model_intensity * pattern_mask, axis=(-2, -1))
+    exp_intensity = xp.nansum(group_patterns * pattern_mask, axis=(-2, -1))
 
     return exp_intensity / model_intensity
 
@@ -475,6 +529,8 @@ def epie_run(
     xp = cast_array_module(sim.xp)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
+
+    eps = 1e-16
 
     (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
@@ -539,12 +595,11 @@ def epie_run(
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
             prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+            return xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) \
+                / (xp.sum(abs2(prod), axis=(1, -1, -2)) + eps)
 
         # update directions
         probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
         pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
     else:
         pos_update = None

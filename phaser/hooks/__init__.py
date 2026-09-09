@@ -184,7 +184,6 @@ class PostInitArgs(t.TypedDict):
     dtype: DTypeLike
     xp: t.Any
 
-
 class ScaleProps(Dataclass):
     scale: float
 
@@ -194,33 +193,32 @@ class OffsetProps(Dataclass):
 class BinProps(Dataclass):
     bin: int
 
-
-
 class CropDataProps(Dataclass):
     crop: tuple[
         # y_i, y_f, x_i, x_f
         int | None, int | None, int | None, int | None,
     ] 
 
-
 class PoissonProps(Dataclass):
     scale: float | None = None
     gaussian: float | None = 1.0e-3
-
-
-class DropNanProps(Dataclass):
-    threshold: float = 0.9
-
-
-class DiffractionAlignProps(Dataclass):
-    ...
-
 
 class ApplyMtfProps(Dataclass):
     mtf: FilterHook
     domain: t.Literal['real', 'recip'] = 'recip'
     """Whether to apply the filter by direct spatial-domain convolution ('real') or by
     multiplying in the Fourier domain ('recip')."""
+
+
+class DropNanProps(Dataclass):
+    threshold: float = 0.9
+
+class DiffractionAlignProps(Dataclass):
+    ...
+
+class PerturbScanProps(Dataclass):
+    sigma: float
+    """Standard deviation to perturn scan by (data units)."""
 
 
 class PostLoadHook(Hook[RawData, RawData]):
@@ -238,6 +236,7 @@ class PostInitHook(Hook[PostInitArgs, tuple['Patterns', 'ReconsState']]):
     known: t.ClassVar = {
         'drop_nans': ('phaser.hooks.preprocessing:drop_nan_patterns', DropNanProps),
         'diffraction_align': ('phaser.hooks.preprocessing:diffraction_align', DiffractionAlignProps),
+        'perturb_scan': ('phaser.hooks.preprocessing:perturb_scan', PerturbScanProps),
     }
 
 

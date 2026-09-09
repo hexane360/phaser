@@ -25,27 +25,32 @@ engines:
 
    noise_model:
      type: 'anscombe'
-     eps: 0.1
+     eps: 1.0
 
    solver:
      type: 'lsqml'
-     beta_probe: 1.0
-     beta_object: 1.0
-     gamma: 1.0e-4
+     beta_probe: 0.1
+     beta_object: 0.5
 
-     illum_reg_object: 1.0e-2
-     illum_reg_probe: 1.0e-2
+     illum_reg_object: 0.01
+     illum_reg_probe: 0.0
+     gamma: 0.0
 
    position_solver:
      type: momentum
-     momentum: 0.90
-     step_size: 8.0e-2
+     # `step_size` is a fraction of the LSQ optimal step
+     momentum: 0.9
+     step_size: 2.0
      max_step_size: 0.2
 
    group_constraints:
     - type: clamp_object_amplitude
       amplitude: 1.1
-   iter_constraints: []
+   iter_constraints:
+    - remove_phase_ramp
+    - type: obj_gaussian
+      sigma: 0.2
+      weight: 0.1
 
    update_probe: {after: 5}
    update_positions: {after: 30}
@@ -66,27 +71,32 @@ engines:
 
    noise_model:
      type: 'anscombe'
-     eps: 1.0e-4
+     eps: 1.0
 
    solver:
      type: 'lsqml'
-     beta_probe: 0.5
+     beta_probe: 0.1
      beta_object: 0.5
-     gamma: 1.0e-4
 
-     illum_reg_object: 1.0e-2
-     illum_reg_probe: 1.0e-2
+     illum_reg_object: 0.01
+     illum_reg_probe: 0.0
+     gamma: 0.0
 
    position_solver:
      type: momentum
-     momentum: 0.90
-     step_size: 8.0e-2
+     # `step_size` is a fraction of the LSQ optimal step
+     momentum: 0.9
+     step_size: 2.0
      max_step_size: 0.2
 
    group_constraints:
     - type: clamp_object_amplitude
       amplitude: 1.1
-   iter_constraints: []
+   iter_constraints:
+    - remove_phase_ramp
+    - type: obj_gaussian
+      sigma: 0.2
+      weight: 0.1
 
    update_probe: {after: 1}
    update_positions: {after: 30}
