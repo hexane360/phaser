@@ -50,7 +50,7 @@ def test_metadata_bad_version():
         obj = json.load(f)
 
     obj['version'] = '2.5'
-    with pytest.raises(ConvertError, match="Version 2.5 is not supported version 2.0"):
+    with pytest.raises(ConvertError, match="Version 2.5 is not supported, version 2.0 required"):
         EmpadMetadata.from_data(obj)
 
     obj['version'] = '1_5'

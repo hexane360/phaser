@@ -331,7 +331,7 @@ class _VersionConverter(Converter[t.Any]):
     def check_version(self, val: t.Tuple[int, ...]):
         if self.min == self.max:
             if self.min is not None and val != self.min:
-                raise ValueError(f"Version {'.'.join(map(str, val))} is not supported version {'.'.join(map(str, self.min))}")
+                raise ValueError(f"Version {'.'.join(map(str, val))} is not supported, version {'.'.join(map(str, self.min))} required")
         elif self.min is not None and val < self.min:
             raise ValueError(f"Version {'.'.join(map(str, val))} less than minimum supported version {'.'.join(map(str, self.min))}")
         elif self.max is not None and val > self.max:
