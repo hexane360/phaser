@@ -47,15 +47,15 @@ def _load_cupy() -> ModuleType:
     with warnings.catch_warnings():
         # https://github.com/cupy/cupy/issues/8718
         warnings.filterwarnings(action='ignore', message=r"cupyx\.jit\.rawkernel is experimental", category=FutureWarning)
-        import cupyx.scipy.signal   # pyright: ignore[reportMissingImports,reportUnusedImport]
-        import cupyx.scipy.ndimage  # pyright: ignore[reportMissingImports,reportUnusedImport] # noqa: F401
+        import cupyx.scipy.ndimage  # pyright: ignore[reportMissingImports,reportUnusedImport]
+        import cupyx.scipy.signal  # pyright: ignore[reportMissingImports,reportUnusedImport] # noqa: F401
 
     return t.cast(ModuleType, mock_cupy)
 
 def _load_jax() -> ModuleType:
-    import jax
+    import jax  # pyright: ignore[reportMissingImports]
     jax.config.update('jax_enable_x64', jax.default_backend() != 'METAL')
-    import jax.scipy
+    import jax.scipy  # pyright: ignore[reportMissingImports,reportUnusedImport]
 
     return jax.numpy
 
@@ -105,6 +105,7 @@ class _BackendLoader:
             cbs.append(fn)
 
     def get(self, name: BackendName):
+        """Try to get backend `name`, loading it if necessary."""
         name = self._normalize(name)
         if name == 'numpy':
             return numpy
@@ -115,6 +116,7 @@ class _BackendLoader:
         return None if t.TYPE_CHECKING else self.inner[name]
 
     def try_get(self, name: BackendName):
+        """Get backend `name` if it's already loaded, don't attempt to load otherwise."""
         name = self._normalize(name)
         if name == 'numpy':
             return numpy
@@ -358,13 +360,13 @@ def as_array(arr: ArrayLike, xp: t.Any = None) -> numpy.ndarray:
 
 
 def is_cupy(arr: NDArray[numpy.generic]) -> bool:
-    if (cupy := _BACKEND_LOADER.get('cupy')) is None:
+    if (cupy := _BACKEND_LOADER.try_get('cupy')) is None:
         return False
     return isinstance(arr, cupy.ndarray)
 
 
 def is_jax(arr: t.Any) -> bool:
-    if (jnp := _BACKEND_LOADER.get('jax')) is None:
+    if (jnp := _BACKEND_LOADER.try_get('jax')) is None:
         return False
     import jax  # pyright[ignoreMissingImports]
 
@@ -375,7 +377,7 @@ def is_jax(arr: t.Any) -> bool:
 
 
 def is_torch(arr: t.Any) -> bool:
-    if (torch := t.cast(ModuleType, _BACKEND_LOADER.get('torch'))) is None:
+    if (torch := t.cast(ModuleType, _BACKEND_LOADER.try_get('torch'))) is None:
         return False
 
     return any(
@@ -437,6 +439,8 @@ class _JitKernel(t.Generic[P, T]):
     ):
         self.inner = f
         functools.update_wrapper(self, f)
+
+        # TODO make this stuff lazy so we don't have to load backends prematurely
 
         if cupy_fuse and (cupy := _BACKEND_LOADER.get('cupy')):
             self.inner = cupy.fuse()(self.inner)  # type: ignore
@@ -507,7 +511,7 @@ def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwa
 
 def assert_dtype(arr: numpy.ndarray, dtype: t.Type[numpy.generic]):
     if is_torch(arr):
-        from ._torch_kernels import to_torch_dtype, to_numpy_dtype
+        from ._torch_kernels import to_numpy_dtype, to_torch_dtype
 
         if arr.dtype != to_torch_dtype(dtype):
             raise TypeError(f"Expected array to be dtype {dtype}, got dtype {to_numpy_dtype(arr.dtype)} instead")
