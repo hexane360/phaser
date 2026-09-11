@@ -105,6 +105,7 @@ version = {attr = "phaser.__version__"}
 include = ["phaser*"]
 
 [tool.setuptools.package-data]
+"phaser.web" = ["*.sh"]
 "phaser.web.static" = ["*"]
 "phaser.web.static.dist" = ["*"]
 "phaser.web.templates" = ["*"]

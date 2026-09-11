@@ -139,6 +139,36 @@ class WorkerState(pane.PaneBase):
     start_time: t.Optional[datetime.datetime] = None
     hostname: t.Optional[str] = None
     backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
+    url: t.Optional[str] = None
+    """URL the worker reports to. A manual worker is started with it by hand."""
+
+class SlurmProfileInfo(pane.PaneBase):
+    """Server -> client: a slurm profile, in the form the launch form edits."""
+    name: str
+    description: t.Optional[str] = None
+    working_dir: t.Optional[str] = None
+    output: t.Optional[str] = None
+    sbatch_args: str = ''
+    preamble: str = ''
+    python: t.Optional[str] = None
+
+class SlurmInfo(pane.PaneBase):
+    """Server -> client: slurm availability and the configured profiles."""
+    available: bool
+    version: t.Optional[str] = None
+    error: t.Optional[str] = None
+    """Why slurm is unavailable, or why the server config couldn't be read."""
+    default_profile: t.Optional[str] = None
+    profiles: t.List[SlurmProfileInfo] = pane.field(default_factory=list)
+
+class SlurmLaunch(pane.PaneBase):
+    """Client -> server: launch a slurm worker, overriding the profile for this launch."""
+    profile: t.Optional[str] = None
+    working_dir: t.Optional[str] = None
+    output: t.Optional[str] = None
+    sbatch_args: t.Optional[str] = None
+    preamble: t.Optional[str] = None
+    python: t.Optional[str] = None
 
 class JobState(pane.PaneBase):
     job_id: JobID

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import sys
 import typing as t
 from pathlib import Path
@@ -15,6 +16,13 @@ from werkzeug.exceptions import HTTPException
 import pane
 
 from ..version import version_info
+from .config import (
+    SERVER_CONFIG,
+    ServerConfig,
+    apply_overrides,
+    remote_worker_netloc,
+    resolve_profile,
+)
 from .pubsub import Session
 from .server import (
     Job,
@@ -25,6 +33,7 @@ from .server import (
     raise_on_shutdown,
     server,
 )
+from .slurm import SlurmError
 from .types import (
     ClientMessage,
     ErrorMessage,
@@ -34,6 +43,9 @@ from .types import (
     LogRecord,
     OkResponse,
     ServerShutdownMessage,
+    SlurmInfo,
+    SlurmLaunch,
+    SlurmProfileInfo,
     TopicUpdate,
     UpdateMessage,
     UpdatesMessage,
@@ -141,9 +153,101 @@ async def shutdown():
 
     return Response("", status=202)
 
+def _server_config() -> t.Tuple[ServerConfig, t.Optional[str]]:
+    """The server config, plus a message if it couldn't be read.
+
+    A broken config file leaves the rest of the server usable, so the message is reported to
+    whoever asked rather than raised.
+    """
+    try:
+        return (SERVER_CONFIG.get(), None)
+    except Exception as e:
+        return (ServerConfig(), f"Couldn't read config file '{SERVER_CONFIG.path()}': {e}")
+
+
+def _remote_worker_url(worker_id: WorkerID, config: ServerConfig) -> str:
+    """Worker URL reachable from another machine. Raises `ValueError` if there isn't one."""
+    return server.get_worker_url(worker_id, remote_worker_netloc(server.host, config.worker_host))
+
+
+@app.get("/slurm/profiles")
+async def slurm_profiles():
+    """Slurm availability and the configured worker profiles, for the launch form."""
+    (config, error) = await run_sync(_server_config)()
+
+    try:
+        await server.slurm_manager.check_slurm_exists()
+        available = True
+    except RuntimeError as e:
+        (available, error) = (False, error or str(e))
+
+    if available and error is None:
+        # surfaced before launching, since it's a server-config problem rather than a
+        # problem with the request
+        try:
+            remote_worker_netloc(server.host, config.worker_host)
+        except ValueError as e:
+            error = str(e)
+
+    if not (profiles := config.slurm_profiles):
+        # with nothing configured, the built-in default profile is what a launch would use
+        (name, profile) = resolve_profile(config)
+        profiles = {name: profile}
+
+    return json_response(SlurmInfo(
+        available=available,
+        version=server.slurm_manager.version,
+        error=error,
+        default_profile=resolve_profile(config)[0],
+        profiles=[
+            SlurmProfileInfo(
+                name=name, description=profile.description,
+                working_dir=profile.working_dir, output=profile.output,
+                sbatch_args=shlex.join(profile.args()),
+                preamble=profile.preamble, python=profile.python,
+            )
+            for (name, profile) in profiles.items()
+        ],
+    ))
+
+
+async def _start_slurm_worker(worker_id: WorkerID, body: t.Union[str, bytes]):
+    if sys.platform not in ('linux', 'darwin'):
+        abort(Response(f"Slurm not supported on platform '{sys.platform}'", 400))
+    try:
+        await server.slurm_manager.check_slurm_exists()
+    except RuntimeError as e:
+        abort(Response(f"Slurm not available: {e}", 400))
+
+    try:
+        launch = pane.from_data(json.loads(body), SlurmLaunch) if body.strip() else SlurmLaunch()
+    except (ValueError, pane.ConvertError) as e:
+        abort(Response(f"Invalid request: {e}", 400))
+
+    (config, error) = await run_sync(_server_config)()
+    if error is not None:
+        abort(Response(error, 400))
+
+    try:
+        (name, profile) = resolve_profile(config, launch.profile)
+        profile = apply_overrides(
+            profile, launch.sbatch_args, launch.preamble, launch.python,
+            launch.working_dir, launch.output,
+        )
+        url = _remote_worker_url(worker_id, config)
+    except ValueError as e:
+        abort(Response(str(e), 400))
+
+    try:
+        return await server.slurm_manager.make_worker(worker_id, url, profile, name)
+    except SlurmError as e:
+        logging.warning(f"Slurm rejected worker {worker_id}: {e}")
+        abort(Response(f"Slurm rejected the job:\n{e}", 400))
+
+
 @app.post("/worker/<string:worker_type>/start")
 async def start_worker(worker_type: str):
-    _ = await request.get_data()
+    body = await request.get_data()
 
     if worker_type not in ('manual', 'local', 'slurm'):
         abort(404, description=f"Unknown worker type '{worker_type}'")
@@ -151,19 +255,19 @@ async def start_worker(worker_type: str):
     worker_id = server.make_workerid()
 
     if worker_type == 'manual':
-        worker = ManualWorker(worker_id)
+        # a manual worker may be started anywhere, so it gets a remotely-reachable URL when
+        # one exists, and the local one otherwise
+        (config, _) = await run_sync(_server_config)()
+        try:
+            url = _remote_worker_url(worker_id, config)
+        except ValueError as e:
+            logging.warning(f"Manual worker URL is local-only: {e}")
+            url = server.get_worker_url(worker_id)
+        worker = ManualWorker(worker_id, url)
     elif worker_type == 'local':
         worker = LocalWorker(worker_id, server.get_worker_url(worker_id))
     elif worker_type == 'slurm':
-        if sys.platform not in ('linux', 'darwin'):
-            abort(Response(f"Slurm not supported on platform '{sys.platform}'", 400))
-        try:
-            await server.slurm_manager.check_slurm_exists()
-        except RuntimeError as e:
-            abort(Response(f"Slurm not available: {e}", 400))
-        # TODO: this is hardcoded
-        url = server.get_worker_url(worker_id).replace('localhost', '172.22.254.14')
-        worker = await server.slurm_manager.make_worker(worker_id, url)
+        worker = await _start_slurm_worker(worker_id, body)
 
     await server.workers.add(worker)
 

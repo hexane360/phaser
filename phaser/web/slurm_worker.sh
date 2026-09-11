@@ -1,15 +1,12 @@
 #!/bin/bash
+# Template for slurm worker jobs. The markers below are substituted at submission time by
+# `render_worker_script` (phaser/web/slurm.py).
 
-module load anaconda/Python-ML-2025a
-eval "$(conda 'shell.bash' hook)"
-# load conda env
-conda activate phaser
+@PREAMBLE@
 
-module load cuda/12.9
+python_exec=@PYTHON@
 
-python_exec="python"
-
-url="$1"
+url=@URL@
 echo "Running worker, connecting to '$url'"
 
 while true; do

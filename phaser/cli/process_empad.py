@@ -56,6 +56,9 @@ class ProcessEmpadConfig(pane.PaneBase):
     """Default convergence angle (mrad)"""
 
 
+CONFIG: Config[ProcessEmpadConfig] = Config('process_empad', ProcessEmpadConfig)
+
+
 def default_console() -> Console:
     console = Console(theme=Theme({
         'warning': 'bold yellow',
@@ -256,7 +259,7 @@ def process_empad(
     Process EMPAD XML metadata for all the datasets contained in FOLDER.
     """
     console = default_console()
-    config = Config('process_empad', ProcessEmpadConfig)
+    config = CONFIG
 
     if make_config:
         if not config.write_default():

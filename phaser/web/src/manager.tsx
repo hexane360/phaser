@@ -6,7 +6,7 @@ import { atom, PrimitiveAtom, useAtomValue, Provider, useStore } from 'jotai';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 import '@mantine/dropzone/styles.css';
-import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text, ActionIcon, Autocomplete, Modal } from '@mantine/core';
+import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text, ActionIcon, Autocomplete, Modal, Select, TextInput, Textarea, Alert, CopyButton, Tooltip } from '@mantine/core';
 import { Dropzone, FileRejection } from '@mantine/dropzone';
 import { Notifications } from '@mantine/notifications';
 import { IconUpload, IconFileText, IconX } from '@tabler/icons-react';
@@ -14,7 +14,7 @@ import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import TimeAgo from 'react-timeago';
 
 import './styles.css';
-import { JobState, WorkerState } from './types';
+import { JobState, SlurmEditKey, SlurmInfo, SlurmLaunch, SlurmProfileInfo, SLURM_EDIT_KEYS, WorkerState } from './types';
 import { fetchTraceback, jobHasFailure, jobStatus, workerStatusColor } from './status';
 import { makeTheme, cssVariableResolver } from './theme';
 import { Section, Mono } from './components';
@@ -58,6 +58,7 @@ export function Worker({state}: {state: WorkerState}) {
         </div>
         <Collapse className="card-body" expanded={opened}>
             <div className="grid" style={{gridTemplateColumns: "1fr 1fr"}}>
+                {state.worker_type == 'manual' && state.url && <WorkerCommand state={state}/>}
                 <div>{state.hostname ? <>Hostname: <Mono>{state.hostname}</Mono></> : <></>}</div>
                 <div>{state.current_job ? `Running job: ${state.current_job}` : ""}</div>
                 <div style={{gridColumn: "1/-1"}}>{state.backends ? <>Backends: <Mono>{procBackends(state.backends)}</Mono></> : <></>}</div>
@@ -65,6 +66,28 @@ export function Worker({state}: {state: WorkerState}) {
             </div>
         </Collapse>
     </div>
+}
+
+// A manual worker does nothing until someone runs this, so it's the command rather than the
+// bare URL, ready to paste. Other worker types already ran it themselves; the URL is shown for
+// them too, since it's the address they're expected to report to.
+function WorkerCommand({state}: {state: WorkerState}) {
+    const manual = state.worker_type === 'manual';
+    const text = manual ? `phaser worker ${state.url}` : state.url ?? "";
+
+    return <Group gap="xs" wrap="nowrap" style={{gridColumn: "1/-1"}} onClick={(e) => e.stopPropagation()}>
+        <Text size="sm">{manual ? "Start with:" : "URL:"}</Text>
+        <Code style={{overflowX: 'auto'}}>{text}</Code>
+        <CopyButton value={text}>
+            {({copied, copy}) => (
+                <Tooltip label={copied ? "Copied" : "Copy"} withArrow>
+                    <Button variant="subtle" size="compact-sm" onClick={copy}>
+                        {copied ? "Copied" : "Copy"}
+                    </Button>
+                </Tooltip>
+            )}
+        </CopyButton>
+    </Group>;
 }
 
 export function Workers({workers}: {workers: PrimitiveAtom<ViewState<Array<WorkerState>>>}) {
@@ -178,8 +201,125 @@ export function Jobs({jobs}: {jobs: PrimitiveAtom<ViewState<Array<JobState>>>}) 
     </div>;
 }
 
+// The slurm launch form: a profile from the server config, plus edits which apply to this
+// launch only. Profiles are read-only here -- they're edited in the server's config file.
+function SlurmPanel({start}: {start: (url: string, body?: unknown) => Promise<unknown>}) {
+    const [fetchInfo] = useGetAction<SlurmInfo>("Couldn't fetch slurm profiles");
+    const [info, setInfo] = React.useState<SlurmInfo | null | 'pending'>('pending');
+    // survives a reload: the same profile is usually launched repeatedly
+    const [profileName, setProfileName] = useLocalStorage({
+        key: 'phaser.manager.slurmProfile', defaultValue: "", getInitialValueInEffect: false,
+    });
+    const [edits, setEdits] = React.useState<SlurmLaunch>({});
+    const [customized, {toggle: toggleCustomize}] = useDisclosure(false);
+
+    React.useEffect(() => {
+        let live = true;
+        fetchInfo('slurm/profiles').then((result) => { if (live) setInfo(result); });
+        return () => { live = false; };
+    }, [fetchInfo]);
+
+    const profiles: Array<SlurmProfileInfo> = info && info !== 'pending' ? info.profiles : [];
+    // the remembered name may name a profile which is no longer configured
+    const profile = profiles.find((p) => p.name === profileName)
+        ?? profiles.find((p) => p.name === (info && info !== 'pending' ? info.default_profile : null))
+        ?? profiles[0];
+
+    // edits belong to the profile they were made against
+    const select = (name: string | null) => {
+        if (name === null) return;
+        setProfileName(name);
+        setEdits({});
+    };
+
+    if (info === 'pending') return <Text size="sm" c="dimmed">Loading slurm profiles…</Text>;
+    if (info === null) return <Text size="sm" c="dimmed">Couldn't fetch slurm profiles.</Text>;
+    if (!info.available) {
+        return <Stack>
+            <Text>Slurm isn't available on this server.</Text>
+            {info.error && <Code block>{info.error}</Code>}
+        </Stack>;
+    }
+
+    const value = (key: SlurmEditKey): string => edits[key] ?? profile?.[key] ?? "";
+    // read out of the event before updating: `currentTarget` is null by the time React runs
+    // the updater, which is after the event finishes dispatching
+    const edit = (key: SlurmEditKey) =>
+        (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+            const edited = e.currentTarget.value;
+            setEdits((s) => ({...s, [key]: edited}));
+        };
+
+    // only what actually differs from the profile is sent, so an untouched form launches the
+    // profile exactly as configured
+    const launch = () => {
+        if (!profile) return;
+        const body: SlurmLaunch = {profile: profile.name};
+        for (const key of SLURM_EDIT_KEYS) {
+            if (value(key) !== (profile[key] ?? "")) body[key] = value(key);
+        }
+        start("worker/slurm/start", body);
+    };
+
+    return <Stack>
+        <div>Starts a remote worker using Slurm{info.version ? ` (${info.version})` : ""}</div>
+        {info.error && <Alert color="red" title="Server configuration">{info.error}</Alert>}
+        <Group align="flex-end">
+            <Select
+                label="Profile" data={profiles.map((p) => p.name)} value={profile?.name ?? null}
+                onChange={select} allowDeselect={false} w={240}
+            />
+            <Button variant="subtle" onClick={toggleCustomize}>
+                {customized ? "Hide options" : "Customize"}
+            </Button>
+        </Group>
+        {profile?.description && <Text size="sm" c="dimmed">{profile.description}</Text>}
+        <Collapse expanded={customized}>
+            <Stack>
+                <TextInput
+                    label="Working directory" value={value('working_dir')} spellCheck={false}
+                    placeholder="the directory the server was started in"
+                    description="'%i' for worker id, will be created if it doesn't exist"
+                    onChange={edit('working_dir')}
+                />
+                <TextInput
+                    label="Output file" value={value('output')} spellCheck={false}
+                    placeholder="slurm-<jobid>.out, in the working directory"
+                    description="'%i' for worker id; slurm's own patterns ('%j', '%N') still apply"
+                    onChange={edit('output')}
+                />
+                <TextInput
+                    label="sbatch arguments" value={value('sbatch_args')} spellCheck={false}
+                    onChange={edit('sbatch_args')}
+                />
+                <Textarea
+                    label="Preamble" description="Shell commands run before the worker starts"
+                    value={value('preamble')} autosize minRows={3} maxRows={12} spellCheck={false}
+                    styles={{input: {fontFamily: 'monospace'}}}
+                    onChange={edit('preamble')}
+                />
+                <TextInput
+                    label="Python executable" value={value('python')} spellCheck={false}
+                    placeholder={value('preamble').trim()
+                        ? "python, from the environment the preamble sets up"
+                        : "the server's own interpreter"}
+                    onChange={edit('python')}
+                />
+                <Group>
+                    <Button variant="default" onClick={() => setEdits({})} disabled={!Object.keys(edits).length}>
+                        Reset
+                    </Button>
+                    <Text size="sm" c="dimmed">Changes apply to this worker only.</Text>
+                </Group>
+            </Stack>
+        </Collapse>
+        <div><button onClick={launch} disabled={!profile || !!info.error}>Start</button></div>
+    </Stack>;
+}
+
 export function StartWorkers(props: {}) {
-    const [start, pending] = usePostAction("Couldn't start worker");
+    // block: a refused slurm submission is several lines of sbatch complaint, worth reading
+    const [start, pending] = usePostAction("Couldn't start worker", {block: true});
 
     // an allocated worker announces itself on the `workers` topic, so there's nothing to
     // report on success
@@ -204,11 +344,8 @@ export function StartWorkers(props: {}) {
                     <div><button onClick={start_worker("local")}>Start</button></div>
                 </Stack>
             </Tabs.Panel>
-            <Tabs.Panel value="slurm" style={panelStyle}>
-                <Stack>
-                    <div>Starts a remote worker using Slurm (more configuration to come!)</div>
-                    <div><button onClick={start_worker("slurm")}>Start</button></div>
-                </Stack>
+            <Tabs.Panel value="slurm" style={panelStyle} keepMounted={false}>
+                <SlurmPanel start={start}/>
             </Tabs.Panel>
             <Tabs.Panel value="manual" style={panelStyle}>
                 <Stack>

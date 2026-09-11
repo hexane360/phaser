@@ -70,7 +70,43 @@ export interface WorkerState {
     start_time: string | null;
     hostname: string | null;
     backends: Array<[string, string]> | null;
+    // URL the worker reports to. A manual worker is started with it by hand.
+    url: string | null;
 }
+
+// A slurm profile from the server config, in the form the launch form edits.
+export interface SlurmProfileInfo {
+    name: string;
+    description: string | null;
+    working_dir: string | null;
+    output: string | null;
+    sbatch_args: string;
+    preamble: string;
+    python: string | null;
+}
+
+export interface SlurmInfo {
+    available: boolean;
+    version: string | null;
+    // why slurm is unavailable, or why the server config couldn't be read
+    error: string | null;
+    default_profile: string | null;
+    profiles: Array<SlurmProfileInfo>;
+}
+
+// Overrides applied to a profile for a single launch. Omitted fields keep the profile's value.
+export interface SlurmLaunch {
+    profile?: string;
+    working_dir?: string;
+    output?: string;
+    sbatch_args?: string;
+    preamble?: string;
+    python?: string;
+}
+
+// The profile fields the launch form edits, all of them plain strings there.
+export const SLURM_EDIT_KEYS = ['working_dir', 'output', 'sbatch_args', 'preamble', 'python'] as const;
+export type SlurmEditKey = typeof SLURM_EDIT_KEYS[number];
 
 export interface JobState {
     job_id: string;
