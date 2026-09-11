@@ -4,7 +4,7 @@ phaser: The weapon of choice for ptychographic reconstructions
 
 
 `phaser` is a fully-featured package for multislice electron ptychography.
-See our [arXiv paper](https://arxiv.org/abs/2505.14372) for more details.
+See our [paper](https://www.nature.com/articles/s41524-026-01956-8) for more details.
 
 ## Features
 
@@ -105,6 +105,10 @@ $ unzip sample_data.zip -x / -d sample_data
 
 Sample data includes simulated and experimental MoS2 data, simulated and experimental Si data, and experimental PrScO3 data.
 After the data is downloaded, any of the example reconstructions can be run as `phaser run examples/mos2_grad.yaml` (for example).
+
+## Acknowledging phaser
+
+> Gilgenbach, C., Zhu, M. & LeBeau, J.M. phaser: a unified and extensible framework for fast electron ptychography. npj Comput Mater 12, 89 (2026). https://doi.org/10.1038/s41524-026-01956-8.
 
 ## Alternatives
 
