@@ -16,9 +16,9 @@ jobs:
     # require tests to succeed, and 'ci: deploy' in commit message
     if: "${{ github.event.workflow_run.conclusion == 'success' && contains(github.event.workflow_run.head_commit.message, 'ci: deploy') }}"
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -39,7 +39,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           tag: '${{ steps.version.outputs.tag }}'
-          commit: '${{ github.event.head_commit.id }}'
+          commit: '${{ github.event.workflow_run.head_sha }}'
           bodyFile: 'release_notes.md'
           name: 'Version ${{ steps.version.outputs.version }}'
           artifacts: 'dist/*'

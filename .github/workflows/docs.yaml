@@ -19,9 +19,9 @@ jobs:
       GIT_COMMITTER_NAME: github-actions
       GIT_COMMITTER_EMAIL: github-actions@github.com
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip'
