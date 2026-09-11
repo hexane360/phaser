@@ -9,7 +9,7 @@ import '@mantine/dropzone/styles.css';
 import { AppShell, MantineProvider, Container, Group, Button, Collapse, Title, LoadingOverlay, Box, Tabs, Stack, Code, Progress, Text, ActionIcon, Autocomplete, Modal, Select, TextInput, Textarea, Alert, CopyButton, Tooltip } from '@mantine/core';
 import { Dropzone, FileRejection } from '@mantine/dropzone';
 import { Notifications } from '@mantine/notifications';
-import { IconUpload, IconFileText, IconX } from '@tabler/icons-react';
+import { IconUpload, IconFileText, IconPower, IconX } from '@tabler/icons-react';
 import { useDisclosure, useLocalStorage } from '@mantine/hooks';
 import TimeAgo from 'react-timeago';
 
@@ -583,6 +583,37 @@ export function StartJobs(props: {}) {
     </Box>;
 }
 
+// Stopping the server ends every job with it and can't be undone from the browser, so it
+// asks first. The socket drops right afterwards, and `ConnectionModal` takes over from there.
+function ShutdownServer() {
+    const [opened, {open, close}] = useDisclosure(false);
+    const [shutdown, pending] = usePostAction("Couldn't shut down the server");
+
+    const confirm = async () => {
+        // left open on failure, so the toast is read next to the button that caused it
+        if (await shutdown(`${rootPrefix()}/shutdown`) !== null) close();
+    };
+
+    return <>
+        <Modal opened={opened} onClose={close} title="Shut down server?" centered>
+            <Text size="sm">
+                Running jobs and workers stop with it. Starting it again means going back to a
+                terminal on the server.
+            </Text>
+            <Group justify="right" mt="md">
+                <Button variant="default" onClick={close}>Cancel</Button>
+                <Button color="red" loading={pending} onClick={confirm}>Shut down</Button>
+            </Group>
+        </Modal>
+        <ActionIcon
+            size="xl" color="red" aria-label="Shut down server" title="Shut down server"
+            onClick={open}
+        >
+            <IconPower size="80%"/>
+        </ActionIcon>
+    </>;
+}
+
 function Manager(props: {}) {
     const conn = usePubSubConnection();
     const [fallbackStatus] = React.useState(() => atom<ConnectionStatus>({ type: 'connecting' }));
@@ -591,7 +622,9 @@ function Manager(props: {}) {
     const workers = usePubSubView<Array<WorkerState>>('workers');
 
     return <AppShell header={{ height: 80 }} padding="md">
-        <AppShell.Header><Header serverStatus={conn?.status ?? fallbackStatus} size="lg"/></AppShell.Header>
+        <AppShell.Header>
+            <Header serverStatus={conn?.status ?? fallbackStatus} size="lg" actions={<ShutdownServer/>}/>
+        </AppShell.Header>
         <AppShell.Main><Container>
             <Section name="Start workers"><StartWorkers/></Section>
             <Section name="Workers"><Workers workers={workers}/></Section>
