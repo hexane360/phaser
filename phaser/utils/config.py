@@ -4,7 +4,6 @@ Utilities for configuration
 
 from pathlib import Path
 import functools
-import io
 import logging
 import textwrap
 import typing as t
@@ -75,10 +74,64 @@ def _format_type(ty: t.Any) -> str:
     return f'{_format_type(origin)}[{args}]'
 
 
+def _pane_classes(ty: t.Any, seen: t.Optional[t.Set[t.Any]] = None) -> t.Iterator[t.Type[pane.PaneBase]]:
+    """Pane classes reachable from the type `ty`, e.g. `SlurmProfile` in `Dict[str, SlurmProfile]`"""
+    seen = set() if seen is None else seen
+    if isinstance(ty, type) and issubclass(ty, pane.PaneBase):
+        if ty in seen:
+            return
+        seen.add(ty)
+        yield ty
+        for field in ty.__pane_info__.fields:
+            yield from _pane_classes(field.type, seen)
+        return
+    for arg in t.get_args(ty):
+        yield from _pane_classes(arg, seen)
+
+
+def _nested_docs(cls: t.Type[pane.PaneBase]) -> t.Iterator[str]:
+    """Documentation lines for the fields of a nested pane class"""
+    docstrings = get_class_docstrings(cls)
+    yield ''
+    yield f'{cls.__name__} fields:'
+
+    for field in cls.__pane_info__.fields:
+        if not field.init:
+            continue
+        name = f'{field.in_names[0]} ({_format_type(field.type)}):'
+        doc = textwrap.dedent(docstrings.get(field.name, '')).strip('\n').splitlines()
+        yield f'  {name} {doc[0]}' if doc else f'  {name}'
+        for line in doc[1:]:
+            yield f'    {line}'
+
+
+@functools.cache
+def _make_dumper() -> type:
+    """YAML dumper which writes multi-line strings as block scalars"""
+    import yaml
+    try:
+        from yaml import CSafeDumper as _Dumper
+    except ImportError:
+        from yaml import SafeDumper as _Dumper  # type: ignore
+
+    base: t.Any = _Dumper
+
+    class ConfigDumper(base):
+        pass
+
+    def repr_str(dumper: yaml.Dumper, data: str):
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|' if '\n' in data else None)
+
+    ConfigDumper.add_representer(str, repr_str)
+    return ConfigDumper
+
+
 class Config(t.Generic[PaneClassT]):
-    def __init__(self, name: str, ty: t.Type[PaneClassT]):
+    def __init__(self, name: str, ty: t.Type[PaneClassT], example: t.Optional[PaneClassT] = None):
         self.config_name = name
         self.ty = ty
+        self.example: t.Optional[PaneClassT] = example
+        """Values rendered by `write_default`, in place of the field defaults"""
 
         if not issubclass(ty, pane.PaneBase):
             raise TypeError(f"Config type '{self.ty.__name__}' must be a pane class.")
@@ -98,10 +151,10 @@ class Config(t.Generic[PaneClassT]):
     def get(self) -> PaneClassT:
         logger = logging.getLogger()
         path = self.path()
-        logger.info(f"Configuration path: '{path}'")
+        logger.debug(f"Configuration path: '{path}'")
 
         if not path.exists():
-            logger.info("Configuration file not found, using default")
+            logger.debug("Configuration file not found, using default")
             return self.default()
 
         try:
@@ -122,6 +175,9 @@ class Config(t.Generic[PaneClassT]):
         """
         Write a default configuration file.
 
+        Documentation is commented with '##', and the settings themselves with '# ', so
+        uncommenting a setting is unambiguous.
+
         Does nothing and returns `False` if the file already exists
         """
         logger = logging.getLogger()
@@ -131,52 +187,51 @@ class Config(t.Generic[PaneClassT]):
         logger.info(f"Creating default config file at '{path}'")
 
         import yaml
-        try:
-            from yaml import CSafeDumper as Dumper
-        except ImportError:
-            from yaml import SafeDumper as Dumper
-
-        buf = io.StringIO('\n')
-
+        dumper = _make_dumper()
         docstrings = get_class_docstrings(self.ty)
+        lines: t.List[str] = []
+        documented: t.Set[t.Type[pane.PaneBase]] = set()
 
         for field in self.ty.__pane_info__.fields:
-            if not field.init or not field.has_default():
+            if not field.init:
                 continue
 
-            if field.default is _MISSING:
+            if self.example is not None:
+                default = getattr(self.example, field.name)
+            elif not field.has_default():
+                continue
+            elif field.default is _MISSING:
                 if field.default_factory is None:
                     continue
                 default = field.default_factory()
             else:
                 default = field.default
 
-            # write expression
-            expr = t.cast(str, yaml.dump(
-                {field.in_names[0]: default},
-                Dumper=Dumper, explicit_start=False,
-                allow_unicode=True, default_flow_style=None,
-            )).strip('\n')
-            if expr[0] == '{' and expr[-1] == '}':
-                expr = expr[1:-1]
-            buf.write(expr)
-            buf.write('\n')
-            # and docstring
+            doc_lines: t.List[str] = []
             if (docstring := docstrings.get(field.name)):
-                buf.write(textwrap.dedent(docstring).strip('\n'))
-                buf.write('\n')
-            # and type
-            buf.write('type: ' + _format_type(field.type))
-            buf.write('\n\n')
+                doc_lines.extend(textwrap.dedent(docstring).strip('\n').splitlines())
+            doc_lines.append(f'type: {_format_type(field.type)}')
 
-        buf.seek(0)
+            for nested in _pane_classes(field.type):
+                if nested not in documented:
+                    documented.add(nested)
+                    doc_lines.extend(_nested_docs(nested))
+
+            lines.extend(f'## {line}'.rstrip() for line in doc_lines)
+
+            expr = t.cast(str, yaml.dump(
+                {field.in_names[0]: pane.into_data(default, field.type)},
+                Dumper=dumper, explicit_start=False, allow_unicode=True,
+                # block style, declaration order, and no line wrapping: the result is read
+                # and edited as a comment block, where a rewrapped value is hard to follow
+                default_flow_style=False, sort_keys=False, width=2**31 - 1,
+            )).strip('\n')
+            lines.extend(f'# {line}'.rstrip() for line in expr.splitlines())
+            lines.append('')
+
         try:
             path.parent.mkdir(parents=False, exist_ok=True)
-            with open(path, 'w') as f:
-                f.writelines(
-                    '# ' + line if line.strip() else '\n'
-                    for line in buf
-                )
+            path.write_text('\n'.join(lines))
         except Exception as e:
             e.add_note("Failed to write config file")
             raise

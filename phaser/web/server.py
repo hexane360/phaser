@@ -67,10 +67,12 @@ async def raise_on_shutdown():
 
 
 class Worker(abc.ABC):
-    def __init__(self, worker_id: WorkerID):
+    def __init__(self, worker_id: WorkerID, url: t.Optional[str] = None):
         super().__init__()
         self.status: WorkerStatus = 'queued'
         self.id: WorkerID = worker_id
+        self.url: t.Optional[str] = url
+        """URL the worker reports to"""
 
         self.current_job: t.Optional[weakref.ref[Job]] = None
         self.start_time: t.Optional[datetime.datetime] = None
@@ -93,7 +95,7 @@ class Worker(abc.ABC):
         return WorkerState(
             self.id, self.worker_type(), self.status, links=links,
             current_job=current_job, start_time=self.start_time,
-            hostname=self.hostname, backends=self.backends,
+            hostname=self.hostname, backends=self.backends, url=self.url,
         )
 
     async def cancel(self):
@@ -178,8 +180,7 @@ MAX_WORKER_RESTARTS: int = 5
 
 class LocalWorker(Worker):
     def __init__(self, worker_id: WorkerID, url: str):
-        super().__init__(worker_id)
-        self.url = url
+        super().__init__(worker_id, url)
         self._restarts: int = 0
 
         self._start()
@@ -228,10 +229,9 @@ class LocalWorker(Worker):
 
 
 class ManualWorker(Worker):
-    def __init__(self, worker_id: WorkerID):
-        self.url = server.get_worker_url(worker_id)
+    def __init__(self, worker_id: WorkerID, url: t.Optional[str] = None):
+        super().__init__(worker_id, url or server.get_worker_url(worker_id))
         logging.warning(f"Worker command: python -m phaser worker {self.url}")
-        super().__init__(worker_id)
 
     def worker_type(self) -> str:
         return 'manual'
@@ -711,9 +711,11 @@ class Server:
         resolved = full.resolve()
         return resolved if resolved.is_relative_to(self.file_root) else None
 
-    def get_worker_url(self, worker_id: WorkerID) -> str:
+    def get_worker_url(self, worker_id: WorkerID, host: t.Optional[str] = None) -> str:
+        """URL a worker reports to. `host` overrides the address the server is bound to,
+        for a worker on another machine (see `phaser/web/config.py`)."""
         assert self.host is not None
-        url_adapter = self.app.url_map.bind(self.host, self.root_path, url_scheme='http')
+        url_adapter = self.app.url_map.bind(host or self.host, self.root_path, url_scheme='http')
         url = url_adapter.build('worker_update', dict(worker_id=worker_id), method='POST', force_external=True)
         return url
 
@@ -810,6 +812,22 @@ class Server:
         async def _start_watchdog():
             # tracked, so shutdown cancels it rather than abandoning it mid-sleep
             self.futs.append(asyncio.create_task(_watch_event_loop_lag()))
+
+        @self.app.before_serving
+        async def _log_config():
+            from .config import SERVER_CONFIG
+
+            try:
+                config = SERVER_CONFIG.get()
+            except Exception as e:
+                logging.warning(f"Couldn't read config file '{SERVER_CONFIG.path()}': {e}")
+                return
+            logging.info(
+                f"Server config: '{SERVER_CONFIG.path()}'" + (
+                    f", slurm profiles: {', '.join(config.slurm_profiles)}"
+                    if config.slurm_profiles else " (no slurm profiles configured)"
+                )
+            )
 
         @self.app.before_serving
         async def _log_version():
