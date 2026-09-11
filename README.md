@@ -4,12 +4,12 @@ phaser: The weapon of choice for ptychographic reconstructions
 
 
 `phaser` is a fully-featured package for multislice electron ptychography.
-See our [arXiv paper](https://arxiv.org/abs/2505.14372) for more details.
+See our [paper](https://www.nature.com/articles/s41524-026-01956-8) for more details.
 
 ## Features
 
 - ePIE, LSQ-MLs, and gradient descent algorithms
-- [`numpy`][numpy], [`cupy`][cupy], and [`jax`][jax] backends.
+- [`numpy`][numpy], [`cupy`][cupy], [`jax`][jax], and [`torch`][torch] backends.
 - Single and multislice ptychography
 - Multiple incoherent probe modes
 - Probe position correction
@@ -92,6 +92,8 @@ To run the webserver, call `phaser serve`. By default, the server serves on http
 
 To run a worker, call `phaser worker <url>`, where `url` is the URL of a running job server.
 
+Additional utility commands for preparing metadata files or pre-processing data can be invoked similarly; for more help see `phaser --help`. 
+
 ## Sample data & Examples
 
 Sample data can be downloaded from the following dropbox link: https://www.dropbox.com/scl/fo/txm3k88ubrzvt541v23ir/AL-l_m6VnGlFxzHWZSSc0TA?rlkey=8qxtwnc8cwhpff6jpr5s40y6i&st=x9pbwke0&dl=0
@@ -106,6 +108,10 @@ $ unzip sample_data.zip -x / -d sample_data
 Sample data includes simulated and experimental MoS2 data, simulated and experimental Si data, and experimental PrScO3 data.
 After the data is downloaded, any of the example reconstructions can be run as `phaser run examples/mos2_grad.yaml` (for example).
 
+## Acknowledging phaser
+
+> Gilgenbach, C., Zhu, M. & LeBeau, J.M. phaser: a unified and extensible framework for fast electron ptychography. npj Comput Mater 12, 89 (2026). https://doi.org/10.1038/s41524-026-01956-8.
+
 ## Alternatives
 
 Other notable ptychography packages:
@@ -119,6 +125,7 @@ Other notable ptychography packages:
 [numpy]: https://numpy.org/
 [cupy]: https://cupy.dev/
 [jax]: https://docs.jax.dev/en/latest/
+[torch]: https://pytorch.org/
 
 [ci-badge]: https://github.com/hexane360/phaser/workflows/Tests/badge.svg
 [ci-url]: https://github.com/hexane360/phaser/actions/workflows/ci.yaml
