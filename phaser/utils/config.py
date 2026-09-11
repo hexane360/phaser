@@ -160,10 +160,16 @@ class Config(t.Generic[PaneClassT]):
         try:
             config = pane.from_yaml_all(path, self.ty)
         except pane.ConvertError as e:
-            e.add_note("Invalid configuration file")
+            try:
+                e.add_note("Invalid configuration file")
+            except AttributeError: # <3.11
+                raise ValueError("Invalid configuration file") from e
             raise
         except Exception as e:
-            e.add_note("Failed to read configuration file")
+            try:
+                e.add_note("Failed to read configuration file")
+            except AttributeError: # <3.11
+                raise ValueError("Failed to read configuration file") from e
             raise
         if not len(config):
             return self.default()
