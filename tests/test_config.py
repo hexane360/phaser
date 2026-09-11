@@ -93,7 +93,7 @@ def test_get_missing_and_invalid(config_dir):
     assert config.get() == ExampleConfig()  # no file
 
     config.path().write_text('scale: not-a-number\n')
-    with pytest.raises(pane.ConvertError):
+    with pytest.raises((pane.ConvertError, ValueError), match="Invalid configuration file"):
         config.get()
 
     config.path().write_text('---\nscale: 1.\n---\nscale: 2.\n')
