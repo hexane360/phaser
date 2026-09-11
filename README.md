@@ -9,7 +9,7 @@ See our [paper](https://www.nature.com/articles/s41524-026-01956-8) for more det
 ## Features
 
 - ePIE, LSQ-MLs, and gradient descent algorithms
-- [`numpy`][numpy], [`cupy`][cupy], and [`jax`][jax] backends.
+- [`numpy`][numpy], [`cupy`][cupy], [`jax`][jax], and [`torch`][torch] backends.
 - Single and multislice ptychography
 - Multiple incoherent probe modes
 - Probe position correction
@@ -92,6 +92,8 @@ To run the webserver, call `phaser serve`. By default, the server serves on http
 
 To run a worker, call `phaser worker <url>`, where `url` is the URL of a running job server.
 
+Additional utility commands for preparing metadata files or pre-processing data can be invoked similarly; for more help see `phaser --help`. 
+
 ## Sample data & Examples
 
 Sample data can be downloaded from the following dropbox link: https://www.dropbox.com/scl/fo/txm3k88ubrzvt541v23ir/AL-l_m6VnGlFxzHWZSSc0TA?rlkey=8qxtwnc8cwhpff6jpr5s40y6i&st=x9pbwke0&dl=0
@@ -123,6 +125,7 @@ Other notable ptychography packages:
 [numpy]: https://numpy.org/
 [cupy]: https://cupy.dev/
 [jax]: https://docs.jax.dev/en/latest/
+[torch]: https://pytorch.org/
 
 [ci-badge]: https://github.com/hexane360/phaser/workflows/Tests/badge.svg
 [ci-url]: https://github.com/hexane360/phaser/actions/workflows/ci.yaml
