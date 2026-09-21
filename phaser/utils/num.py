@@ -54,7 +54,7 @@ def _load_cupy() -> ModuleType:
 
 def _load_jax() -> ModuleType:
     import jax  # pyright: ignore[reportMissingImports]
-    jax.config.update('jax_enable_x64', jax.default_backend() != 'METAL')
+    jax.config.update('jax_enable_x64', jax.default_backend() not in ('mps', 'METAL'))
     import jax.scipy  # pyright: ignore[reportMissingImports,reportUnusedImport]
 
     return jax.numpy
@@ -163,16 +163,12 @@ def get_default_backend() -> BackendName:
     # check for jax or torch GPUs first
     if _BACKEND_LOADER.get('jax') is not None:
         import jax
-        try:
-            if len(jax.devices('gpu')):
-                return 'jax'
-        except RuntimeError:
-            pass
-        try:
-            if len(jax.devices('tpu')):
-                return 'jax'
-        except RuntimeError:
-            pass
+        for jax_backend in ('gpu', 'tpu', 'mps'):
+            try:
+                if len(jax.devices(jax_backend)):
+                    return 'jax'
+            except RuntimeError:
+                pass
     if _BACKEND_LOADER.get('torch') is not None:
         import torch
         if torch.get_default_device().type != 'cpu':
@@ -264,6 +260,9 @@ def max_supported_float(
 ) -> t.Union[t.Type[numpy.float32], t.Type[numpy.float64]]:
     if xp_is_torch(xp):
         from ._torch_kernels import max_supported_float
+        return max_supported_float(device)
+    if xp_is_jax(xp):
+        from ._jax_kernels import max_supported_float
         return max_supported_float(device)
     return numpy.float64
 
@@ -392,7 +391,7 @@ def xp_is_cupy(xp: t.Any) -> bool:
     return xp is cupy
 
 def xp_is_jax(xp: t.Any) -> bool:
-    return xp is sys.modules.get('jax.numpy')
+    return xp is sys.modules.get('jax.numpy', object())
 
 def xp_is_torch(xp: t.Any) -> bool:
     if (torch := _BACKEND_LOADER.try_get('torch')) is None:

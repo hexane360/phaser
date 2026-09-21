@@ -65,8 +65,13 @@ cupy13 = [
 ]
 jax = [
     # 0.4.25 is last version supporting cuda 11.8, we need to support it.
-    # tested on 0.4.25, 0.5.x, 0.6.x, 0.7.0, and 0.10.0
-    "jax>=0.4.25,<0.11",
+    # tested on 0.4.25, 0.5.x, 0.6.x, 0.7.0, 0.10.x, and 0.11.x
+    "jax>=0.4.25,<0.12",
+    "optax>=0.2.2",
+]
+jax-mps = [
+    "jax==0.11.2",
+    "jax-mps==0.11.0",
     "optax>=0.2.2",
 ]
 torch = [

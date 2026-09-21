@@ -186,10 +186,31 @@ def convolve2d(
     return arr.reshape(out_shape_t)
 
 
+_DEFAULT_DEVICE: t.Optional[Device] = None
+
+
+def get_default_device() -> Device:
+    global _DEFAULT_DEVICE
+
+    if _DEFAULT_DEVICE is None:
+        _DEFAULT_DEVICE = get_devices()[0]
+    return _DEFAULT_DEVICE
+
+
+def set_default_device(device: Device):
+    global _DEFAULT_DEVICE
+
+    if not isinstance(device, jax.Device):
+        raise TypeError(f"Invalid device '{device}' for backend jax")
+    _DEFAULT_DEVICE = device
+    jax.config.update('jax_default_device', device)
+    jax.config.update('jax_enable_x64', device.platform not in ('mps', 'METAL'))
+
+
 def get_devices() -> t.Tuple[Device, ...]:
     devices = []
 
-    for backend in ('gpu', 'tpu', 'cpu'):
+    for backend in ('gpu', 'tpu', 'mps', 'cpu'):
         try:
             devices.extend(jax.devices(backend))
         except RuntimeError:
@@ -225,7 +246,12 @@ def to_device(device: t.Union[str, Device]) -> Device:
                        f" ({len(backend_devices)} device(s) on jax backend '{backend}')")
 
 
-def set_default_device(device: Device):
-    if not isinstance(device, jax.Device):
+def max_supported_float(device: t.Optional[Device]):
+    if device is None:
+        device = _DEFAULT_DEVICE
+    elif isinstance(device, jax.sharding.Sharding):
+        device = next(iter(device.addressable_devices))
+    elif not isinstance(device, jax.Device):
         raise TypeError(f"Invalid device '{device}' for backend jax")
-    jax.config.update('jax_default_device', device)
+
+    return numpy.float32 if device.platform == 'mps' else numpy.float64  # type: ignore
