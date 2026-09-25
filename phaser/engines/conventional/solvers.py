@@ -95,6 +95,8 @@ class LSQMLSolver(ConventionalSolver):
         observer: 'Observer',
     ) -> t.Tuple[SimulationState, NDArray[numpy.floating], t.List[NDArray[numpy.floating]]]:
         xp = sim.xp
+        # save progress, it will get clobbered by JIT kernels
+        progress = sim.state.progress
 
         beta_object = process_schedule(self.plan.beta_object)({'state': sim.state, 'niter': self.engine_plan.niter})
         beta_probe = process_schedule(self.plan.beta_probe)({'state': sim.state, 'niter': self.engine_plan.niter})
@@ -133,6 +135,7 @@ class LSQMLSolver(ConventionalSolver):
                 assert group_pos_update is not None
                 pos_update = at(pos_update, tuple(group)).set(group_pos_update)
 
+            sim.state.progress = progress
             observer.update_group(sim.state)
 
             if group_calc_error:
@@ -383,6 +386,8 @@ class EPIESolver(ConventionalSolver):
         observer: 'Observer',
     ) -> t.Tuple[SimulationState, NDArray[numpy.floating], t.List[NDArray[numpy.floating]]]:
         xp = sim.xp
+        # save progress, it will get clobbered by JIT kernels
+        progress = sim.state.progress
 
         # TODO: ePIE position update
         pos_update = xp.zeros_like(sim.state.scan.data)
@@ -414,6 +419,7 @@ class EPIESolver(ConventionalSolver):
                 assert group_pos_update is not None
                 pos_update = at(pos_update, tuple(group)).set(group_pos_update)
 
+            sim.state.progress = progress
             observer.update_group(sim.state)
 
             if group_calc_error:

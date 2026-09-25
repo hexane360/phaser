@@ -384,6 +384,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             )
             if props.check_every_group and not numpy.isfinite(float(losses_gpu['total_loss'])):
                 raise ValueError(f"NaN or inf encountered, group {group_i}")
+            state.progress = progress
             observer.update_group(state)
 
         if not numpy.isfinite(float(losses_gpu['total_loss'])):
