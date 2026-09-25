@@ -98,9 +98,9 @@ class WorkerObserver(Observer):
             raise SignalException(resp.signal, resp.urgent)
         return resp
 
-    def send_update(self, state: t.Union[ReconsState, PartialReconsState]):
+    def send_update(self, state: t.Union[ReconsState, PartialReconsState], exclude: t.AbstractSet[str] = frozenset()):
         self.send_message(UpdateMessage.make_unchecked(
-            {k: v for (k, v) in dataclasses.asdict(state.to_numpy()).items() if v is not None},
+            {k: v for (k, v) in dataclasses.asdict(state.to_numpy()).items() if v is not None and k not in exclude},
             self.job_id
         ))
 
@@ -118,7 +118,8 @@ class WorkerObserver(Observer):
 
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
         if self.send_every_group or (self.send_max_wait_time is not None and (time.monotonic() - self.msg_time) > self.send_max_wait_time):
-            self.send_update(state)
+            # `progress` is sent per iteration only
+            self.send_update(state, exclude={'progress'})
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         self.send_update(state)
