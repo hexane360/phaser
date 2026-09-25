@@ -1,7 +1,7 @@
 """
 Topic-based pub/sub broker.
 
-A `Broker` owns one `Cache` (a job's or manager's raw wire-form state) plus the set of
+A `Broker` owns one `Cache` (a job's or manager's latest state) plus the set of
 currently-subscribed `Topic`s derived from it. Views are pure functions of the cache
 (`phaser/web/views.py`), computed lazily (only while subscribed), memoized per tick by
 dependency generation, and distributed to subscribing `Session`s' conflating `Mailbox`es.
@@ -13,7 +13,6 @@ architecture") minus the view registry (`views.py`) and the wiring into `Job`/`J
 from __future__ import annotations
 
 import asyncio
-import threading
 import typing as t
 from dataclasses import dataclass
 
@@ -21,27 +20,18 @@ from quart.utils import run_sync
 
 from .types import ErrorMessage, JobID, TopicUpdate, canonical_topic
 from .types import Topic as WireTopic
-from .util import decode_obj
 
 Conflation: t.TypeAlias = t.Literal['latest', 'append']
 
 
 class Cache:
-    """Accessor over an owner's (a `Job`'s, or a manager singleton's) raw wire-form
-    state. `raw[field]` is the value as last received (wire-form, i.e. still encoded --
-    see `phaser/web/util.py`'s `encode_obj`/`decode_obj`). `array(field)` decodes it,
-    memoized by the field's generation, so a given update is only ever decoded once no
-    matter how many views depend on it."""
+    """An owner's (a `Job`'s, or a manager singleton's) latest state. `raw[field]` is the
+    value as last received, with arrays as read-only views into the received frame (see
+    `frames.py`)."""
 
     def __init__(self) -> None:
         self._raw: t.Dict[str, t.Any] = {}
         self._generations: t.Dict[str, int] = {}
-        self._decoded: t.Dict[str, t.Tuple[int, t.Any]] = {}
-        # `View.compute` runs in a worker thread and `Broker.publish_dirty` gathers every
-        # dirty topic at once, so several threads can reach `array()` for one field
-        # concurrently. Without this they'd each decode the same (potentially large)
-        # blob, which is exactly what the memo exists to avoid.
-        self._lock: threading.Lock = threading.Lock()
 
     @property
     def raw(self) -> t.Mapping[str, t.Any]:
@@ -51,29 +41,11 @@ class Cache:
         return self._generations.get(field, 0)
 
     def update_raw(self, fields: t.Mapping[str, t.Any]) -> None:
-        """Store new wire-form values and bump each field's generation. Values may be
+        """Store new values and bump each field's generation. Values may be
         synthetic (e.g. `status`), not just worker-sent fields."""
         for k, v in fields.items():
             self._raw[k] = v
             self._generations[k] = self._generations.get(k, 0) + 1
-
-    def array(self, field: str) -> t.Any:
-        """Decode `raw[field]` (via `decode_obj`), memoized by generation. Thread-safe:
-        concurrent callers for the same field wait, then hit the memo."""
-        gen = self.generation(field)
-        cached = self._decoded.get(field)
-        if cached is not None and cached[0] == gen:
-            return cached[1]
-
-        with self._lock:
-            # another thread may have decoded this generation while we waited
-            cached = self._decoded.get(field)
-            if cached is not None and cached[0] == gen:
-                return cached[1]
-
-            value = decode_obj(self._raw[field])
-            self._decoded[field] = (gen, value)
-            return value
 
 
 class View(t.NamedTuple):
@@ -86,9 +58,8 @@ class View(t.NamedTuple):
     """`'latest'`: a slow session only ever sees the newest value for this topic.
     `'append'`: pending `data` lists are concatenated instead of replaced (logs)."""
     compute: t.Callable[[Cache, t.Mapping[str, t.Any]], t.Any]
-    """Pure function of the cache + resolved params -> fully wire-ready JSON data (i.e.
-    already run through `encode_obj` where needed -- `TopicUpdate.data` is never
-    re-encoded)."""
+    """Pure function of the cache + resolved params -> JSON-like data, with numpy arrays
+    as leaves (sent as frame buffers, see `frames.py`)."""
 
 
 class Topic:
@@ -138,7 +109,7 @@ class Mailbox:
         key = canonical_topic(update.topic)
         prev = self.pending.get(key)
         if conflation == 'append' and isinstance(prev, TopicUpdate):
-            update = TopicUpdate(
+            update = TopicUpdate.make_unchecked(
                 update.topic,
                 [*prev.data, *update.data],
                 update.cause if update.cause is not None else prev.cause,
@@ -229,7 +200,7 @@ class Broker:
 
         if view.retained and topic.has_deps():
             value = await topic.value_async()
-            session.mailbox.put_update(TopicUpdate(session.client_topic_for(key), value, None), view.conflation)
+            session.mailbox.put_update(TopicUpdate.make_unchecked(session.client_topic_for(key), value, None), view.conflation)
 
     def unsubscribe(self, session: Session, key: str) -> None:
         topic = self.active_topics.get(key)
@@ -242,7 +213,7 @@ class Broker:
     def _distribute(self, topic: Topic, value: t.Any, cause: t.Any) -> None:
         for session in list(topic.subscribers):
             session.mailbox.put_update(
-                TopicUpdate(session.client_topic_for(topic.key), value, cause), topic.view.conflation
+                TopicUpdate.make_unchecked(session.client_topic_for(topic.key), value, cause), topic.view.conflation
             )
 
     async def publish_dirty(self, changed: t.FrozenSet[str], cause: t.Any = None) -> None:

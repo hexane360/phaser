@@ -299,7 +299,7 @@ def test_resolve_and_job_wiring():
     threadpool via `quart.utils.run_sync` (see `Topic.value_async`)."""
     import numpy
     from phaser.web.server import server, Job, Jobs, Workers
-    from phaser.web.util import encode_obj, decode_obj
+    from phaser.web.frames import pack_bytes, unpack
 
     async def scenario():
         server.compute_pool = ThreadPoolExecutor()
@@ -318,7 +318,7 @@ def test_resolve_and_job_wiring():
                 sampling = {'shape': [3, 4], 'sampling': [1.0, 1.0], 'corner': [0.0, 0.0], 'region_min': None, 'region_max': None}
                 wire_state = {
                     'iter': {'engine_num': 1, 'engine_iter': 1, 'total_iter': 1, 'n_engine_iters': None, 'n_total_iters': None},
-                    'object': encode_obj({'sampling': sampling, 'data': data, 'thicknesses': numpy.array([1.0, 1.0], dtype=numpy.float32)}),
+                    'object': unpack(pack_bytes({'sampling': sampling, 'data': data, 'thicknesses': numpy.array([1.0, 1.0], dtype=numpy.float32)})),
                 }
 
                 class FakeMsg:
@@ -340,7 +340,7 @@ def test_resolve_and_job_wiring():
                 items = {item.topic['view']: item for item in drained}
                 assert set(items) == {'obj_phase_sum', 'obj_meta'}
 
-                numpy.testing.assert_allclose(decode_obj(items['obj_phase_sum'].data), numpy.pi / 2, atol=1e-5)
+                numpy.testing.assert_allclose(items['obj_phase_sum'].data, numpy.pi / 2, atol=1e-5)
                 assert items['obj_meta'].data == {'sampling': sampling, 'n_slices': 2, 'thicknesses': [1.0, 1.0]}
 
                 jobs_session = Session()
@@ -355,6 +355,54 @@ def test_resolve_and_job_wiring():
                 removed_items = await session.mailbox.drain()
                 assert isinstance(removed_items[0], ErrorMessage)
             finally:
+                server.compute_pool.shutdown(wait=False)
+
+    asyncio.run(scenario())
+
+
+def test_listen_unencodable_update_is_a_topic_error():
+    """A view value the strict (browser) encoding rejects reaches the client as an
+    `ErrorMessage` for its topic, rather than closing the websocket."""
+    import numpy
+    from phaser.web.server import server, Job, Jobs, Workers
+    from phaser.web.frames import unpack
+
+    async def scenario():
+        server.compute_pool = ThreadPoolExecutor()
+        asyncio.get_running_loop().set_default_executor(server.compute_pool)
+        server.workers = Workers()
+        server.jobs = Jobs()
+        server.job_queue = deque()
+        server.app.config['SERVER_NAME'] = 'localhost'
+        server.shutdown_event = asyncio.Event()
+
+        async with server.app.app_context():
+            job = Job('pubsub-nan-job', 'plan-json', 'test job')
+            await server.jobs.add(job)
+            try:
+                class FakeMsg:
+                    msg = 'job_update'
+                    state = {'object': {
+                        'sampling': {'shape': [3, 4]},
+                        'data': numpy.zeros((2, 3, 4), dtype=numpy.complex64),
+                        'thicknesses': numpy.array([1.0, numpy.nan]),
+                    }}
+                    job_id = job.id
+
+                async with server.app.test_client().websocket(f'/listen?job={job.id}') as ws:
+                    await ws.send_json({'msg': 'sub', 'topics': [{'view': 'obj_meta'}]})
+                    await ws.send_json({'msg': 'ping'})
+                    assert unpack(await asyncio.wait_for(ws.receive(), 5.))['msg'] == 'pong'
+
+                    await job.handle_update(FakeMsg())  # type: ignore
+                    error = unpack(await asyncio.wait_for(ws.receive(), 5.))
+                    assert error['msg'] == 'error' and error['topic'] == {'view': 'obj_meta'}
+
+                    # still open
+                    await ws.send_json({'msg': 'ping'})
+                    assert unpack(await asyncio.wait_for(ws.receive(), 5.))['msg'] == 'pong'
+            finally:
+                await server.jobs.remove(job.id)
                 server.compute_pool.shutdown(wait=False)
 
     asyncio.run(scenario())

@@ -8,7 +8,7 @@ from typing_extensions import Self
 import pane
 from pane.annotations import Tagged
 
-from .util import ReconsStateConverter
+from .frames import ArrayDataConverter
 
 JobID: t.TypeAlias = str
 WorkerID: t.TypeAlias = str
@@ -100,10 +100,9 @@ ClientMessage: t.TypeAlias = t.Annotated[t.Union[
 ], Tagged('msg')]
 
 class TopicUpdate(pane.PaneBase):
-    """One topic's new value. `data` is already wire-encoded by the view that produced
-    it (e.g. via `encode_obj`), so this is *not* re-encoded by `serialize()`."""
+    """One topic's new value. Arrays in `data` are sent as frame buffers (see `frames.py`)."""
     topic: Topic
-    data: t.Any
+    data: t.Any = pane.field(converter=ArrayDataConverter())
     cause: t.Optional[t.Any] = None
 
 class UpdatesMessage(pane.PaneBase):
@@ -179,7 +178,7 @@ class JobState(pane.PaneBase):
     links: t.Dict[str, str] = pane.field(default_factory=dict)
     job_name: t.Optional[str] = None
     start_time: t.Optional[datetime.datetime] = None
-    state: t.Dict[str, t.Any] = pane.field(converter=ReconsStateConverter(), default_factory=dict)
+    state: t.Dict[str, t.Any] = pane.field(default_factory=dict)
     result: t.Optional[Result] = None
     """Terminal outcome, set once the job stops."""
     error_summary: t.Optional[str] = None
@@ -242,7 +241,7 @@ class PingMessage(pane.PaneBase):
 
 class UpdateMessage(pane.PaneBase):
     """Message containing some state update"""
-    state: t.Dict[str, t.Any] = pane.field(converter=ReconsStateConverter())
+    state: t.Dict[str, t.Any] = pane.field(converter=ArrayDataConverter())
     job_id: JobID
     msg: t.Literal['job_update'] = 'job_update'
 

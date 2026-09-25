@@ -32,7 +32,7 @@ export type ClientMessage = SubscribeMessage | UnsubscribeMessage | HeartbeatMes
 
 export interface TopicUpdate {
     topic: Topic;
-    data: any;
+    data: any; // arrays decoded to `DecodedArray` (see `frames.ts`)
     cause?: any;
 }
 
