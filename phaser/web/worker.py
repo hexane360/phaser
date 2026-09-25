@@ -1,6 +1,5 @@
 import dataclasses
 import datetime
-import json
 import logging
 import socket
 import sys
@@ -17,6 +16,7 @@ from phaser.execute import EnginePlan, Observer, ReconsPlan, execute_plan
 from phaser.state import PartialReconsState, ReconsState
 from phaser.utils.num import get_devices, repr_device
 
+from . import frames
 from .types import (
     RELOAD_EXIT_CODE,
     UPDATE_CHUNK_SIZE,
@@ -138,7 +138,7 @@ def run_worker(url: str, quiet: bool = False):
     )
 
     def post(body: bytes, params: t.Optional[t.Dict[str, t.Any]] = None,
-             content_type: str = 'application/json',
+             content_type: str = frames.CONTENT_TYPE,
              session: t.Optional[requests.Session] = None) -> ServerResponse:
         resp = (session or requests).post(url, data=body, params=params, timeout=REQUEST_TIMEOUT,
                                           headers={'Content-Type': content_type})
@@ -156,7 +156,7 @@ def run_worker(url: str, quiet: bool = False):
         return post(body, {'upload': upload_id, 'index': index, 'count': count}, 'application/octet-stream', session)
 
     def send_message(msg: WorkerMessage) -> ServerResponse:
-        body = json.dumps(msg.into_data(), allow_nan=True).encode('utf-8')
+        body = frames.pack_bytes(msg.into_data())
         if not isinstance(msg, UpdateMessage) or len(body) <= UPDATE_CHUNK_SIZE:
             return post(body)
 

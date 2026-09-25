@@ -299,7 +299,7 @@ def test_resolve_and_job_wiring():
     threadpool via `quart.utils.run_sync` (see `Topic.value_async`)."""
     import numpy
     from phaser.web.server import server, Job, Jobs, Workers
-    from phaser.web.util import encode_obj, decode_obj
+    from phaser.web.frames import pack_bytes, unpack
 
     async def scenario():
         server.compute_pool = ThreadPoolExecutor()
@@ -318,7 +318,7 @@ def test_resolve_and_job_wiring():
                 sampling = {'shape': [3, 4], 'sampling': [1.0, 1.0], 'corner': [0.0, 0.0], 'region_min': None, 'region_max': None}
                 wire_state = {
                     'iter': {'engine_num': 1, 'engine_iter': 1, 'total_iter': 1, 'n_engine_iters': None, 'n_total_iters': None},
-                    'object': encode_obj({'sampling': sampling, 'data': data, 'thicknesses': numpy.array([1.0, 1.0], dtype=numpy.float32)}),
+                    'object': unpack(pack_bytes({'sampling': sampling, 'data': data, 'thicknesses': numpy.array([1.0, 1.0], dtype=numpy.float32)})),
                 }
 
                 class FakeMsg:
@@ -340,7 +340,7 @@ def test_resolve_and_job_wiring():
                 items = {item.topic['view']: item for item in drained}
                 assert set(items) == {'obj_phase_sum', 'obj_meta'}
 
-                numpy.testing.assert_allclose(decode_obj(items['obj_phase_sum'].data), numpy.pi / 2, atol=1e-5)
+                numpy.testing.assert_allclose(items['obj_phase_sum'].data, numpy.pi / 2, atol=1e-5)
                 assert items['obj_meta'].data == {'sampling': sampling, 'n_slices': 2, 'thicknesses': [1.0, 1.0]}
 
                 jobs_session = Session()

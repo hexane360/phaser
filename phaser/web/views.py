@@ -1,6 +1,7 @@
 """
 View registry (`phaser/web/pubsub.py` section 2, "View registry"). Each `View.compute`
-is a pure, numpy-only function of `(Cache, params) -> wire-ready JSON data`. Server-side
+is a pure, numpy-only function of `(Cache, params) -> JSON-like data` (with numpy array
+leaves, sent as frame buffers). Server-side
 view compute is explicitly numpy-only per the design doc -- no backend-agnostic
 requirement here, unlike the rest of `phaser`.
 """
@@ -11,7 +12,6 @@ import numpy
 import pane
 
 from .pubsub import Cache, View
-from .util import decode_obj, encode_obj
 
 
 def _state_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -27,15 +27,13 @@ def _progress_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def _probes_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    # already wire-form (encoded by the worker); pass through verbatim, no decode/encode.
-    # Bulk array only -- shape and sampling belong to `probe_meta`.
+    # bulk array only -- shape and sampling belong to `probe_meta`.
     probe = cache.raw.get('probe')
     return probe['data'] if probe is not None else None
 
 
 def _positions_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    # `ScanState.data`, wire-form as sent (shape (..., 2), in length units). Passed
-    # through verbatim like `_probes_view`; the client flattens the leading axes.
+    # `ScanState.data` (shape (..., 2), in length units); the client flattens the leading axes.
     # `initial` and `tilt` ride along in the same payload, unused by this view.
     scan = cache.raw.get('scan')
     return scan['data'] if scan is not None else None
@@ -46,13 +44,13 @@ def _recip_probes(cache: Cache) -> t.Any:
     transforming (phaser's convention), and `fft2shift` centers the result."""
     from phaser.utils.num import fft2, fft2shift
 
-    return fft2shift(fft2(cache.array('probe')['data']))
+    return fft2shift(fft2(cache.raw['probe']['data']))
 
 
 def probes_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     """The probe modes in reciprocal space, on the (ky, kx) grid `probe_meta`'s
     `wavelength` and `sampling` describe."""
-    return encode_obj(_recip_probes(cache))
+    return _recip_probes(cache)
 
 
 def probe_sum_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -61,7 +59,7 @@ def probe_sum_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     is the only meaningful reduction over them (a summed amplitude or phase is not)."""
     from phaser.utils.num import abs2
 
-    return encode_obj(numpy.sum(abs2(cache.array('probe')['data']), axis=0))
+    return numpy.sum(abs2(cache.raw['probe']['data']), axis=0)
 
 
 def probe_sum_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -70,7 +68,7 @@ def probe_sum_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     the transform is per-mode, so the two don't commute."""
     from phaser.utils.num import abs2
 
-    return encode_obj(numpy.sum(abs2(_recip_probes(cache)), axis=0))
+    return numpy.sum(abs2(_recip_probes(cache)), axis=0)
 
 
 # `execute` reshapes a 2D object to a leading axis of length 1 (leaving `thicknesses`
@@ -88,24 +86,20 @@ def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     Its own topic rather than a field on the object payloads, because those are per-slice
     (`obj`) and so change topic -- and momentarily lose their value -- whenever a different
     slice is selected. This one is stable for the lifetime of the run.
-
-    Computed from `cache.raw` alone, and deliberately so: `encode_obj` stores an array as
-    its `__array_interface__` plus base64 `data`, so the shape is readable without touching
-    the payload. Reaching for `cache.array` here would decode the whole object.
     """
     obj = cache.raw.get('object')
     if obj is None:
         return None
 
-    n_slices = _n_slices(obj['data']['shape'])
+    n_slices = _n_slices(obj['data'].shape)
     # `ObjectState.thicknesses` is "length < 2 for single slice, equal to the number of
     # slices otherwise" -- length 0 from `execute`'s 2D normalization, or length 1 from a
     # re-used init state. Both mean "not per-slice", hence null.
-    thicknesses = decode_obj(obj['thicknesses']) if obj.get('thicknesses') is not None else None
+    thicknesses = obj.get('thicknesses')
     per_slice = n_slices > 1 and thicknesses is not None and len(thicknesses) == n_slices
 
     return {
-        'sampling': obj['sampling'],  # encoded with `to_numpy=False`: already wire-ready
+        'sampling': obj['sampling'],
         'n_slices': n_slices,
         'thicknesses': [float(t) for t in thicknesses] if per_slice else None,
     }
@@ -126,7 +120,7 @@ def probe_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
     return {
         'sampling': probe['sampling'],
-        'nprobes': int(probe['data']['shape'][0]),
+        'nprobes': int(probe['data'].shape[0]),
         'wavelength': float(wavelength),
     }
 
@@ -135,9 +129,9 @@ def project_phase(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     """Projected object phase: `angle` + `nansum` over every leading (slice) axis,
     collapsing an (..., y, x) complex object down to a single real (y, x) phase image.
     Mirrors the (now-retired) client-side `objectPhaseProjected` from `src/array.ts`."""
-    data = cache.array('object')['data']
+    data = cache.raw['object']['data']
     axes = tuple(range(data.ndim - 2))
-    return encode_obj(numpy.nansum(numpy.angle(data), axis=axes))
+    return numpy.nansum(numpy.angle(data), axis=axes)
 
 
 def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -146,10 +140,10 @@ def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     compose multiplicatively in amplitude where they add in phase, so the geometric mean
     is the amplitude a single slice would need to produce the same total.
     """
-    data = cache.array('object')['data']
+    data = cache.raw['object']['data']
     axes = tuple(range(data.ndim - 2))
     with numpy.errstate(divide='ignore'):
-        return encode_obj(numpy.exp(numpy.nanmean(numpy.log(numpy.abs(data)), axis=axes)))
+        return numpy.exp(numpy.nanmean(numpy.log(numpy.abs(data)), axis=axes))
 
 
 def slice_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
@@ -163,11 +157,11 @@ def slice_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     `asyncio.gather` in `Broker.publish_dirty` and take down that tick's publish for every
     topic on the job, not just this one.
     """
-    data = cache.array('object')['data']
+    data = cache.raw['object']['data']
     data = data.reshape((1, *data.shape)) if data.ndim == 2 else data
 
     idx = min(max(int(params.get('slice', 0)), 0), _n_slices(data.shape) - 1)
-    return encode_obj(data[idx])
+    return data[idx]
 
 
 def _logs_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:

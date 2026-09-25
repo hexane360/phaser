@@ -1,9 +1,10 @@
 import asyncio
-import json
 import typing as t
 
+import numpy
 import pytest
 
+from phaser.web import frames
 from phaser.web.server import Job, Worker, server
 from phaser.web.types import ValidationError
 
@@ -59,8 +60,8 @@ def test_chunked_update_reaches_the_job():
     server.jobs.inner[job.id] = job
     server.workers.inner[worker.id] = worker
 
-    state = {'wavelength': 0.0197, 'padding': 'x' * 300}
-    body = json.dumps({'msg': 'job_update', 'job_id': job.id, 'state': state}).encode('utf-8')
+    state = {'wavelength': 0.0197, 'probe': numpy.arange(40, dtype=numpy.complex64).reshape(2, 4, 5)}
+    body = frames.pack_bytes({'msg': 'job_update', 'job_id': job.id, 'state': state})
     chunks = split(body)
     assert len(chunks) > 2
 
@@ -79,8 +80,8 @@ def test_chunked_update_reaches_the_job():
         del server.workers.inner[worker.id]
 
     assert all(resp == {'msg': 'ok'} for resp in responses)
-    assert job.broker.cache.array('padding') == state['padding']
-    assert job.broker.cache.array('wavelength') == state['wavelength']
+    numpy.testing.assert_array_equal(job.broker.cache.raw['probe'], state['probe'])
+    assert job.broker.cache.raw['wavelength'] == state['wavelength']
 
 
 def test_update_is_acknowledged_before_views_are_computed():
@@ -117,7 +118,10 @@ def test_update_is_acknowledged_before_views_are_computed():
     assert seen == [1, 3]
 
 
-@pytest.mark.parametrize('body', [b'{not json', b'[1, 2]', b'\xff'])
+@pytest.mark.parametrize('body', [
+    b'', b'\xff', b'\x08\x00\x00\x00{not jso', b'\x06\x00\x00\x00[1, 2]',
+    frames.pack_bytes([1, 2]), frames.pack_bytes({'msg': 'ping'}) + b'trailing',
+])
 def test_malformed_body_is_a_bad_request(body: bytes):
     worker = FakeWorker('w-route')
     server.workers.inner[worker.id] = worker

@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 import pane
 
 from ..version import version_info
+from . import frames
 from .config import (
     SERVER_CONFIG,
     ServerConfig,
@@ -57,6 +58,11 @@ from .types import (
 
 def serialize(obj: t.Any, ty: t.Any = None) -> bytes:
     return json.dumps(pane.into_data(obj, ty)).encode('utf-8')
+
+
+def frame(msg: t.Any) -> bytes:
+    """`msg` as a binary frame (see `frames.py`)"""
+    return frames.pack_bytes(pane.into_data(msg))
 
 
 def json_response(obj: t.Any, ty: t.Any = None, status: t.Optional[int] = None) -> Response:
@@ -434,7 +440,7 @@ async def listen():
                 for topic in msg.topics:
                     session.unsubscribe(topic)
             elif msg.msg == 'ping':
-                await websocket.send(serialize(HeartbeatAckMessage()))
+                await websocket.send(frame(HeartbeatAckMessage()))
 
     async def send():
         while True:
@@ -443,10 +449,10 @@ async def listen():
             errors = [item for item in items if isinstance(item, ErrorMessage)]
             if updates:
                 # serialize large objects off the event loop
-                data = await run_sync(serialize)(UpdatesMessage(updates))
+                data = await run_sync(frame)(UpdatesMessage.make_unchecked(updates))
                 await websocket.send(data)
             for error in errors:
-                await websocket.send(serialize(error))
+                await websocket.send(frame(error))
 
     # `gather` propagates the first exception but leaves its siblings running, so the four
     # are held explicitly and cancelled together -- otherwise a kicked connection strands
@@ -456,7 +462,7 @@ async def listen():
     try:
         await asyncio.gather(*tasks)
     except Shutdown:
-        await websocket.send(serialize(ServerShutdownMessage()))
+        await websocket.send(frame(ServerShutdownMessage()))
     except Kicked:
         # deliberately silent: the client should see this as a dropped connection
         logging.info("Kicking websocket connection")
@@ -467,14 +473,14 @@ async def listen():
         server.sessions.discard(session)
         session.close()
 
-async def _parse_json(body: bytes) -> t.Dict[str, t.Any]:
-    """Parse a JSON object off the event loop, aborting with a 400 if malformed."""
+def _unpack(body: bytes) -> t.Dict[str, t.Any]:
+    """Unpack a worker message frame, aborting with a 400 if malformed."""
     try:
-        data = await asyncio.to_thread(json.loads, body)
+        data = frames.unpack(body)
     except ValueError as e:
-        abort(400, description=f"Invalid JSON: {e}")
+        abort(400, description=f"Invalid frame: {e}")
     if not isinstance(data, dict):
-        abort(400, description="Expected a JSON object")
+        abort(400, description="Expected a message object")
     return t.cast(t.Dict[str, t.Any], data)
 
 
@@ -498,14 +504,12 @@ async def worker_update(worker_id: WorkerID):
             abort(400, description=e.msg)
         if chunks is None:
             return json_response(OkResponse())
-        data = await _parse_json(b''.join(chunks))
+        data = _unpack(b''.join(chunks))
     else:
-        data = await _parse_json(body)
+        data = _unpack(body)
 
     if data.get('msg') == 'job_update':
-        # Bypass `ReconsStateConverter`'s eager `decode_obj`: keep `state` in wire-form
-        # (still base64-encoded) so array fields are only ever decoded lazily, by
-        # `Cache.array()`, for views that are actually subscribed (see pubsub.py).
+        # skip validation, which would convert arrays to lists
         msg: WorkerMessage = UpdateMessage.make_unchecked(data['state'], data['job_id'])
     else:
         msg = pane.convert(data, WorkerMessage)  # type: ignore

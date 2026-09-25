@@ -2,7 +2,7 @@ import numpy
 import pytest
 
 from phaser.web.pubsub import Cache
-from phaser.web.util import decode_obj, encode_obj
+from phaser.web.frames import pack_bytes, unpack
 from phaser.web.views import (
     VIEWS, obj_meta_view, probe_meta_view, probes_recip_view, project_amp_mean, project_phase,
     slice_view,
@@ -11,8 +11,13 @@ from phaser.web.views import (
 pytestmark = pytest.mark.web
 
 
+def _wire(obj):
+    """`obj` as the server receives it: arrays become read-only views into a frame."""
+    return unpack(pack_bytes(obj))
+
+
 def _wire_object(data: numpy.ndarray, thicknesses: numpy.ndarray, sampling: dict) -> dict:
-    return encode_obj({'sampling': sampling, 'data': data, 'thicknesses': thicknesses})
+    return _wire({'sampling': sampling, 'data': data, 'thicknesses': thicknesses})
 
 
 def test_project_phase_matches_numpy_reference():
@@ -25,7 +30,7 @@ def test_project_phase_matches_numpy_reference():
     cache = Cache()
     cache.update_raw({'object': _wire_object(data, thicknesses, sampling)})
 
-    out = decode_obj(project_phase(cache, {}))
+    out = project_phase(cache, {})
     ref = numpy.nansum(numpy.angle(data), axis=0)
 
     # bulk views carry the bare array; sampling lives on `obj_meta`
@@ -43,7 +48,7 @@ def test_project_phase_single_slice():
     cache = Cache()
     cache.update_raw({'object': _wire_object(data, numpy.array([1.0], dtype=numpy.float32), sampling)})
 
-    out = decode_obj(project_phase(cache, {}))
+    out = project_phase(cache, {})
     numpy.testing.assert_allclose(out, numpy.angle(data[0]))
 
 
@@ -57,7 +62,7 @@ def test_project_amp_mean_is_geometric():
     cache = Cache()
     cache.update_raw({'object': _wire_object(data, numpy.ones(4, dtype=numpy.float32), sampling)})
 
-    out = decode_obj(project_amp_mean(cache, {}))
+    out = project_amp_mean(cache, {})
     # geometric, not arithmetic: the n'th root of the product
     numpy.testing.assert_allclose(out, numpy.prod(amps, axis=0) ** (1 / 4), rtol=1e-5)
     assert out.shape == (6, 7)
@@ -69,12 +74,12 @@ def test_project_amp_mean_single_slice_and_zeros():
     data = numpy.array([[[3.0 + 4.0j, 1.0 + 0.0j], [0.0 + 2.0j, 1.0 + 1.0j]]], dtype=numpy.complex64)
     cache = Cache()
     cache.update_raw({'object': _wire_object(data, numpy.array([], dtype=numpy.float32), sampling)})
-    numpy.testing.assert_allclose(decode_obj(project_amp_mean(cache, {})), numpy.abs(data[0]), rtol=1e-6)
+    numpy.testing.assert_allclose(project_amp_mean(cache, {}), numpy.abs(data[0]), rtol=1e-6)
 
     # a zero pixel drives the geometric mean to zero rather than raising or returning NaN
     data = numpy.array([[[2.0 + 0j, 1.0 + 0j]], [[0.0 + 0j, 1.0 + 0j]]], dtype=numpy.complex64)
     cache.update_raw({'object': _wire_object(data, numpy.ones(2, dtype=numpy.float32), sampling)})
-    numpy.testing.assert_allclose(decode_obj(project_amp_mean(cache, {})), [[0.0, 1.0]], atol=1e-7)
+    numpy.testing.assert_allclose(project_amp_mean(cache, {}), [[0.0, 1.0]], atol=1e-7)
 
 
 def test_slice_view_selects_correct_index():
@@ -86,13 +91,13 @@ def test_slice_view_selects_correct_index():
     cache.update_raw({'object': _wire_object(data, thicknesses, sampling)})
 
     for idx in range(3):
-        numpy.testing.assert_array_equal(decode_obj(slice_view(cache, {'slice': idx})), data[idx])
+        numpy.testing.assert_array_equal(slice_view(cache, {'slice': idx}), data[idx])
 
     # params outlive the run that set them, so an out-of-range slice clamps rather than
     # raising -- an IndexError here would take down the whole tick's publish
-    numpy.testing.assert_array_equal(decode_obj(slice_view(cache, {'slice': 99})), data[2])
-    numpy.testing.assert_array_equal(decode_obj(slice_view(cache, {'slice': -5})), data[0])
-    numpy.testing.assert_array_equal(decode_obj(slice_view(cache, {})), data[0])
+    numpy.testing.assert_array_equal(slice_view(cache, {'slice': 99}), data[2])
+    numpy.testing.assert_array_equal(slice_view(cache, {'slice': -5}), data[0])
+    numpy.testing.assert_array_equal(slice_view(cache, {}), data[0])
 
 
 @pytest.mark.parametrize(('shape', 'thicknesses', 'n_slices', 'expected'), (
@@ -119,27 +124,13 @@ def test_obj_meta_slice_count_and_thicknesses(shape, thicknesses, n_slices, expe
     assert out['sampling'] == sampling
     # the client's slice bound must agree with `slice_view`'s clamp
     numpy.testing.assert_array_equal(
-        decode_obj(slice_view(cache, {'slice': out['n_slices'] - 1})),
-        decode_obj(slice_view(cache, {'slice': 10_000})),
+        slice_view(cache, {'slice': out['n_slices'] - 1}),
+        slice_view(cache, {'slice': 10_000}),
     )
 
 
-def test_obj_meta_does_not_decode_the_bulk_array():
-    # the whole point of the view: shape comes from the `__array_interface__` the wire form
-    # already carries, so a corrupt payload is never even looked at
-    sampling = {'shape': [4, 5], 'sampling': [1.0, 1.0], 'corner': [0.0, 0.0], 'region_min': None, 'region_max': None}
-    wire = _wire_object(numpy.zeros((3, 4, 5), dtype=numpy.complex64),
-                        numpy.array([1.0, 2.0, 3.0], dtype=numpy.float32), sampling)
-    wire['data']['data'] = 'not base64 at all!!'
-
-    cache = Cache()
-    cache.update_raw({'object': wire})
-
-    assert obj_meta_view(cache, {})['n_slices'] == 3
-
-
 def _wire_probe(data: numpy.ndarray, sampling: dict) -> dict:
-    return encode_obj({'sampling': sampling, 'data': data})
+    return _wire({'sampling': sampling, 'data': data})
 
 
 def test_probe_meta_reports_mode_count():
@@ -178,46 +169,15 @@ def test_probes_recip_matches_fft_reference():
     cache = Cache()
     cache.update_raw({'probe': _wire_probe(data, sampling)})
 
-    out = decode_obj(probes_recip_view(cache, {}))
+    out = probes_recip_view(cache, {})
 
     assert out.shape == (2, 8, 8)
     numpy.testing.assert_allclose(out, fft2shift(fft2(data)), rtol=1e-5, atol=1e-6)
 
 
-def test_cache_array_decodes_once_per_generation():
-    calls = []
-    from phaser.web import util as _util
-    real_decode = _util.decode_obj
-
-    def counting_decode(obj):
-        calls.append(1)
-        return real_decode(obj)
-
-    cache = Cache()
-    arr = numpy.arange(6, dtype='<f8').reshape(2, 3)
-    cache.update_raw({'x': encode_obj(arr)})
-
-    import phaser.web.pubsub as pubsub_mod
-    orig = pubsub_mod.decode_obj
-    pubsub_mod.decode_obj = counting_decode
-    try:
-        v1 = cache.array('x')
-        v2 = cache.array('x')  # same generation -> memoized, no re-decode
-        assert len(calls) == 1
-        numpy.testing.assert_array_equal(v1, arr)
-        numpy.testing.assert_array_equal(v2, arr)
-
-        cache.update_raw({'x': encode_obj(arr + 1)})  # bumps generation
-        v3 = cache.array('x')
-        assert len(calls) == 2
-        numpy.testing.assert_array_equal(v3, arr + 1)
-    finally:
-        pubsub_mod.decode_obj = orig
-
-
 def test_progress_probes_are_raw_passthrough():
     cache = Cache()
-    positions = encode_obj(numpy.zeros((4, 5, 2), dtype=numpy.float32))
+    positions = _wire(numpy.zeros((4, 5, 2), dtype=numpy.float32))
     cache.update_raw({
         'progress': {'total_loss': {'iters': [1], 'values': [0.5]}},
         'probe': {'sampling': {}, 'data': 'x'},
@@ -246,8 +206,8 @@ def test_probe_sum_matches_numpy_reference():
     cache = Cache()
     cache.update_raw({'probe': _wire_probe(data, sampling)})
 
-    real = decode_obj(VIEWS['probe_sum'].compute(cache, {}))
-    recip = decode_obj(VIEWS['probe_sum_recip'].compute(cache, {}))
+    real = VIEWS['probe_sum'].compute(cache, {})
+    recip = VIEWS['probe_sum_recip'].compute(cache, {})
 
     assert real.shape == recip.shape == (8, 8)
     numpy.testing.assert_allclose(real, numpy.sum(abs2(data), axis=0), rtol=1e-5, atol=1e-6)

@@ -70,7 +70,7 @@ async def raise_on_shutdown():
 class ChunkedUpload(t.NamedTuple):
     """A partially received chunked `UpdateMessage` body"""
     id: str
-    count: int
+    n_chunks: int
     chunks: t.Dict[int, bytes]
 
 
@@ -133,8 +133,8 @@ class Worker(abc.ABC):
 
         if self.upload is None or self.upload.id != upload_id:
             self.upload = ChunkedUpload(upload_id, count, {})
-        elif self.upload.count != count:
-            raise ValidationError(f"Chunk count changed mid-upload ({self.upload.count} -> {count})")
+        elif self.upload.n_chunks != count:
+            raise ValidationError(f"Chunk count changed mid-upload ({self.upload.n_chunks} -> {count})")
 
         self.upload.chunks[index] = data
         if len(self.upload.chunks) < count:
@@ -437,8 +437,8 @@ class Job:
         a record in `logs`."""
         self.broker: Broker = Broker()
         """Pub/sub broker for this job's views (`state`, `progress`, `obj_phase_sum`, ...).
-        `broker.cache.raw` is the wire-form (still-encoded) view of the latest worker
-        state -- the single source of truth `Job.state()` also reads from."""
+        `broker.cache.raw` is the latest worker state -- the single source of truth
+        `Job.state()` also reads from."""
         # synthetic dep for the `state` view, which reads this `Job` rather than the cache
         # (like `Jobs`/`Workers` do for the manager topics). Seeded here so `has_deps()`
         # holds for a subscriber arriving before the first transition -- a queued job has

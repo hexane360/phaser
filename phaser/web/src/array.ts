@@ -3,7 +3,7 @@
 // This deliberately isn't a general ndarray library -- it implements exactly
 // the operations the dashboard needs: decoding numpy arrays sent from the
 // server (always real float32/float64 or complex64/complex128, always
-// C-contiguous -- see `phaser/web/util.py`), converting complex probe/object
+// C-contiguous -- see `frames.ts`), converting complex probe/object
 // data to real-valued displays, and rendering them to canvas via a magma
 // colormap.
 
@@ -19,65 +19,8 @@ export interface DecodedArray {
     complex: boolean;
 }
 
-export interface ArrayInterchange {
-    data: string; // base64
-    typestr: string; // '<f4' | '<f8' | '<c8' | '<c16'
-    shape: ReadonlyArray<number>;
-    strides: unknown;
-    version: number;
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-}
-
 function zerosLike(data: RealTypedArray, n: number): RealTypedArray {
     return data instanceof Float64Array ? new Float64Array(n) : new Float32Array(n);
-}
-
-// Only the dtypes actually sent by `phaser/web/util.py` are supported. The
-// server always runs little-endian, so only `<` typestrings are handled --
-// a `>` (big-endian) typestr throws rather than silently mis-rendering.
-export function decodeInterchange(obj: ArrayInterchange): DecodedArray {
-    const bytes = base64ToBytes(obj.data);
-    switch (obj.typestr) {
-        case '<f4': return { data: new Float32Array(bytes.buffer), shape: obj.shape, complex: false };
-        case '<f8': return { data: new Float64Array(bytes.buffer), shape: obj.shape, complex: false };
-        case '<c8': return { data: new Float32Array(bytes.buffer), shape: obj.shape, complex: true };
-        case '<c16': return { data: new Float64Array(bytes.buffer), shape: obj.shape, complex: true };
-        default:
-            throw new Error(`Unsupported array typestr '${obj.typestr}' (only <f4, <f8, <c8, <c16 are supported)`);
-    }
-}
-
-// Recursively walks a decoded-JSON value, replacing any `{_ty: "numpy", ...}` interchange
-// object with its `decodeInterchange` result. Used to decode pub/sub `TopicUpdate.data`
-// payloads (and, previously, whole `job_update` state blobs) into plain JS objects with
-// typed-array leaves.
-export function decodeState(state: any): any {
-    if (typeof state !== 'object' || state === null) {
-        return state;
-    }
-
-    if (state instanceof Array) {
-        return state.map(decodeState);
-    }
-
-    if (state._ty !== undefined) {
-        if (state._ty === 'numpy') {
-            return decodeInterchange(state as ArrayInterchange);
-        }
-        throw new Error(`Unknown custom type '${state._ty}'`);
-    }
-
-    let out: Record<string, any> = {};
-    for (const [k, v] of Object.entries(state)) {
-        out[k] = (typeof v === 'object' && v !== null) ? decodeState(v) : v;
-    }
-    return out;
 }
 
 // Fused `angle` + `nansum` over every leading axis, collapsing an (..., y, x)

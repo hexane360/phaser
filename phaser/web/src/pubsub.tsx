@@ -9,7 +9,7 @@ import React from 'react';
 import { atom, PrimitiveAtom, useStore, createStore } from 'jotai';
 
 import { Topic, ClientMessage, ServerMessage, canonicalTopic } from './types';
-import { decodeState } from './array';
+import { unpack } from './frames';
 import { WebsocketConnection, ConnectionStatus } from './connection';
 import { ConnectionModal } from './notify';
 
@@ -219,21 +219,17 @@ export class PubSubConnection {
     }
 
     private _onMessage(event: MessageEvent<any>) {
-        let text: string;
-        if (event.data instanceof ArrayBuffer) {
-            text = new TextDecoder().decode(event.data);
-        } else {
-            text = event.data;
+        if (!(event.data instanceof ArrayBuffer)) {
+            console.error(`Expected a binary pub/sub frame, got ${typeof event.data}`);
+            return;
         }
-
-        const msg: ServerMessage = JSON.parse(text);
+        const msg: ServerMessage = unpack(event.data);
 
         if (msg.msg === 'update') {
             for (const update of msg.updates) {
                 const sub = this.subscriptions.get(canonicalTopic(update.topic));
                 if (!sub) continue;
-                const data = decodeState(update.data);
-                for (const listener of sub.listeners) listener({ data, cause: update.cause ?? null });
+                for (const listener of sub.listeners) listener({ data: update.data, cause: update.cause ?? null });
             }
         } else if (msg.msg === 'error') {
             console.error(`pub/sub error on topic ${JSON.stringify(msg.topic)}: ${msg.reason}`);
@@ -246,7 +242,7 @@ export class PubSubConnection {
             console.info('server is shutting down');
             this.conn.notifyServerShutdown();
         } else {
-            console.warn(`Unknown pub/sub message: ${text}`);
+            console.warn(`Unknown pub/sub message: ${JSON.stringify(msg)}`);
         }
     }
 }
