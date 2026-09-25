@@ -83,6 +83,9 @@ class WorkerObserver(Observer):
         self.job_id = job_id
         self.msg_time = time.monotonic()
 
+        self.send_max_wait_time: t.Optional[float] = None
+        self.send_every_group: bool = False
+
     def send_message(self, msg: WorkerMessage) -> t.Optional[ServerResponse]:
         try:
             resp = self._send_message(msg)
@@ -105,6 +108,8 @@ class WorkerObserver(Observer):
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
+        self.send_max_wait_time = plan.send_max_wait_time
+        self.send_every_group = plan.send_every_group
         self.send_update(init_state)
 
     def heartbeat(self):
@@ -112,8 +117,7 @@ class WorkerObserver(Observer):
             self.send_message(PingMessage())
 
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
-        # update if we haven't updated in a while
-        if force or (time.monotonic() - self.msg_time) > 30.0:
+        if self.send_every_group or (self.send_max_wait_time is not None and (time.monotonic() - self.msg_time) > self.send_max_wait_time):
             self.send_update(state)
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):

@@ -133,7 +133,7 @@ class LSQMLSolver(ConventionalSolver):
                 assert group_pos_update is not None
                 pos_update = at(pos_update, tuple(group)).set(group_pos_update)
 
-            observer.update_group(sim.state, self.engine_plan.send_every_group)
+            observer.update_group(sim.state)
 
             if group_calc_error:
                 assert errors is not None
@@ -414,7 +414,7 @@ class EPIESolver(ConventionalSolver):
                 assert group_pos_update is not None
                 pos_update = at(pos_update, tuple(group)).set(group_pos_update)
 
-            observer.update_group(sim.state, self.engine_plan.send_every_group)
+            observer.update_group(sim.state)
 
             if group_calc_error:
                 assert errors is not None
