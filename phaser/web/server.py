@@ -27,6 +27,7 @@ from ..version import version_info
 from .pubsub import Broker, Session
 from .types import (
     RELOAD_EXIT_CODE,
+    UPDATE_CHUNK_SIZE,
     JobID,
     JobResponse,
     JobState,
@@ -66,6 +67,13 @@ async def raise_on_shutdown():
     raise Shutdown()
 
 
+class ChunkedUpload(t.NamedTuple):
+    """A partially received chunked `UpdateMessage` body"""
+    id: str
+    count: int
+    chunks: t.Dict[int, bytes]
+
+
 class Worker(abc.ABC):
     def __init__(self, worker_id: WorkerID, url: t.Optional[str] = None):
         super().__init__()
@@ -81,6 +89,8 @@ class Worker(abc.ABC):
         """Hostname worker is running on"""
         self.backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
         """Computational backends available to worker"""
+        self.upload: t.Optional[ChunkedUpload] = None
+        """In-progress chunked upload. A worker sends one message at a time, so at most one."""
 
     @abc.abstractmethod
     def worker_type(self) -> str:
@@ -114,6 +124,24 @@ class Worker(abc.ABC):
         elif self.status == 'reloading':
             return 'reload'
         return None
+
+    def receive_chunk(self, upload_id: str, index: int, count: int, data: bytes) -> t.Optional[t.List[bytes]]:
+        """Buffer one chunk of an upload. Returns all chunks, in order, once the upload is complete.
+        A new `upload_id` replaces any abandoned upload."""
+        if not 0 <= index < count:
+            raise ValidationError(f"Chunk index {index} out of range for {count} chunks")
+
+        if self.upload is None or self.upload.id != upload_id:
+            self.upload = ChunkedUpload(upload_id, count, {})
+        elif self.upload.count != count:
+            raise ValidationError(f"Chunk count changed mid-upload ({self.upload.count} -> {count})")
+
+        self.upload.chunks[index] = data
+        if len(self.upload.chunks) < count:
+            return None
+        chunks = [self.upload.chunks[i] for i in range(count)]
+        self.upload = None
+        return chunks
 
     def on_connected(self):
         """Hook for a worker that has just reported in (`LocalWorker` clears its restart
@@ -423,6 +451,10 @@ class Job:
         self.worker_start_time: t.Optional[datetime.datetime] = None
         """Time the worker took up the job, by its own clock. Log records are timestamped
         by that same clock, so this is what `LogRecord.elapsed` is measured from."""
+        self._dirty: t.FrozenSet[str] = frozenset()
+        """Cache fields changed since the last publish started"""
+        self._publisher: t.Optional[asyncio.Task[None]] = None
+        """In-flight publish of worker updates. At most one runs at a time."""
 
     @classmethod
     async def from_path(cls, path: t.Union[str, Path]) -> t.List[Self]:
@@ -550,9 +582,8 @@ class Job:
                 await self.set_status('running')
 
             old_total_iter = self._total_iter()
-            changed = frozenset(msg.state.keys())
             self.broker.cache.update_raw(msg.state)
-            await self.broker.publish_dirty(changed)
+            self._publish_dirty(frozenset(msg.state.keys()))
 
             if self._total_iter() != old_total_iter:
                 await self.notify_changed()
@@ -579,6 +610,21 @@ class Job:
                 await self.notify_changed(cause)
                 await server.jobs.notify_changed({'job_id': self.id, 'result': msg.result})
 
+    def _publish_dirty(self, changed: t.FrozenSet[str]) -> None:
+        """Publish `changed` in the background, so the worker isn't held up by view computation.
+        Changes arriving mid-publish are coalesced into the next one."""
+        self._dirty |= changed
+        if self._publisher is None or self._publisher.done():
+            self._publisher = asyncio.create_task(self._publish_loop())
+
+    async def _publish_loop(self) -> None:
+        while self._dirty:
+            changed, self._dirty = self._dirty, frozenset()
+            try:
+                await self.broker.publish_dirty(changed)
+            except Exception:
+                logging.exception(f"Failed to publish update for job {self.id}")
+
     def _append_log(self, msg: LogMessage) -> None:
         record = msg.into_record(len(self.logs), self._elapsed(msg.timestamp))
         self.logs.append(record)
@@ -588,6 +634,9 @@ class Job:
     async def finalize(self):
         if self.status != 'stopped':
             logging.error(f"Job {self.id} finalized before completion")
+        if self._publisher is not None:
+            self._publisher.cancel()
+            await asyncio.gather(self._publisher, return_exceptions=True)
 
 
 class Jobs:
@@ -653,7 +702,8 @@ class Server:
             static_folder="static",
         )
         self.app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 5
-        self.app.config['MAX_CONTENT_LENGTH'] = 512 * 1024 * 1024  # 512 MiB
+        # larger worker updates are chunked
+        self.app.config['MAX_CONTENT_LENGTH'] = UPDATE_CHUNK_SIZE + 1024 * 1024
 
         self.sessions: t.Set[Session] = set()
         """Live `/listen` connections, so they can be dropped en masse (`debug.py`)"""

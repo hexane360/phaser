@@ -1,11 +1,13 @@
 import dataclasses
 import datetime
+import json
 import logging
 import socket
 import sys
 import time
 import traceback
 import typing as t
+import uuid
 
 import backoff
 import requests
@@ -17,11 +19,13 @@ from phaser.utils.num import get_devices, repr_device
 
 from .types import (
     RELOAD_EXIT_CODE,
+    UPDATE_CHUNK_SIZE,
     ConnectMessage,
     JobID,
     JobResultMessage,
     JobStartMessage,
     LogMessage,
+    OkResponse,
     PingMessage,
     PollMessage,
     ServerResponse,
@@ -112,8 +116,19 @@ class WorkerObserver(Observer):
         if force or (time.monotonic() - self.msg_time) > 30.0:
             self.send_update(state)
 
-    def update_iteration(self, state: ReconsState, i: int, n: int, error: t.Optional[float] = None):
+    def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         self.send_update(state)
+
+
+REQUEST_TIMEOUT: t.Tuple[float, float] = (10., 60.)
+"""(connect, read) timeout for requests to the server"""
+
+
+def _error_detail(resp: requests.Response) -> str:
+    try:
+        return str(resp.json()['msg'])
+    except (ValueError, KeyError, TypeError):
+        return resp.text[:500]
 
 
 def run_worker(url: str, quiet: bool = False):
@@ -122,19 +137,37 @@ def run_worker(url: str, quiet: bool = False):
         backends=tuple((backend, repr_device(device)) for (backend, device) in get_devices())
     )
 
-    def send_message(msg: WorkerMessage) -> ServerResponse:
-        body = msg.into_data()
-        resp: requests.Response = requests.post(url, json=body)
-        try:
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            if not (req := t.cast(requests.PreparedRequest, resp.request)) or not req.body:
-                size = 0
-            else:
-                size = len(req.body)
-            e.add_note(f"Request size: {size} bytes")
-            raise 
+    def post(body: bytes, params: t.Optional[t.Dict[str, t.Any]] = None,
+             content_type: str = 'application/json',
+             session: t.Optional[requests.Session] = None) -> ServerResponse:
+        resp = (session or requests).post(url, data=body, params=params, timeout=REQUEST_TIMEOUT,
+                                          headers={'Content-Type': content_type})
+        if not resp.ok:
+            raise requests.HTTPError(
+                f"{resp.status_code} {resp.reason} ({len(body)} bytes sent): {_error_detail(resp)}",
+                response=resp
+            )
         return pane.convert(resp.json(), ServerResponse)  # type: ignore
+
+    # retry dropped chunks, rather than dropping the whole update
+    @backoff.on_exception(backoff.fibo, (requests.ConnectionError, requests.Timeout),
+                          max_tries=5, max_time=60)
+    def post_chunk(session: requests.Session, body: bytes, upload_id: str, index: int, count: int) -> ServerResponse:
+        return post(body, {'upload': upload_id, 'index': index, 'count': count}, 'application/octet-stream', session)
+
+    def send_message(msg: WorkerMessage) -> ServerResponse:
+        body = json.dumps(msg.into_data(), allow_nan=True).encode('utf-8')
+        if not isinstance(msg, UpdateMessage) or len(body) <= UPDATE_CHUNK_SIZE:
+            return post(body)
+
+        upload_id = uuid.uuid4().hex
+        count = -(-len(body) // UPDATE_CHUNK_SIZE)
+        resp: ServerResponse = OkResponse()
+        # one connection for the whole upload
+        with requests.Session() as session:
+            for i in range(count):
+                resp = post_chunk(session, body[i * UPDATE_CHUNK_SIZE:(i + 1) * UPDATE_CHUNK_SIZE], upload_id, i, count)
+        return resp
 
     # make inital connection to server
     # this has a relatively short backoff, so we can give up early

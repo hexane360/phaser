@@ -467,6 +467,17 @@ async def listen():
         server.sessions.discard(session)
         session.close()
 
+async def _parse_json(body: bytes) -> t.Dict[str, t.Any]:
+    """Parse a JSON object off the event loop, aborting with a 400 if malformed."""
+    try:
+        data = await asyncio.to_thread(json.loads, body)
+    except ValueError as e:
+        abort(400, description=f"Invalid JSON: {e}")
+    if not isinstance(data, dict):
+        abort(400, description="Expected a JSON object")
+    return t.cast(t.Dict[str, t.Any], data)
+
+
 @app.post("/worker/<string:worker_id>/update")
 async def worker_update(worker_id: WorkerID):
     try:
@@ -474,7 +485,23 @@ async def worker_update(worker_id: WorkerID):
     except KeyError:
         abort(404, description=f"Worker '{worker_id}' not found")
 
-    data = await request.json
+    body = t.cast(bytes, await request.get_data(as_text=False))
+    if (upload_id := request.args.get('upload')) is not None:
+        # one chunk of an `UpdateMessage` body
+        try:
+            index, count = int(request.args['index']), int(request.args['count'])
+        except (KeyError, ValueError):
+            abort(400, description="Chunk requires integer 'index' and 'count'")
+        try:
+            chunks = worker.receive_chunk(upload_id, index, count, body)
+        except ValidationError as e:
+            abort(400, description=e.msg)
+        if chunks is None:
+            return json_response(OkResponse())
+        data = await _parse_json(b''.join(chunks))
+    else:
+        data = await _parse_json(body)
+
     if data.get('msg') == 'job_update':
         # Bypass `ReconsStateConverter`'s eager `decode_obj`: keep `state` in wire-form
         # (still base64-encoded) so array fields are only ever decoded lazily, by

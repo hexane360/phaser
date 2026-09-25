@@ -51,6 +51,9 @@ Signal sent to a job or worker.
 RELOAD_EXIT_CODE: int = 129
 """Exit code a worker exits with to request a restart (128 + SIGHUP)."""
 
+UPDATE_CHUNK_SIZE: int = 16 * 1024 * 1024
+"""Maximum size of one worker -> server request body. Larger `UpdateMessage`s are sent in chunks of this size."""
+
 class ValidationError(Exception):
     def __init__(self, msg: str):
         self.msg: str = msg
