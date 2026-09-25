@@ -128,6 +128,9 @@ class EnginePlan(Dataclass, kw_only=True):
     check_every_group: bool = False
     send_every_group: bool = False
 
+    send_max_wait_time: t.Optional[float] = 60.0
+    """Maximum wait time between sending updates (s)"""
+
     mtf: t.Union[MtfPlan, FilterHook, None] = None
     """Detector MTF to apply to simulated diffraction pattern."""
 
