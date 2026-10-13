@@ -48,7 +48,7 @@ def execute_plan(
         recons.observer.finish_recons(recons.state)
         logging.info("Reconstruction finished!")
     finally:
-        # pass any excpetion info to observers
+        # pass any exception info to observers
         recons.observer.close(sys.exc_info()[1])
 
 
@@ -287,8 +287,9 @@ def initialize_reconstruction(
 
     observer = _normalize_observers(observers, override_observers)
 
+    name = name or plan.name
     logging.info("Executing plan...")
-    observer.init_recons(plan)
+    observer.init_recons(plan, name=name)
 
     dtype: t.Type[numpy.floating] = numpy.float32 if plan.dtype == 'float32' else numpy.float64
     cdtype: t.Type[numpy.complexfloating] = to_complex_dtype(dtype)

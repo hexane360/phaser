@@ -1,63 +1,55 @@
 import contextlib
-from functools import wraps
 import logging
-from pathlib import Path
 import time
 import typing as t
+from functools import wraps
+from pathlib import Path
 
-from phaser.plan import ReconsPlan, EnginePlan, SaveOptions
-from phaser.state import ReconsState, PartialReconsState, ProgressState
+from phaser.plan import EnginePlan, ReconsPlan, SaveOptions
+from phaser.state import PartialReconsState, ProgressState, ReconsState
 from phaser.types import EarlyTermination, flag_any_true, process_flag
 
 if t.TYPE_CHECKING:
-    from phaser.hooks.schedule import FlagArgs
     from typing_extensions import Self
+
+    from phaser.hooks.schedule import FlagArgs
+
 
 P = t.ParamSpec('P')
 
 class Observer(contextlib.AbstractContextManager):
-    def init_recons(self, plan: ReconsPlan):
+    def init_recons(self, plan: ReconsPlan, *, name: str):
         """Called when a reconstruction plan beings initialization."""
-        pass
 
     def start_recons(self, init_state: ReconsState):
         """Called when a reconstruction plan is initialized."""
-        pass
 
     def init_engine(
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
         """Called when an engine begins initialization"""
-        pass
 
     def start_engine(self, init_state: ReconsState):
         """Called after engine initialization, before it starts"""
-        pass
 
     def heartbeat(self):
         """Called reasonably often by the engine, to e.g. periodically send data"""
-        pass
 
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
         """Called when a group is finished, with updated reconstruction state."""
-        pass
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         """Called when an iteration is finished, with updated reconstruction state."""
-        pass
 
     def finish_engine(self, state: ReconsState):
         """Called when an engine is finished"""
-        pass
 
     def finish_recons(self, state: ReconsState):
         """Called when the reconstruction is finished"""
-        pass
 
     def close(self, exc: t.Optional[BaseException] = None):
         """Called to clean up, whether the reconstruction succeeded or failed."""
-        pass
 
     @t.final
     def __enter__(self) -> 'Self':
@@ -65,7 +57,7 @@ class Observer(contextlib.AbstractContextManager):
 
     @t.final
     def __exit__(self, type: t.Optional[t.Type[BaseException]],
-                 value: t.Optional[BaseException], traceback: t.Any) -> None:
+                 value: t.Optional[BaseException], traceback: object) -> None:
         self.close(value)
 
 
@@ -92,7 +84,7 @@ class LoggingObserver(Observer):
     def get_utc(self) -> float:
         return time.time_ns() * 1e-9
 
-    def init_recons(self, plan: ReconsPlan):
+    def init_recons(self, plan: ReconsPlan, *, name: str):
         self.logger.info("Initializing reconstruction...")
         self.init_start_time = time.monotonic()
         self.init_start_utc = self.get_utc()
@@ -211,22 +203,36 @@ class PatienceObserver(Observer):
 
 class SaveObserver(Observer):
     def __init__(self):
-        self.out_dir: t.Optional[Path] = None
+        self.out_dir: Path = Path.cwd()
+        self.engine_out_dir: t.Optional[Path] = None
         self.save_options: t.Optional[SaveOptions] = None
 
-        self.save_flag: t.Optional[t.Callable[['FlagArgs'], bool]] = None
-        self.save_images_flag: t.Optional[t.Callable[['FlagArgs'], bool]] = None
+        self.save_flag: t.Optional[t.Callable[[FlagArgs], bool]] = None
+        self.save_images_flag: t.Optional[t.Callable[[FlagArgs], bool]] = None
         self.save_initial: bool = False
         self.save_initial_images: bool = False
         self.any_state_output: bool = False
         self.any_image_output: bool = False
+        # whether any engine has finished
+        self.any_engine_output: bool = False
+
+    def init_recons(self, plan: ReconsPlan, *, name: str):
+        if plan.out_dir is not None:
+            fmt_str = plan.out_dir
+            try:
+                out_dir = fmt_str.format(
+                    name=name,
+                )
+                self.out_dir = Path(out_dir).expanduser().absolute()
+            except KeyError as e:
+                raise ValueError(f"Invalid format string in 'out_dir' (unknown key {e})") from None
+            except Exception as e:
+                raise ValueError("Invalid format string in 'out_dir'") from e
 
     def init_engine(
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
-        from phaser.engines.common.output import output_images, output_state
-
         self.save_initial = plan.save_initial
         self.save_initial_images = plan.save_initial_images
         self.save_flag = process_flag(plan.save)
@@ -238,66 +244,90 @@ class SaveObserver(Observer):
 
         try:
             fmt_str = plan.save_options.out_dir
-            out_dir = fmt_str.format(
+            engine_out_dir = fmt_str.format(
                 engine_num=engine_num, name=recons_name,
-                group=plan.grouping, niter=plan.niter,
+                grouping=plan.grouping, niter=plan.niter,
                 **kwargs
             )
-            out_dir = Path(out_dir).expanduser().absolute()
+            # if engine_out_dir is absolute, it overrides self.out_dir
+            # if neither are absolute .absolute() takes over
+            engine_out_dir = (self.out_dir / Path(engine_out_dir).expanduser()).absolute()
         except KeyError as e:
             raise ValueError(f"Invalid format string in 'out_dir' (unknown key {e})") from None
         except Exception as e:
             raise ValueError("Invalid format string in 'out_dir'") from e
 
-        if self.out_dir is not None and self.out_dir != out_dir:
-            self.close()  # close out_dir from previous engine
-        self.out_dir = out_dir
+        self.engine_out_dir = engine_out_dir
 
         if self.any_state_output or self.any_image_output:
             # TODO: add option to clear out_dir
+
+            # first we try to make out_dir
+            if self.out_dir is not None:
+                try:
+                    self.out_dir.mkdir(exist_ok=True)
+                except Exception as e:
+                    e.add_note(f"Unable to create output dir '{self.out_dir}'")
+                    raise
+
+                (self.out_dir / 'finished').unlink(missing_ok=True)
+
+            # then engine_out_dir
             try:
-                self.out_dir.mkdir(exist_ok=True)
+                self.engine_out_dir.mkdir(exist_ok=True)
             except Exception as e:
-                e.add_note(f"Unable to create output dir '{self.out_dir}'")
+                e.add_note(f"Unable to create output dir '{self.engine_out_dir}'")
                 raise
 
-            (self.out_dir / 'finished').unlink(missing_ok=True)
+            (self.engine_out_dir / 'finished').unlink(missing_ok=True)
+
+    def start_engine(self, init_state: ReconsState):
+        assert self.engine_out_dir is not None
+        assert self.save_options is not None
 
         if self.save_initial:
             from phaser.engines.common.output import output_state
-            output_state(init_state, self.out_dir, self.save_options, initial=True)
+            output_state(init_state, self.engine_out_dir, self.save_options, initial=True)
 
         if self.save_initial_images:
             from phaser.engines.common.output import output_images
-            output_images(init_state, self.out_dir, self.save_options, initial=True)
+            output_images(init_state, self.engine_out_dir, self.save_options, initial=True)
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
-        from phaser.engines.common.output import output_images, output_state
-
-        assert self.out_dir is not None
+        assert self.engine_out_dir is not None
         assert self.save_options is not None
 
         if self.save_flag and self.save_flag({'state': state, 'niter': n}):
-            output_state(state, self.out_dir, self.save_options)
+            from phaser.engines.common.output import output_state
+            output_state(state, self.engine_out_dir, self.save_options)
 
         if self.save_images_flag and self.save_images_flag({'state': state, 'niter': n}):
-            output_images(state, self.out_dir, self.save_options)
+            from phaser.engines.common.output import output_images
+            output_images(state, self.engine_out_dir, self.save_options)
 
     def finish_engine(self, state: ReconsState):
-        from phaser.engines.common.output import output_images, output_state
-        assert self.out_dir is not None
+        assert self.engine_out_dir is not None
         assert self.save_options is not None
 
-        if self.any_state_output:
-            output_state(state, self.out_dir, self.save_options)
+        any_output = self.any_image_output or self.any_state_output
+        if not any_output:
+            return
 
+        self.any_engine_output = True
+
+        if self.any_state_output:
+            from phaser.engines.common.output import output_state
+            output_state(state, self.engine_out_dir, self.save_options)
         if self.any_image_output:
-            output_images(state, self.out_dir, self.save_options)
+            from phaser.engines.common.output import output_images
+            output_images(state, self.engine_out_dir, self.save_options)
+        if self.engine_out_dir != self.out_dir:
+            (self.engine_out_dir / 'finished').touch(mode=0o664)
 
     def close(self, exc: t.Optional[BaseException] = None):
-        if exc is None and self.out_dir is not None:
-            if self.any_state_output or self.any_image_output:
-                (self.out_dir / 'finished').touch(mode=0o664)
+        # here rather than finish_recons for more flexibility in calling
+        if exc is None and self.any_engine_output:
+            (self.out_dir / 'finished').touch(mode=0o664)
 
 
 def _fwd_to_children(f: t.Callable[t.Concatenate['ObserverSet', P], None]) -> t.Callable[t.Concatenate['ObserverSet', P], None]:
@@ -314,56 +344,47 @@ class ObserverSet(Observer):
         self.inner: t.Tuple[Observer, ...] = tuple(observers)
 
     @_fwd_to_children
-    def init_recons(self, plan: ReconsPlan):
+    def init_recons(self, plan: ReconsPlan, *, name: str):
         """Called when a reconstruction plan beings initialization."""
-        ...
 
     @_fwd_to_children
     def start_recons(self, init_state: ReconsState):
         """Called when a reconstruction plan is initialized."""
-        ...
 
     @_fwd_to_children
     def init_engine(
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
-        ...
+        """Called when an engine begins initialization"""
 
     @_fwd_to_children
     def start_engine(self, init_state: ReconsState):
         """Called after engine initialization, before it starts"""
-        ...
 
     @_fwd_to_children
     def heartbeat(self):
         """Called reasonably often by the engine, to e.g. periodically send data"""
-        ...
 
     @_fwd_to_children
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
         """Called when a group is finished, with updated reconstruction state."""
-        ...
 
     @_fwd_to_children
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         """Called when an iteration is finished, with updated reconstruction state."""
-        ...
 
     @_fwd_to_children
     def finish_engine(self, state: ReconsState):
         """Called when an engine is finished"""
-        ...
 
     @_fwd_to_children
     def finish_recons(self, state: ReconsState):
         """Called when the reconstruction is finished"""
-        ...
 
     @_fwd_to_children
     def close(self, exc: t.Optional[BaseException] = None):
         """Called to clean up, whether the reconstruction succeeded or failed."""
-        ...
 
     def __enter__(self) -> 'Self':  # type: ignore
         for observer in self.inner:
@@ -371,5 +392,5 @@ class ObserverSet(Observer):
         return self
 
     def __exit__(self, type: t.Optional[t.Type[BaseException]],  # type: ignore
-                 value: t.Optional[BaseException], traceback: t.Any) -> None:
+                 value: t.Optional[BaseException], traceback: object) -> None:
         self.close(value)

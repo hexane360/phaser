@@ -61,7 +61,7 @@ class SaveOptions(Dataclass, kw_only=True):
     """Extension to use for matplotlib savefig"""
     plot_dpi: int = 300
 
-    out_dir: str = "{name}"
+    out_dir: str = ""
     img_fmt: str = "{type}_iter{iter.total_iter:03}.{ext}"
     hdf5_fmt: str = "iter{iter.total_iter:03}.{ext}"
     img_fmt_init: str = "{type}_initial.{ext}"
@@ -231,6 +231,7 @@ class ReconsPlan(Dataclass, kw_only=True):
     version: t.Annotated[str, IsVersion(exactly="1.0")] = "1.0"
 
     name: str
+    out_dir: t.Optional[str] = "{name}"
 
     backend: t.Optional[BackendName] = None
     device: t.Optional[str] = None

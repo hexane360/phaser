@@ -1,4 +1,3 @@
-import contextlib
 import json
 import typing as t
 from pathlib import Path
@@ -58,34 +57,6 @@ _CATEGORY_MIN_DTYPE: dict[type[numpy.generic], type[numpy.generic]] = {
     numpy.unsignedinteger: numpy.uint8,
     numpy.signedinteger: numpy.int8,
 }
-
-
-class OutputDir(contextlib.AbstractContextManager[Path]):
-    def __init__(self, fmt_str: str, any_output: bool, **kwargs: t.Any):
-        try:
-            out_dir = fmt_str.format(**kwargs)
-            self.out_dir: Path = Path(out_dir).expanduser().absolute()
-        except KeyError as e:
-            raise ValueError(f"Invalid format string in 'out_dir' (unknown key {e})") from None
-        except Exception as e:
-            raise ValueError("Invalid format string in 'out_dir'") from e
-
-        self.any_output: bool = any_output
-
-    def __enter__(self) -> Path:
-        if self.any_output:
-            try:
-                self.out_dir.mkdir(exist_ok=True)
-            except Exception as e:
-                e.add_note(f"Unable to create output dir '{self.out_dir}'")
-                raise
-
-        return self.out_dir
-
-    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, tb: object):
-        if exc_value is None and self.any_output:
-            # create finished file
-            (self.out_dir / 'finished').touch(mode=0o664)
 
 
 def open_hdf5(file: HdfLike, mode: str = 'r', **kwargs: t.Any) -> h5py.File:
