@@ -78,6 +78,7 @@ def execute_engine(
         total_iter=recons.state.iter.total_iter,
         n_total_iters=recons.state.iter.n_total_iters,
     )
+
     try:
         recons.state = engine({
             'data': recons.patterns,

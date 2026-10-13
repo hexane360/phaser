@@ -216,6 +216,8 @@ class SaveObserver(Observer):
 
         self.save_flag: t.Optional[t.Callable[['FlagArgs'], bool]] = None
         self.save_images_flag: t.Optional[t.Callable[['FlagArgs'], bool]] = None
+        self.save_initial: bool = False
+        self.save_initial_images: bool = False
         self.any_state_output: bool = False
         self.any_image_output: bool = False
 
@@ -223,11 +225,15 @@ class SaveObserver(Observer):
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
+        from phaser.engines.common.output import output_images, output_state
+
+        self.save_initial = plan.save_initial
+        self.save_initial_images = plan.save_initial_images
         self.save_flag = process_flag(plan.save)
         self.save_images_flag = process_flag(plan.save_images)
         self.save_options = plan.save_options
-        self.any_state_output = flag_any_true(self.save_flag, plan.niter)
-        self.any_image_output = flag_any_true(self.save_images_flag, plan.niter)
+        self.any_state_output = self.save_initial or flag_any_true(self.save_flag, plan.niter)
+        self.any_image_output = self.save_initial_images or flag_any_true(self.save_images_flag, plan.niter)
         engine_num = init_state.iter.engine_num
 
         try:
@@ -256,6 +262,14 @@ class SaveObserver(Observer):
                 raise
 
             (self.out_dir / 'finished').unlink(missing_ok=True)
+
+        if self.save_initial:
+            from phaser.engines.common.output import output_state
+            output_state(init_state, self.out_dir, self.save_options, initial=True)
+
+        if self.save_initial_images:
+            from phaser.engines.common.output import output_images
+            output_images(init_state, self.out_dir, self.save_options, initial=True)
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         from phaser.engines.common.output import output_images, output_state

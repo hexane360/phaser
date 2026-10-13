@@ -63,7 +63,9 @@ class SaveOptions(Dataclass, kw_only=True):
 
     out_dir: str = "{name}"
     img_fmt: str = "{type}_iter{iter.total_iter:03}.{ext}"
-    hdf5_fmt: str = "iter{iter.total_iter:03}.h5"
+    hdf5_fmt: str = "iter{iter.total_iter:03}.{ext}"
+    img_fmt_init: str = "{type}_initial.{ext}"
+    hdf5_fmt_init: str = "initial.{ext}"
 
 
 class MtfPlan(Dataclass, kw_only=True):
@@ -114,6 +116,8 @@ class EnginePlan(Dataclass, kw_only=True):
 
     save: FlagLike = False
     save_images: FlagLike = False
+    save_initial: bool = False
+    save_initial_images: bool = False
     save_options: SaveOptions = SaveOptions()
 
     early_termination: t.Optional[int] = None

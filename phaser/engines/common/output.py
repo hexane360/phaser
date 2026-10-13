@@ -13,34 +13,40 @@ from phaser.state import ReconsState
 from phaser.plan import SaveOptions
 
 
-def output_images(state: ReconsState, out_dir: Path, options: SaveOptions):
+def output_images(state: ReconsState, out_dir: Path, options: SaveOptions, *, initial: bool = False):
+    k = 'img_fmt_init' if initial else 'img_fmt'
+    img_fmt: str = getattr(options, k)
+
     for ty in options.images:
         if ty not in _SAVE_FUNCS:
             raise ValueError(f"Unknown image type '{ty}'")
 
         ext = options.plot_ext if ty in _PLOT_FUNCS else 'tiff'
         try:
-            out_name = options.img_fmt.format(
+            out_name = img_fmt.format(
                 type=ty, iter=state.iter, ext=ext
             )
             out_path = out_dir / out_name
         except KeyError as e:
-            raise ValueError(f"Invalid format string in 'img_fmt' (unknown key {e})") from None
+            raise ValueError(f"Invalid format string in {k!r} (unknown key {e})") from None
         except Exception as e:
-            raise ValueError("Invalid format string in 'img_fmt'") from e
+            raise ValueError(f"Invalid format string in {k!r}") from e
 
         _SAVE_FUNCS[ty](state, out_path, options)
 
 
-def output_state(state: ReconsState, out_dir: Path, options: SaveOptions):
+def output_state(state: ReconsState, out_dir: Path, options: SaveOptions, *, initial: bool = False):
+    k = 'hdf5_fmt_init' if initial else 'hdf5_fmt'
+    hdf5_fmt: str = getattr(options, k)
+
     try:
-        out_name = options.hdf5_fmt.format(
-            iter=state.iter
+        out_name = hdf5_fmt.format(
+            iter=state.iter, ext='h5'
         )
     except KeyError as e:
-        raise ValueError(f"Invalid format string in 'hdf5_fmt' (unknown key {e})") from None
+        raise ValueError(f"Invalid format string in {k!r} (unknown key {e})") from None
     except Exception as e:
-        raise ValueError("Invalid format string in 'hdf5_fmt'") from e
+        raise ValueError(f"Invalid format string in {k!r}") from e
 
     state.write_hdf5(out_dir / out_name)
 

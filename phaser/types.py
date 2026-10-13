@@ -211,15 +211,18 @@ class SimpleFlag(Dataclass):
     after: int = 0
     every: int = 1
     before: t.Optional[int] = None
+    first: bool = False
 
     def any_true(self, niter: int) -> bool:
-        return (
+        return self.first or (
             self.after < niter
             and (self.before is None or self.before > 0)
         )
 
     def __call__(self, args: 'FlagArgs') -> bool:
         i = args['state'].iter.engine_iter
+        if (self.first and i == 1):
+            return True
         return (
             (self.before is None or i < self.before)
             and i > self.after
