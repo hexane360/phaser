@@ -9,13 +9,13 @@ from frozendict import frozendict
 import numpy
 import pane
 
-from phaser.types import EarlyTermination
-from phaser.utils.num import Device, cast_array_module, get_array_module, get_backend_devices, get_backend_module, set_default_device, to_device, xp_is_jax, Sampling, to_complex_dtype, xp_is_torch
+from phaser.types import EarlyTermination, Slices
+from phaser.utils.num import Device, cast_array_module, get_array_module, get_backend_devices, get_backend_module, set_default_device, to_device, to_numpy, xp_is_jax, Sampling, to_complex_dtype, xp_is_torch
 from phaser.utils.object import ObjectSampling
 from phaser.utils.misc import freeze, unwrap
 from .hooks import EngineHook, Hook, ObjectHook, RawData
 from .plan import GradientEnginePlan, ReconsPlan, EnginePlan, ScanHook, ProbeHook, TiltHook
-from .state import Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons, ScanState
+from .state import ObjectState, Patterns, ReconsState, PartialReconsState, IterState, PreparedRecons, ScanState
 from .observer import Observer, LoggingObserver, PatienceObserver, SaveObserver, ObserverSet
 from .version import version_info
 
@@ -172,6 +172,22 @@ def _normalize_scan_shape(
     )
 
     return patterns, state
+
+
+def _maybe_reslice_object(
+    obj: ObjectState,
+    slices: t.Optional[Slices],
+) -> ObjectState:
+    if slices is None or (len(slices.thicknesses) == len(obj.thicknesses)
+                          and numpy.allclose(slices.thicknesses, to_numpy(obj.thicknesses))):
+        return obj
+
+    xp = get_array_module(obj.data)
+    from phaser.utils.object import resample_slices
+    logging.info(f"Reslicing object from {max(1, len(obj.thicknesses))} to {max(1, len(slices.thicknesses))} slice(s)...")
+    obj.data = resample_slices(obj.data, obj.thicknesses, slices.thicknesses)
+    obj.thicknesses = xp.array(slices.thicknesses, dtype=obj.thicknesses.dtype)
+    return obj
 
 
 def load_raw_data(
@@ -348,6 +364,7 @@ def initialize_reconstruction(
         logging.info("Re-using object from initial state...")
         obj = init_state.object
         obj.data = obj.data.astype(cdtype)
+        obj = _maybe_reslice_object(obj, plan.slices)
     else:
         logging.info("Initializing object...")
 
@@ -442,6 +459,8 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
         state.object.data = state.object.sampling.resample(state.object.data, obj_sampling)
         state.object.sampling = obj_sampling
 
+    state.object = _maybe_reslice_object(state.object, engine.slices)
+
     current_probe_modes = state.probe.data.shape[0]
     if engine.probe_modes != current_probe_modes:
         # fix probe modes
@@ -455,13 +474,6 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
 
             base_mode = xp.sum(state.probe.data, axis=0)
             state.probe.data = make_hermetian_modes(base_mode, engine.probe_modes, base_mode_power=engine.base_mode_power)
-
-    if engine.slices is not None and (len(engine.slices.thicknesses) != len(state.object.thicknesses)
-                                      or not numpy.allclose(engine.slices.thicknesses, state.object.thicknesses)):
-        from phaser.utils.object import resample_slices
-        logging.info(f"Reslicing object from {max(1, len(state.object.thicknesses))} to {max(1, len(engine.slices.thicknesses))} slice(s)...")
-        state.object.data = resample_slices(state.object.data, state.object.thicknesses, engine.slices.thicknesses)
-        state.object.thicknesses = xp.array(engine.slices.thicknesses, dtype=state.object.thicknesses.dtype)
 
     if isinstance(engine, GradientEnginePlan):
         solver_vars = set(itertools.chain.from_iterable(engine.solvers.keys()))
