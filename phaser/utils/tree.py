@@ -1,3 +1,5 @@
+"""Pytree utilities for jax and torch, and the `tree_dataclass` decorator."""
+
 import dataclasses
 import functools
 import typing as t
@@ -8,23 +10,32 @@ from typing_extensions import Self, dataclass_transform
 
 T = t.TypeVar('T')
 Leaf: t.TypeAlias = t.Any
+"""Pytree leaf."""
 Tree: t.TypeAlias = t.Any
+"""Pytree: a leaf or a nested container of pytrees."""
 field = dataclasses.field
+"""Alias of `dataclasses.field`."""
 
 
 class TreeSpec(t.Protocol):
+    """Pytree structure, either a `jax` `PyTreeDef` or a `torch` `TreeSpec`."""
+
     @property
     def num_leaves(self) -> int:
+        """Number of leaves."""
         ...
 
     @property
     def num_nodes(self) -> int:
+        """Number of nodes, including leaves."""
         ...
 
     def unflatten(self, leaves: t.Iterable[Leaf], /) -> Tree:
+        """Return the pytree with this structure and leaves `leaves`."""
         ...
 
     def flatten_up_to(self, xs: Tree, /) -> t.List[Tree]:
+        """Flatten `xs` to the leaf positions of this structure, returning the subtrees there."""
         ...
 
     def __eq__(self, other: Self, /) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
@@ -34,6 +45,8 @@ class TreeSpec(t.Protocol):
         ...
 
 class Key(t.Protocol):
+    """Key of a child in a pytree node."""
+
     def __hash__(self) -> int:
         ...
 
@@ -44,18 +57,27 @@ class Key(t.Protocol):
         ...
 
 class GetAttrKey(Key, t.Protocol):
+    """Key of an attribute child."""
+
     @property
     def name(self) -> str:
+        """Attribute name."""
         ...
 
 
 KeyPath: t.TypeAlias = t.Tuple[Key, ...]
+"""Sequence of keys from the root of a pytree to a leaf."""
 
 
 def flatten(
     tree: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.Tuple[t.List[Leaf], TreeSpec]:
+    """Flatten `tree` into a list of leaves and a `TreeSpec`.
+
+    Uses the `torch` pytree implementation if `tree` contains torch tensors, otherwise `jax`.
+    `is_leaf` marks additional nodes to treat as leaves.
+    """
     from phaser.utils.num import is_torch
 
     if is_torch(tree):
@@ -70,6 +92,7 @@ def flatten_with_path(
     tree: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.Tuple[t.List[t.Tuple[KeyPath, Leaf]], TreeSpec]:
+    """Flatten `tree` into a list of `(key_path, leaf)` pairs and a `TreeSpec`."""
     from phaser.utils.num import is_torch
 
     if is_torch(tree):
@@ -84,6 +107,11 @@ def unflatten(
     leaves: t.Iterable[t.Any],
     treespec: TreeSpec
 ) -> Tree:
+    """Rebuild a pytree with structure `treespec` from `leaves`.
+
+    Raises:
+        TypeError: If `treespec` is not a `jax` or `torch` tree structure.
+    """
     try:
         from torch.utils._pytree import TreeSpec
         if isinstance(treespec, TreeSpec):
@@ -109,6 +137,7 @@ def map(
     *rest: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.Any:
+    """Apply `f` to each leaf of `tree`, and the corresponding leaves of each tree in `rest`."""
     from phaser.utils.num import is_torch
 
     if is_torch(tree):
@@ -123,10 +152,12 @@ def reduce(
     f: t.Callable[[T, t.Any], T], tree: Tree, initializer: T, *,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> T:
+    """Reduce the leaves of `tree` with `f`, starting from `initializer`."""
     return functools.reduce(f, leaves(tree, is_leaf=is_leaf), initializer)
 
 
 def sum(tree: Tree) -> numpy.ndarray:
+    """Return the sum of all elements of all leaves of `tree`."""
     from phaser.utils.num import get_array_module
 
     xp = get_array_module(tree)
@@ -140,6 +171,7 @@ def map_with_path(
     *rest: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.Any:
+    """Apply `f(key_path, leaf, *rest_leaves)` to each leaf of `tree`."""
     from phaser.utils.num import is_torch
 
     if is_torch(tree):
@@ -160,6 +192,21 @@ def grad(
     has_aux: bool = False, *, xp: t.Optional[t.Any] = None,
     sign: float = 1.0,
 ) -> t.Callable[..., Tree]:
+    """Return a function computing the gradient of `f` with respect to the arguments `argnums`.
+
+    Wraps `jax.grad` or `torch.func.grad`. Gradients of complex inputs are Wirtinger
+    derivatives on both backends.
+
+    Args:
+        f: Function returning a scalar. If `has_aux`, returns `(scalar, aux)`.
+        argnums: Argument index or indices to differentiate.
+        has_aux: If `True`, the returned function returns `(grad, aux)`.
+        xp: Backend module, `jax` or `torch`. Defaults to `jax`.
+        sign: Factor multiplied into the gradient.
+
+    Raises:
+        ValueError: If `xp` is not the `jax` or `torch` backend.
+    """
     from phaser.utils.num import xp_is_jax, xp_is_torch
 
     if xp is None or xp_is_jax(xp):
@@ -215,6 +262,11 @@ def value_and_grad(
     has_aux: bool = False, *, xp: t.Optional[t.Any] = None,
     sign: float = 1.0,
 ) -> t.Callable[..., t.Tuple[Tree, Tree]]:
+    """Return a function computing `(value, grad)` of `f`, with arguments as in [`grad`][phaser.utils.tree.grad].
+
+    Raises:
+        ValueError: If `xp` is not the `jax` or `torch` backend.
+    """
     from phaser.utils.num import xp_is_jax, xp_is_torch
 
     if xp is None or xp_is_jax(xp):
@@ -251,6 +303,7 @@ def leaves(
     tree: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.List[Leaf]:
+    """Return the leaves of `tree`."""
     return flatten(tree, is_leaf)[0]
 
 
@@ -258,6 +311,7 @@ def structure(
     tree: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> TreeSpec:
+    """Return the structure of `tree`."""
     return flatten(tree, is_leaf)[1]
 
 
@@ -265,12 +319,14 @@ def leaves_with_path(
     tree: Tree,
     is_leaf: t.Optional[t.Callable[..., t.Any]] = None,
 ) -> t.List[t.Tuple[KeyPath, Leaf]]:
+    """Return `(key_path, leaf)` pairs for the leaves of `tree`."""
     return flatten_with_path(tree, is_leaf)[0]
 
 
 def zeros_like(
     tree: Tree, dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
+    """Return a tree of zeros with the shape of each leaf of `tree`, and dtype `dtype` if given."""
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
     kwargs: t.Dict[str, t.Any] = {'dtype': dtype} if dtype is not None else {}
@@ -280,6 +336,7 @@ def zeros_like(
 def ones_like(
     tree: Tree, dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
+    """Return a tree of ones with the shape of each leaf of `tree`, and dtype `dtype` if given."""
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
     kwargs: t.Dict[str, t.Any] = {'dtype': dtype} if dtype is not None else {}
@@ -290,6 +347,7 @@ def full_like(
     tree: Tree, fill_value: ArrayLike,
     dtype: t.Optional[DTypeLike] = None,
 ) -> Tree:
+    """Return a tree filled with `fill_value` with the shape of each leaf of `tree`, and dtype `dtype` if given."""
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
     kwargs: t.Dict[str, t.Any] = {'dtype': dtype} if dtype is not None else {}
@@ -299,6 +357,7 @@ def full_like(
 def cast(
     tree: Tree, dtype: t.Optional[DTypeLike],
 ) -> Tree:
+    """Cast each leaf of `tree` to `dtype`. If `dtype` is `None`, return `tree` unchanged."""
     if dtype is None:
         return tree
     return map(lambda x: x.astype(dtype), tree)
@@ -309,6 +368,7 @@ def clip(
     min_value: t.Optional[ArrayLike] = None,
     max_value: t.Optional[ArrayLike] = None,
 ) -> Tree:
+    """Clip each leaf of `tree` to `[min_value, max_value]`."""
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
     return map(lambda x: xp.clip(x, min_value, max_value), tree)
@@ -317,12 +377,17 @@ def clip(
 def conj(
     tree: Tree
 ) -> Tree:
+    """Return the complex conjugate of each leaf of `tree`."""
     from phaser.utils.num import get_array_module
     xp = get_array_module(tree)
     return map(xp.conj, tree)
 
 
 def update_moment(updates: Tree, moments: Tree, decay: float, order: int) -> Tree:
+    """Return the moving average `(1 - decay) * updates**order + decay * moments`, per leaf.
+
+    `None` leaves of `updates` give `None`.
+    """
     return map(
         lambda g, t: (
             (1 - decay) * (g**order) + decay * t
@@ -335,6 +400,7 @@ def update_moment(updates: Tree, moments: Tree, decay: float, order: int) -> Tre
 
 
 def update_moment_per_elem_norm(updates: Tree, moments: Tree, decay: float, order: int) -> Tree:
+    """Like [`update_moment`][phaser.utils.tree.update_moment], but with `abs(updates)**order` for complex leaves."""
     from phaser.utils.num import abs2, get_array_module
     xp = get_array_module(updates, moments)
 
@@ -359,6 +425,7 @@ def update_moment_per_elem_norm(updates: Tree, moments: Tree, decay: float, orde
 
 
 def bias_correction(moment: Tree, decay: float, count: t.Union[int, NDArray[numpy.integer]]) -> Tree:
+    """Divide each leaf of `moment` by `1 - decay**count`."""
     bias_correction = t.cast(NDArray[numpy.floating], 1 - decay**count)
     return map(lambda t: t / bias_correction.astype(t.dtype), moment)
 
@@ -367,12 +434,14 @@ def scale(
     scalar: t.Union[float, numpy.floating, NDArray[numpy.floating]],
     tree: Tree
 ) -> Tree:
+    """Multiply each leaf of `tree` by `scalar`."""
     return map(lambda x: scalar * x, tree)
 
 
 def squared_norm(
     tree: Tree
 ) -> NDArray[numpy.floating]:
+    """Return the sum of squares of all elements of all leaves of `tree`."""
     return sum(map(lambda x: x**2, tree))
 
 
@@ -396,6 +465,19 @@ def tree_dataclass(cls: t.Optional[t.Type[T]] = None, /, *,
     init: bool = True, kw_only: bool = False, frozen: bool = False,
     static_fields: t.Sequence[str] = (), drop_fields: t.Sequence[str] = (),
 ) -> t.Union[t.Type[T], t.Callable[[t.Type[T]], t.Type[T]]]:
+    """Class decorator creating a dataclass registered as a `jax` and `torch` pytree.
+
+    Args:
+        init: Passed to `dataclasses.dataclass`.
+        kw_only: Passed to `dataclasses.dataclass`.
+        frozen: Passed to `dataclasses.dataclass`.
+        static_fields: Fields treated as static (hashable) pytree metadata instead of leaves.
+        drop_fields: Fields excluded from the pytree. Unflattening calls the constructor
+            without them.
+
+    Raises:
+        ValueError: If `static_fields` or `drop_fields` name unknown fields.
+    """
     if cls is None:
         return lambda cls: tree_dataclass(cls, init=init, kw_only=kw_only, frozen=frozen,
                                          static_fields=static_fields, drop_fields=drop_fields)
