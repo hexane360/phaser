@@ -1,3 +1,4 @@
+"""`phaser process_empad` command."""
 
 import sys
 from pathlib import Path
@@ -25,6 +26,8 @@ T = t.TypeVar('T')
 
 
 class ProcessEmpadConfig(pane.PaneBase):
+    """Configuration for `process_empad`."""
+
     diff_step: t.Dict[float, t.Tuple[float, float]] = {}
     """
     Diffraction pixel size calibration, given as a mapping kV: [camera_length, diff_step].
@@ -58,6 +61,7 @@ CONFIG: Config[ProcessEmpadConfig] = Config('process_empad', ProcessEmpadConfig)
 
 
 def default_console() -> Console:
+    """Return a themed `Console`, and configure logging to use it."""
     console = Console(theme=Theme({
         'warning': 'bold yellow',
         'error': 'bold red',
@@ -72,6 +76,11 @@ def default_console() -> Console:
 
 
 def prompt_ask(name, unit=None, default=None, default_str: str = "", console=None, validate=float, err="Please enter a number") -> t.Tuple[str, t.Any]:
+    """Prompt for a value `validate`-able from a string until valid.
+
+    Returns:
+        `(entered_string, value)`. Entering `default_str` returns `default` as the value.
+    """
     if not console:
         console = default_console()
     while True:
@@ -87,16 +96,21 @@ def prompt_ask(name, unit=None, default=None, default_str: str = "", console=Non
 
 @dataclass
 class Parameter(t.Generic[T], ABC):
+    """Metadata value prompted for interactively, remembering previous answers."""
+
     name: str
     default_val: t.Optional[T]
 
     @abstractmethod
     def ask(self, metadata: EmpadMetadata, console: t.Optional[Console] = None) -> T:
+        """Prompt for the value, given the dataset `metadata`."""
         ...
 
 
 @dataclass
 class FloatParam(Parameter[float]):
+    """Float prompted in `unit`, multiplied by `conv_factor` if given."""
+
     unit: t.Optional[str]
     default_str: str
     conv_factor: t.Optional[float] = None
@@ -112,6 +126,8 @@ class FloatParam(Parameter[float]):
 
 @dataclass(init=False)
 class CameraParam(Parameter[float]):
+    """Diffraction pixel size [mrad/px], defaulted by scaling the configured calibration with camera length."""
+
     used: t.Dict[t.Tuple[str, t.Optional[str]], t.Tuple[str, float]] = field(default_factory=dict)
     """Maps (f"{voltage:.0f}", f"{camera_length:.3f}") to the (str, value) entered for it"""
     defaults: t.Dict[str, t.Tuple[float, float]]
@@ -146,10 +162,12 @@ class CameraParam(Parameter[float]):
 
 @dataclass(init=False)
 class AduParam(Parameter[float]):
-    """Maps f"{voltage:.0f}" to the (str, value) entered for it"""
+    """Single-electron intensity [ADU], defaulted by scaling the configured value with voltage."""
+
     used: t.Dict[str, t.Tuple[str, float]]
-    """Voltage associated with default_val (V)"""
+    """Maps `f"{voltage:.0f}"` to the `(str, value)` entered for it."""
     default_voltage: t.Optional[float]
+    """Voltage associated with `default_val` [V]."""
 
     def __init__(self, default: t.Optional[float] = None, default_voltage: t.Optional[float] = None):
         self.name = 'Single-electron intensity'
@@ -173,8 +191,10 @@ class AduParam(Parameter[float]):
 
 @dataclass(init=False)
 class ConvAngleParam(Parameter[float]):
-    """Maps metadata f"{conv_angle:.1f}" (None if missing) to the (str, value) entered for it"""
+    """Convergence angle [mrad]."""
+
     used: t.Dict[t.Optional[str], t.Tuple[str, float]]
+    """Maps metadata `f"{conv_angle:.1f}"` (`None` if missing) to the `(str, value)` entered for it."""
 
     def __init__(self, default: float):
         self.name = 'Convergence angle'
@@ -196,8 +216,10 @@ class ConvAngleParam(Parameter[float]):
 
 @dataclass(init=False)
 class AuthorParam(Parameter[t.Optional[str]]):
-    """Maps metadata author (None if missing) to the author entered for it"""
+    """Dataset author."""
+
     used: t.Dict[t.Optional[str], t.Optional[str]]
+    """Maps metadata author (`None` if missing) to the author entered for it."""
 
     def __init__(self):
         self.name = 'Author'
@@ -211,6 +233,7 @@ class AuthorParam(Parameter[t.Optional[str]]):
 
 
 def make_params(config: ProcessEmpadConfig) -> t.Sequence[t.Tuple[str, Parameter]]:
+    """Return the `(metadata_field, Parameter)` pairs to prompt for."""
     return [
         ('defocus', FloatParam("Defocus (CW is +)", 0.0, "nm", "0.0", 1e-9)), # nm to m
         ('conv_angle', ConvAngleParam(config.conv_angle)),
@@ -224,6 +247,10 @@ def make_params(config: ProcessEmpadConfig) -> t.Sequence[t.Tuple[str, Parameter
 def process_dir(path: t.Union[str, Path], config: ProcessEmpadConfig,
                 params: t.Sequence[t.Tuple[str, Parameter]],
                 console: Console, prompt: bool = True):
+    """Write a `.json` metadata file next to each unprocessed dataset metadata file under `path`.
+
+    Datasets with an existing `.json` file are skipped. If `prompt`, ask for additional metadata.
+    """
     n_proc = 0
     path = Path(path)
 

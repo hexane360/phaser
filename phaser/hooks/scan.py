@@ -1,3 +1,5 @@
+"""Scan initialization hooks."""
+
 
 import logging
 
@@ -12,6 +14,11 @@ from . import RasterScanProps, ScanHookArgs
 
 
 def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> ScanState:
+    """Return a raster scan state with shape `(ny, nx, 2)` positions.
+
+    Raises:
+        ValueError: If `shape` or `step_size` is not set.
+    """
     xp = cast_array_module(args['xp'])
     logger = logging.getLogger(__name__)
 

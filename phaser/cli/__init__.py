@@ -1,3 +1,5 @@
+"""Command-line interface."""
+
 import abc
 import importlib
 from pathlib import Path
@@ -7,16 +9,22 @@ import typing as t
 import click
 
 class Dependency(abc.ABC):
+    """Optional dependency required by a subcommand."""
+
     @abc.abstractmethod
     def check(self):
+        """Raise if the dependency is unavailable."""
         ...
 
     @abc.abstractmethod
     def install_instructions(self) -> str:
+        """Return a human-readable install instruction."""
         ...
 
 
 class ImportDependency(Dependency):
+    """Dependency satisfied by importing the module `ref`."""
+
     def __init__(self, ref: str, install: str) -> None:
         self.ref = ref
         self.install = install
@@ -29,6 +37,11 @@ class ImportDependency(Dependency):
 
 
 def check_dependencies(command: str, dependencies: t.Sequence[str]):
+    """Check that the named `dependencies` of subcommand `command` are available.
+
+    Raises:
+        RuntimeError: If a dependency is unknown or missing.
+    """
     for dependency in dependencies:
         if (dep := _DEPENDENCIES.get(dependency)) is None:
             raise RuntimeError(f"Unknown dependency '{dependency}'. This is likely a bug in the hook declaration.")
@@ -43,6 +56,13 @@ def check_dependencies(command: str, dependencies: t.Sequence[str]):
 
 
 class MainCommand(click.MultiCommand):
+    """Command group which lazily imports subcommands from this package.
+
+    Args:
+        commands: Commands, or `(name, short_help)` / `(name, short_help, dependencies)` tuples
+            for subcommands defined in a module of the same name in this package.
+    """
+
     def __init__(self, commands: t.Iterable[
         t.Union[click.Command, t.Tuple[str, str], t.Tuple[str, str, t.Sequence[str]]]
     ], **kwargs):

@@ -1,3 +1,5 @@
+"""Gradient descent engine driver."""
+
 import logging
 import typing as t
 from functools import partial
@@ -56,6 +58,14 @@ _PER_ITER_VARS: t.FrozenSet[ReconsVar] = _PER_ITER_REAL_VARS | SYNTHETIC_VARS
 def process_solvers(
     plan: GradientEnginePlan
 ) -> t.Tuple[t.FrozenSet[ReconsVar], t.Sequence[GradientSolver[t.Any]], t.Sequence[GradientSolver[t.Any]]]:
+    """Instantiate `plan.solvers` and split them into per-group and per-iteration solvers.
+
+    Returns:
+        `(all_vars, group_solvers, iter_solvers)`, where `all_vars` is every variable with a solver.
+
+    Raises:
+        ValueError: If a variable has more than one solver, or one solver mixes per-group and per-iteration variables.
+    """
     # process solvers, and split into per-group and per-iter solvers
     solvers = plan.solvers
 
@@ -106,6 +116,13 @@ def _normalize_path(path: t.Tuple[tree.GetAttrKey, ...]) -> t.Tuple[str, ...]:
 
 
 def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Optional[NDArray[numpy.integer]] = None) -> t.Tuple[t.Dict[ReconsVar, t.Any], ReconsState]:
+    """Split `vars` out of `state`.
+
+    Per-position variables (`positions`, `tilt`) are indexed by `group` if given.
+
+    Returns:
+        The extracted variables, and `state` with those leaves replaced by `None`.
+    """
     d = {}
 
     def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
@@ -119,12 +136,16 @@ def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Op
 
 
 def extract_params(state: ReconsState, vars: t.AbstractSet[ReconsVar]) -> t.Dict[ReconsVar, t.Any]:
-    """Parameter arrays for `vars`, resolving synthetic variables to where they're synthesized from."""
+    """Return the parameter arrays for `vars`, resolving synthetic variables to their source."""
     params = extract_vars(state, frozenset[ReconsVar](map(source_var, vars)))[0]
     return {var: params[source_var(var)] for var in vars}
 
 
 def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Optional[NDArray[numpy.integer]] = None) -> ReconsState:
+    """Return `state` with `vars` substituted in.
+
+    Per-position entries of `state` not in `vars` are indexed by `group` if given.
+    """
     def f(path: t.Tuple[tree.GetAttrKey, ...], val: t.Any):
         if (var := _PATH_MAP.get(_normalize_path(path))):
             if var in vars:
@@ -137,6 +158,7 @@ def insert_vars(vars: t.Dict[ReconsVar, t.Any], state: ReconsState, group: t.Opt
 
 
 def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -> ReconsState:
+    """Add `update` to the matching variables of `state`, in place."""
     for (var, val) in update.items():
         match source_var(var):
             case 'probe':
@@ -152,7 +174,7 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
 
 
 def center_pos_updates(update: t.Dict[ReconsVar, t.Any]) -> t.Dict[ReconsVar, t.Any]:
-    """Updates with the mean of each position update removed."""
+    """Return `update` with the mean of each position update removed."""
     def f(val: t.Any) -> t.Any:
         xp = get_array_module(val)
         return val - xp.mean(val, tuple(range(val.ndim - 1)))
@@ -164,6 +186,7 @@ def center_pos_updates(update: t.Dict[ReconsVar, t.Any]) -> t.Dict[ReconsVar, t.
 
 
 def filter_vars(d: t.Dict[ReconsVar, t.Any], vars: t.AbstractSet[ReconsVar]) -> t.Dict[ReconsVar, t.Any]:
+    """Return the entries of `d` whose keys are in `vars`."""
     return {k: v for (k, v) in d.items() if k in vars}
 
 
@@ -172,7 +195,7 @@ def project_grads(
     state: ReconsState,
     d: t.Dict[ReconsVar, t.Any],
 ) -> t.Dict[ReconsVar, t.Any]:
-    """`d` with grads (or updates) of synthetic variables projected"""
+    """Return `d` with grads (or updates) of synthetic variables projected."""
     def f(var: ReconsVar, val: t.Any) -> t.Any:
         if (synthetic := synthetics.get(var)) is None:
             return val
@@ -186,7 +209,7 @@ def synthesize_grads(
     state: ReconsState,
     grads: t.Dict[ReconsVar, t.Any],
 ) -> t.Dict[ReconsVar, t.Any]:
-    """`grads`, plus grads for synthetic vars"""
+    """Return `grads` plus grads for the synthetic variables."""
     return project_grads(synthetics, state, {
         **grads,
         **{var: grads[source_var(var)] for var in synthetics if source_var(var) in grads},
@@ -199,7 +222,7 @@ _UPDATE_RMS_KEYS: t.Dict[ReconsVar, str] = {
 }
 
 def update_rms_key(var: ReconsVar) -> t.Optional[str]:
-    """Progress key holding the RMS update to `var`, or `None` if `var` isn't tracked."""
+    """Return the progress key holding the RMS update to `var`, or `None` if `var` is not tracked."""
     if source_var(var) not in {'positions', 'tilt'}:
         return None
     return _UPDATE_RMS_KEYS.get(var, f'{var}_update_rms')
@@ -207,6 +230,8 @@ def update_rms_key(var: ReconsVar) -> t.Optional[str]:
 
 @tree.tree_dataclass
 class SolverStates:
+    """Per-component solver state for the gradient engine."""
+
     noise_model_state: t.Any
     group_solver_states: t.List[t.Any]
     regularizer_states: t.List[t.Any]
@@ -231,6 +256,7 @@ class SolverStates:
 
 
 def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
+    """Run a gradient descent engine."""
     #jax.config.update('jax_traceback_filtering', 'off')
     xp = cast_array_module(args['xp'])
     dtype = args['dtype']
@@ -476,6 +502,10 @@ def run_group(
     dtype: t.Type[numpy.floating],
     jit_unroll_slices: t.Union[int, bool],
 ) -> t.Tuple[ReconsState, t.Dict[str, numpy.floating], t.Dict[ReconsVar, t.Any], SolverStates]:
+    """Compute gradients for one group and apply per-group solvers and constraints.
+
+    Gradients of per-iteration variables are written into `iter_grads`; losses are added to `losses`.
+    """
     xp = cast_array_module(xp)
 
     (grad, (solver_states, group_losses)) = tree.grad(run_model, has_aux=True, xp=xp, sign=-1)(
@@ -534,6 +564,7 @@ def run_model(
     dtype: t.Type[numpy.floating],
     jit_unroll_slices: t.Union[int, bool],
 ) -> t.Tuple[Float, t.Tuple[SolverStates, t.Dict[str, Float]]]:
+    """Return the total loss of a group for `vars`, with `(solver_states, losses)` as auxiliary output."""
     # apply vars to simulation
     sim = insert_vars(vars, sim, group)
     group_scan = sim.scan.data
@@ -596,6 +627,7 @@ def dry_run(
     xp: t.Any,
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
+    """Return the per-position ratio of experimental to modeled intensity for a group."""
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     group_scan = sim.scan.data[tuple(group)]
     group_tilt = sim.scan.tilt[tuple(group)] if sim.scan.tilt is not None else None

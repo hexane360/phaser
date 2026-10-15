@@ -1,4 +1,4 @@
-"""Physical constants & utilities"""
+"""Physical constants and electron relativistic utilities."""
 
 from dataclasses import dataclass
 import math
@@ -8,42 +8,46 @@ class _Constants():
     e_rest_energy: float = 5.1099906e5
     """Electron rest energy [eV] or mass [eV/c^2]."""
     e_rest_mass: float = 9.1093837e-31
-    """Electron rest mass [kg]"""
+    """Electron rest mass [kg]."""
     e_spin: float = 3.2910598e-16
-    """Electron spin [eV-s]"""
+    """Electron spin [eV-s]."""
 
     h: float = 4.135667696e-18
-    """Planck's constant [keV-s]"""
+    """Planck's constant [keV-s]."""
     c = 299792458
-    """Speed of light [m/s]"""
+    """Speed of light [m/s]."""
     hc: float = 1.23984244e4
-    """Planck's constant * speed of light [eV-angstrom]"""
+    """Planck's constant times the speed of light [eV-angstrom]."""
 
     e: float = 1.60217662e-19
     """Elementary charge [C]."""
 
 
 C: _Constants = _Constants()
+"""Physical constants."""
 
 
 @dataclass(frozen=True)
 class Electron:
+    """Free electron with a given kinetic energy."""
+
     energy: float
-    """Electron kinetic energy [eV]"""
+    """Electron kinetic energy [eV]."""
 
     @staticmethod
     def from_wavelength(wavelength: float) -> 'Electron':
+        """Return the electron with the given `wavelength` [angstrom]."""
         total_energy = math.sqrt((C.hc / wavelength)**2 + C.e_rest_energy**2)
         return Electron(total_energy - C.e_rest_energy)
 
     @property
     def rest_energy(self) -> float:
-        """Electron rest energy (m_0c^2) [eV]."""
+        r"""Electron rest energy $m_0 c^2$ [eV]."""
         return C.e_rest_energy
 
     @property
     def total_energy(self) -> float:
-        """Total electron energy (mc^2) [eV]."""
+        """Total electron energy $m c^2$ [eV]."""
         return self.energy + C.e_rest_energy
 
     @property
@@ -58,7 +62,7 @@ class Electron:
 
     @property
     def momentum(self) -> float:
-        """Electron momentum `pc` [eV]."""
+        """Electron momentum times $c$ [eV]."""
         return math.sqrt(self.energy * (2*C.e_rest_energy + self.energy))
 
     @property
@@ -68,12 +72,12 @@ class Electron:
 
     @property
     def gamma(self) -> float:
-        """Electron Lorentz factor (gamma) [unitless]."""
+        r"""Electron Lorentz factor $\gamma$ [unitless]."""
         return self.energy / C.e_rest_energy + 1.
 
     @property
     def beta(self) -> float:
-        """Electron beta factor (v/c) [unitless]."""
+        """Electron velocity as a fraction of $c$ [unitless]."""
         return math.sqrt(1 - self.gamma**-2)
 
     @property
@@ -83,7 +87,7 @@ class Electron:
 
     @property
     def interaction_param(self) -> float:
-        """Electron interaction parameter (sigma) [radians/V-angstrom]"""
+        r"""Electron interaction parameter $\sigma$ [radians/V-angstrom]."""
         m0_h2 = (C.e_rest_energy / C.hc**2)  # RM/h^2 = RE/(hc)^2 [1/(eV angstrom^2)]
         return 2*math.pi * self.wavelength * (self.gamma * m0_h2)
 

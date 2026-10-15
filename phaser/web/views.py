@@ -1,10 +1,4 @@
-"""
-View registry (`phaser/web/pubsub.py` section 2, "View registry"). Each `View.compute`
-is a pure, numpy-only function of `(Cache, params) -> JSON-like data` (with numpy array
-leaves, sent as frame buffers). Server-side
-view compute is explicitly numpy-only per the design doc -- no backend-agnostic
-requirement here, unlike the rest of `phaser`.
-"""
+"""View registry: numpy functions of `(Cache, params)` computing the data for each topic view."""
 import math
 import typing as t
 
@@ -55,24 +49,19 @@ def _recip_probes(cache: Cache) -> t.Any:
 
 
 def probes_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """The probe modes in reciprocal space, on the (ky, kx) grid `probe_meta`'s
-    `wavelength` and `sampling` describe."""
+    """Probe modes in reciprocal space, on the grid given by `probe_meta`."""
     return _recip_probes(cache)
 
 
 def probe_sum_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """Total probe intensity: `abs2` summed over the modes, giving a real (y, x) image.
-    The modes are mutually incoherent, so they add in intensity -- which is also why this
-    is the only meaningful reduction over them (a summed amplitude or phase is not)."""
+    """Total probe intensity `(y, x)`, summed incoherently over modes."""
     from phaser.utils.num import abs2
 
     return numpy.sum(abs2(cache.raw['probe']['data']), axis=0)
 
 
 def probe_sum_recip_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """`probe_sum` in reciprocal space -- the probe's total intensity distribution over
-    scattering angle. The sum is taken there rather than transformed from `probe_sum`:
-    the transform is per-mode, so the two don't commute."""
+    """Total probe intensity in reciprocal space, summed incoherently over modes."""
     from phaser.utils.num import abs2
 
     return numpy.sum(abs2(_recip_probes(cache)), axis=0)
@@ -92,13 +81,7 @@ def _n_slices(shape: t.Sequence[int]) -> int:
 
 
 def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """Everything about the object except its bulk array: the sampling grid, the slice
-    count, and the per-slice thicknesses.
-
-    Its own topic rather than a field on the object payloads, because those are per-slice
-    (`obj`) and so change topic -- and momentarily lose their value -- whenever a different
-    slice is selected. This one is stable for the lifetime of the run.
-    """
+    """Object metadata: sampling grid, slice count, and per-slice thicknesses (`None` if not per-slice)."""
     obj = cache.raw.get('object')
     if obj is None:
         return None
@@ -118,13 +101,7 @@ def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def probe_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """The probe's sampling grid, mode count, and wavelength (the last for the reciprocal-
-    space view's mrad scales). Split from `probes` for the same reason `obj_meta` is split
-    from `obj` -- see there.
-
-    `wavelength` is a field of `ReconsState`, not of the probe, but arrives with it: the
-    worker's first update (`WorkerObserver.init_engine`) sends the whole state. Null until
-    then, and the client treats that as "no probe yet"."""
+    """Probe metadata: sampling grid, mode count, and wavelength. `None` until the probe and wavelength arrive."""
     probe = cache.raw.get('probe')
     wavelength = cache.raw.get('wavelength')
     if probe is None or wavelength is None:
@@ -138,20 +115,14 @@ def probe_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def project_phase(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """Projected object phase: `angle` + `nansum` over every leading (slice) axis,
-    collapsing an (..., y, x) complex object down to a single real (y, x) phase image.
-    Mirrors the (now-retired) client-side `objectPhaseProjected` from `src/array.ts`."""
+    """Object phase `(y, x)`, summed over all leading (slice) axes."""
     data = cache.raw['object']['data']
     axes = tuple(range(data.ndim - 2))
     return numpy.nansum(numpy.angle(data), axis=axes)
 
 
 def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """Projected object amplitude: `abs`, then the *geometric* mean over every leading
-    (slice) axis, giving a real (y, x) image. The conjugate of `project_phase` -- slices
-    compose multiplicatively in amplitude where they add in phase, so the geometric mean
-    is the amplitude a single slice would need to produce the same total.
-    """
+    """Object amplitude `(y, x)`, as the geometric mean over all leading (slice) axes."""
     data = cache.raw['object']['data']
     axes = tuple(range(data.ndim - 2))
     with numpy.errstate(divide='ignore'):
@@ -159,14 +130,7 @@ def project_amp_mean(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
 
 
 def slice_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
-    """A single object slice, selected by the `slice` param.
-
-    `slice` is clamped, not validated, and that clamp is load-bearing: a widget's params
-    outlive the run that set them, and the client can only correct an out-of-range one
-    after `obj_meta` reaches it. An `IndexError` here would propagate out of the
-    `asyncio.gather` in `Broker.publish_dirty` and take down that tick's publish for every
-    topic on the job, not just this one.
-    """
+    """Return object slice `params['slice']`, clamped to the valid range."""
     data = cache.raw['object']['data']
     data = data.reshape((1, *data.shape)) if data.ndim == 2 else data
 
@@ -206,8 +170,11 @@ VIEWS: t.Dict[str, View] = {
     'positions':     View(frozenset({'scan'}),     True,  'latest', _positions_view),
     'logs':          View(frozenset(),              False, 'append', _logs_view),
 }
+"""Per-job views, by name."""
 
 # manager-level owners (`server.jobs` / `server.workers`); not part of `VIEWS` since
 # they're resolved by bare string topic (`"jobs"` / `"workers"`), not `{job, view}`.
 JOBS_VIEW: View = View(frozenset({'state'}), True, 'latest', _jobs_view)
+"""View for the `"jobs"` topic."""
 WORKERS_VIEW: View = View(frozenset({'state'}), True, 'latest', _workers_view)
+"""View for the `"workers"` topic."""

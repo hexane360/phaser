@@ -1,3 +1,4 @@
+"""Launching and monitoring workers as slurm batch jobs."""
 import asyncio
 import logging
 import weakref
@@ -12,6 +13,7 @@ from .server import WorkerID, Worker
 
 
 SlurmID: t.TypeAlias = int
+"""Slurm job ID."""
 SlurmState: t.TypeAlias = t.Literal[
     'BOOT_FAIL', 'CANCELLED', 'COMPLETED', 'CONFIGURING', 'COMPLETING',
     'DEADLINE', 'FAILED', 'NODE_FAIL', 'OUT_OF_MEMORY', 'PENDING',
@@ -19,9 +21,11 @@ SlurmState: t.TypeAlias = t.Literal[
     'REQUEUED', 'RESIZING', 'REVOKED', 'SIGNALING', 'SPECIAL_EXIT',
     'STAGE_OUT', 'STOPPED', 'SUSPENDED', 'TIMEOUT',
 ]
+"""Slurm job state."""
 
 
 class SlurmJobInfo(t.TypedDict):
+    """Job entry in `squeue --json` output."""
     job_id: SlurmID
     job_state: SlurmState
     name: str
@@ -39,6 +43,7 @@ class SlurmJobInfo(t.TypedDict):
 
 
 class SqueueResult(t.TypedDict):
+    """Output of `squeue --json`."""
     meta: t.Dict[str, t.Any]
     jobs: t.List[SlurmJobInfo]
     warnings: t.List[t.Any]
@@ -46,11 +51,11 @@ class SqueueResult(t.TypedDict):
 
 
 SLURM_JSON_VERSION: t.Tuple[int, int] = (21, 8)
-"""First slurm version supporting `squeue --json`"""
+"""First slurm version `(major, minor)` supporting `squeue --json`."""
 
 
 def parse_slurm_version(output: str) -> t.Optional[t.Tuple[int, int]]:
-    """Major/minor version from `sbatch --version` output (`slurm 23.02.7`, `slurm-wlm 21.08.5`)"""
+    """Return `(major, minor)` from `sbatch --version` output, or `None` if unparseable."""
     if (match := re.search(r'(\d+)\.(\d+)', output)) is None:
         return None
     return (int(match[1]), int(match[2]))
@@ -66,6 +71,7 @@ def _parse_job_id(job_id: t.Any) -> t.Optional[SlurmID]:
 
 
 def parse_squeue_json(output: t.Union[str, bytes]) -> t.Dict[SlurmID, t.List[str]]:
+    """Parse `squeue --json` output to job states keyed by job ID. Array tasks are skipped."""
     result = t.cast(SqueueResult, json.loads(output))
 
     jobs: t.Dict[SlurmID, t.List[str]] = {}
@@ -78,7 +84,7 @@ def parse_squeue_json(output: t.Union[str, bytes]) -> t.Dict[SlurmID, t.List[str
 
 
 def parse_squeue_tabular(output: str) -> t.Dict[SlurmID, t.List[str]]:
-    """Parse `squeue --noheader --format=%i|%T` output. Array tasks (`123_4`) are skipped."""
+    """Parse `squeue --noheader --format=%i|%T` output to job states keyed by job ID. Array tasks are skipped."""
     jobs: t.Dict[SlurmID, t.List[str]] = {}
     for line in output.splitlines():
         if not (line := line.strip()):
@@ -95,7 +101,7 @@ _MARKER_RE: re.Pattern[str] = re.compile(r'@(PREAMBLE|PYTHON|URL)@')
 
 
 def render_worker_script(profile: SlurmProfile, url: str) -> str:
-    """The batch script for a worker running `profile` and connecting to `url`"""
+    """Return the batch script for a worker running `profile` and connecting to `url`."""
     template = importlib.resources.files(__package__).joinpath('slurm_worker.sh').read_text()
 
     # substituted in one pass, so a marker inside the preamble is left alone
@@ -108,11 +114,11 @@ def render_worker_script(profile: SlurmProfile, url: str) -> str:
 
 
 class SlurmError(RuntimeError):
-    """A submission slurm refused. The message is slurm's own, meant to be shown to whoever
-    asked for the worker."""
+    """Slurm refused a submission. The message is slurm's own."""
 
 
 class SlurmWorker(Worker):
+    """A worker running as slurm job `slurm_job_id`."""
     def __init__(self, worker_id: WorkerID, slurm_job_id: SlurmID,
                  profile_name: t.Optional[str] = None, url: t.Optional[str] = None):
         super().__init__(worker_id, url)
@@ -123,6 +129,7 @@ class SlurmWorker(Worker):
         return 'slurm'
 
     async def cancel(self):
+        """Stop the worker, running `scancel` first if it is still queued."""
         from .server import server
         if self.status == 'queued':
             await server.slurm_manager.cancel_queued_worker(self.slurm_job_id)
@@ -131,6 +138,7 @@ class SlurmWorker(Worker):
 
 
 class SlurmManager:
+    """Submits slurm workers and polls `squeue` to update their status."""
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self._slurm_exists: t.Optional[bool] = None
@@ -147,6 +155,12 @@ class SlurmManager:
         self, worker_id: WorkerID, url: str,
         profile: t.Optional[SlurmProfile] = None, profile_name: t.Optional[str] = None,
     ) -> SlurmWorker:
+        """Submit a worker with `sbatch` using `profile` (default `SlurmProfile()`) and start polling its status.
+
+        Raises:
+            SlurmError: If `sbatch` fails or its output cannot be parsed.
+            RuntimeError: If slurm is not available.
+        """
         await self.check_slurm_exists()
 
         profile = profile if profile is not None else SlurmProfile()
@@ -190,6 +204,7 @@ class SlurmManager:
         return worker
 
     async def cancel_queued_worker(self, slurm_job_id: SlurmID):
+        """Cancel a pending slurm job. Logs a warning on failure."""
         (returncode, _, stderr) = await _run('scancel', '--state=PENDING', str(slurm_job_id))
 
         if returncode != 0:
@@ -259,6 +274,11 @@ class SlurmManager:
         return parse_squeue_tabular(stdout.decode())
 
     async def check_slurm_exists(self):
+        """Detect slurm on first call, setting `version`.
+
+        Raises:
+            RuntimeError: If slurm is not available.
+        """
         if self._slurm_exists is None:
             (returncode, stdout, stderr) = await _run('sbatch', '--version')
 
@@ -278,6 +298,7 @@ class SlurmManager:
             raise RuntimeError("Slurm not found, is it installed and on PATH?")
 
     async def finalize(self):
+        """Stop polling."""
         if self._poll_task is not None:
             self._poll_task.cancel()
 

@@ -1,3 +1,5 @@
+"""Load Nion data."""
+
 from pathlib import Path
 import logging
 import typing as t
@@ -15,6 +17,11 @@ import zipfile as zf
 
 
 def load_nion(args: None, props: LoadNionProps) -> RawData:
+    """Load Nion data, with the scan hook taken from its metadata.
+
+    Raises:
+        ValueError: If the voltage is not in the metadata, or the data is not found.
+    """
     logger = logging.getLogger(__name__)
 
     path = Path(props.path).expanduser()

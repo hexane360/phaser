@@ -1,3 +1,4 @@
+"""Server state (jobs, workers, log buffers) and the `Server` singleton."""
 from __future__ import annotations
 
 import abc
@@ -55,7 +56,7 @@ T = t.TypeVar('T')
 
 
 class Shutdown(Exception):
-    pass
+    """Raised in a websocket task when the server is shutting down."""
 
 
 class Kicked(Exception):
@@ -63,6 +64,7 @@ class Kicked(Exception):
 
 
 async def raise_on_shutdown():
+    """Wait for server shutdown, then raise `Shutdown`."""
     await server.shutdown_event.wait()
     raise Shutdown()
 
@@ -75,6 +77,7 @@ class ChunkedUpload(t.NamedTuple):
 
 
 class Worker(abc.ABC):
+    """A process that runs jobs and reports to the server over HTTP."""
     def __init__(self, worker_id: WorkerID, url: t.Optional[str] = None):
         super().__init__()
         self.status: WorkerStatus = 'queued'
@@ -94,9 +97,10 @@ class Worker(abc.ABC):
 
     @abc.abstractmethod
     def worker_type(self) -> str:
-        ...
+        """Worker kind: `'local'`, `'manual'`, or `'slurm'`."""
 
     def state(self) -> WorkerState:
+        """Return the client-facing state. Requires a request context (builds links)."""
         links = {
             'shutdown': url_for('shutdown_worker', worker_id=self.id),
             'reload': url_for('reload_worker', worker_id=self.id),
@@ -109,16 +113,19 @@ class Worker(abc.ABC):
         )
 
     async def cancel(self):
+        """Stop the worker: immediately if queued, otherwise on its next message."""
         if self.status == 'queued':
             await self.set_status('stopped')
         elif self.status not in ('stopping', 'stopped'):
             await self.set_status('stopping')
 
     async def reload(self):
+        """Restart the worker on its next message."""
         if self.status not in ('stopping', 'stopped'):
             await self.set_status('reloading')
 
     def action(self) -> t.Optional[Signal]:
+        """Signal to send the worker for its current status, if any."""
         if self.status == 'stopping':
             return 'shutdown'
         elif self.status == 'reloading':
@@ -126,8 +133,16 @@ class Worker(abc.ABC):
         return None
 
     def receive_chunk(self, upload_id: str, index: int, count: int, data: bytes) -> t.Optional[t.List[bytes]]:
-        """Buffer one chunk of an upload. Returns all chunks, in order, once the upload is complete.
-        A new `upload_id` replaces any abandoned upload."""
+        """Buffer one chunk of an upload.
+
+        A new `upload_id` replaces any abandoned upload.
+
+        Returns:
+            All chunks in order once the upload is complete, otherwise `None`.
+
+        Raises:
+            ValidationError: If `index` is out of range or `count` changes mid-upload.
+        """
         if not 0 <= index < count:
             raise ValidationError(f"Chunk index {index} out of range for {count} chunks")
 
@@ -144,13 +159,15 @@ class Worker(abc.ABC):
         return chunks
 
     def on_connected(self):
-        """Hook for a worker that has just reported in (`LocalWorker` clears its restart
-        count here)."""
+        """Hook called when the worker sends its `connect` message."""
 
     async def set_status(self, status: WorkerStatus, reason: t.Optional[str] = None,
                          error: t.Optional[str] = None):
-        """`reason`/`error` describe why the worker stopped, and are carried onto whatever
-        job it was running -- otherwise that job has no account of why it ended."""
+        """Set `status` and publish to the `"workers"` topic.
+
+        On `'stopped'`, interrupts the current job with `reason`/`error` and schedules
+        removal of the worker after 5 s.
+        """
         self.status = status
         await server.workers.notify_changed({'worker_id': self.id, 'status': status})
 
@@ -160,6 +177,11 @@ class Worker(abc.ABC):
             server.workers.schedule_for_removal(self.id, 5.0)
 
     async def handle_message(self, msg: WorkerMessage) -> ServerResponse:
+        """Process a worker message and return the response.
+
+        Forwards job messages to the job. A `poll` or `job_result` from an idle worker
+        assigns the next queued job, if any.
+        """
         if msg.msg == 'shutdown':
             reason = _exc_summary(msg.error) or msg.detail or f"Worker {self.id} shut down"
             await self.set_status('stopped', reason=reason, error=msg.error)
@@ -198,6 +220,7 @@ class Worker(abc.ABC):
         return OkResponse()
 
     async def finalize(self):
+        """Release the worker's resources on removal."""
         if self.status not in ('stopped', 'unknown'):
             logging.error(f"Job {self.id} finalized before completion")
 
@@ -207,6 +230,7 @@ MAX_WORKER_RESTARTS: int = 5
 
 
 class LocalWorker(Worker):
+    """A worker subprocess of the server, restarted on reload."""
     def __init__(self, worker_id: WorkerID, url: str):
         super().__init__(worker_id, url)
         self._restarts: int = 0
@@ -257,6 +281,7 @@ class LocalWorker(Worker):
 
 
 class ManualWorker(Worker):
+    """A worker started by the user, who runs `python -m phaser worker <url>`."""
     def __init__(self, worker_id: WorkerID, url: t.Optional[str] = None):
         super().__init__(worker_id, url or server.get_worker_url(worker_id))
         logging.warning(f"Worker command: python -m phaser worker {self.url}")
@@ -266,6 +291,7 @@ class ManualWorker(Worker):
 
 
 class Workers:
+    """Registry of workers, published as the `"workers"` topic."""
     def __init__(self):
         self.inner: t.Dict[WorkerID, Worker] = {}
         self._futs: t.List[asyncio.Task[None]] = []
@@ -273,19 +299,23 @@ class Workers:
         """Broker for the manager-level `"workers"` topic."""
 
     def state(self) -> t.List[WorkerState]:
+        """Return the state of every worker."""
         return [worker.state() for worker in self.inner.values()]
 
     async def notify_changed(self, cause: t.Optional[t.Any] = None):
+        """Republish the `"workers"` topic with `cause`."""
         # 'state' is a synthetic dep: the `workers` view ignores the cache and reads
         # `server.workers` directly, so all that matters here is bumping its generation.
         self.broker.cache.update_raw({'state': None})
         await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def add(self, worker: Worker):
+        """Register `worker` and publish."""
         self.inner[worker.id] = worker
         await self.notify_changed({'worker_id': worker.id, 'status': worker.status})
 
     def schedule_for_removal(self, worker_id: WorkerID, delay: float = 30.0):
+        """Remove the worker after `delay` seconds [s]."""
         if worker_id not in self:
             return
 
@@ -297,6 +327,7 @@ class Workers:
         self._futs.append(asyncio.create_task(task()))
 
     async def remove(self, worker_id: WorkerID):
+        """Finalize and unregister the worker, then publish. Ignores unknown ids."""
         try:
             worker = self.inner.pop(worker_id)
         except KeyError:
@@ -321,6 +352,7 @@ class Workers:
         return self.inner.values()
 
     async def finalize(self):
+        """Finalize all workers and cancel pending removals."""
         await asyncio.gather(*(worker.finalize() for worker in self.inner.values()))
         for fut in self._futs:
             fut.cancel()
@@ -328,6 +360,7 @@ class Workers:
 
 
 LOG_LEVELS: t.Tuple[int, ...] = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
+"""Standard logging levels that log filtering snaps to."""
 
 
 class LogBuffer:
@@ -349,6 +382,7 @@ class LogBuffer:
         return iter(self.records)
 
     def append(self, record: LogRecord) -> None:
+        """Append `record`."""
         i = len(self.records)
         if self.start is None:
             self.start = record.timestamp
@@ -358,7 +392,7 @@ class LogBuffer:
                 self._index[level].append(i)
 
     def filtered(self, min_level: int = 0) -> t.Sequence[LogRecord]:
-        """Records at or above `min_level` (snapped down, see `snap_level`)"""
+        """Return records at or above `min_level` (snapped down, see `snap_level`)."""
         if not (level := snap_level(min_level)):
             return self.records
         return [self.records[i] for i in self._index[level]]
@@ -367,13 +401,11 @@ class LogBuffer:
         self, before: t.Optional[int] = None, after: t.Optional[int] = None,
         limit: int = 100, min_level: int = 0,
     ) -> LogPage:
-        """A window of at most `limit` records at or above `min_level`, ascending by `i`.
+        """Return a window of at most `limit` records at or above `min_level`, ascending by `i`.
 
-        `before`/`after` are exclusive cursors on `i`, bounding the window on either side:
-        given both, the window is the range between them (a reconnect gap); given neither,
-        it's the newest `limit` records. `limit` truncates the end away from `after` when
-        given (filling a gap forwards from what the client holds), and the older end
-        otherwise.
+        `before` and `after` are exclusive cursors on `i`. With both, the window is the range
+        between them; with neither, it is the newest `limit` records. `limit` truncates the
+        end away from `after` if given, otherwise the older end.
         """
         level = snap_level(min_level)
         # indices of matching records, ascending. unfiltered, that's just each record's own index
@@ -418,11 +450,12 @@ def _exc_summary(error: t.Optional[str], max_len: int = 200) -> t.Optional[str]:
 
 
 def snap_level(min_level: int) -> int:
-    """`min_level` snapped down to a standard logging level, or 0 (no filtering)"""
+    """Return `min_level` snapped down to a standard logging level, or 0 (no filtering)."""
     return max((level for level in LOG_LEVELS if level <= min_level), default=0)
 
 
 class Job:
+    """A reconstruction plan with its status, result, logs, and latest worker state."""
     def __init__(self, id: JobID, plan: str, name: t.Optional[str] = None):
         self.id: JobID = id
         self.plan: str = plan
@@ -458,6 +491,11 @@ class Job:
 
     @classmethod
     async def from_path(cls, path: t.Union[str, Path]) -> t.List[Self]:
+        """Validate the plan file at `path` and register one queued job per plan.
+
+        Raises:
+            ValidationError: If the plan is invalid.
+        """
         process = await asyncio.create_subprocess_exec(
             sys.executable, '-m', 'phaser', 'validate', '--json', str(path),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
@@ -467,6 +505,7 @@ class Job:
 
     @classmethod
     async def from_yaml(cls, plan: t.Union[str, bytes]) -> t.List[Self]:
+        """Like `from_path`, for YAML plan text."""
         process = await asyncio.create_subprocess_exec(
             sys.executable, '-m', 'phaser', 'validate', '--json',
             stdin=asyncio.subprocess.PIPE,
@@ -495,12 +534,15 @@ class Job:
         return jobs
 
     async def notify_changed(self, cause: t.Optional[t.Any] = None):
-        """Republish this job's `state` topic. Mirrors `Jobs.notify_changed`: `'state'` is
-        synthetic, so all this does is bump the generation the view is memoized against."""
+        """Republish this job's `state` topic with `cause`."""
         self.broker.cache.update_raw({'state': None})
         await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def set_status(self, status: JobStatus, cause: t.Optional[t.Any] = None):
+        """Set `status` and publish to the job's `state` and the `"jobs"` topics.
+
+        A no-op if the status is unchanged and `cause` is `None`.
+        """
         # a `cause` is new information even when the status itself hasn't moved, e.g. a
         # result arriving for a job already stopped
         if self.status == status and cause is None:
@@ -510,10 +552,9 @@ class Job:
         await server.jobs.notify_changed({'job_id': self.id, 'status': status})
 
     async def worker_lost(self, reason: str, error: t.Optional[str] = None):
-        """Terminal transition for a job whose worker went away without reporting a result.
+        """Stop the job as `'interrupted'` after its worker went away, logging `reason`.
 
-        Returns without touching anything if the worker did report -- the normal sequence is
-        `job_result` first, worker stop second, and a real outcome must not be overwritten.
+        A no-op if the job already has a result.
         """
         if self.result is not None:
             return
@@ -528,15 +569,22 @@ class Job:
         await self.set_status('stopped', cause={'result': self.result})
 
     async def cancel(self):
+        """Stop the job: immediately if queued, otherwise on its worker's next message."""
         if self.status == 'queued':
             await self.set_status('stopped')
         elif self.status not in ('stopping', 'stopped'):
             await self.set_status('stopping')
 
     def should_cancel(self) -> bool:
+        """Whether the worker should be told to cancel."""
         return self.status == 'stopping'
 
     async def delete(self):
+        """Remove a queued or stopped job from the server.
+
+        Raises:
+            RuntimeError: If the job is running.
+        """
         if self.status not in ('queued', 'stopped'):
             raise RuntimeError("Cannot delete a running job")
         if self.status != 'stopped':
@@ -562,6 +610,7 @@ class Job:
         return iter_raw.get('total_iter') if isinstance(iter_raw, dict) else None
 
     def state(self) -> JobState:
+        """Return the client-facing state. Requires a request context (builds links)."""
         raw = self.broker.cache.raw
         state = {k: v for (k, v) in raw.items() if k == 'iter'}
         links = {
@@ -577,6 +626,12 @@ class Job:
         )
 
     async def handle_update(self, msg: WorkerMessage):
+        """Apply a worker message for this job.
+
+        `job_update` updates the cache and publishes the changed views in the background.
+        `log` appends to the log and publishes to the `logs` view. `job_result` records the
+        result and stops the job.
+        """
         if msg.msg == 'job_update':
             if self.status in ('queued', 'starting'):
                 await self.set_status('running')
@@ -632,6 +687,7 @@ class Job:
         self.broker.publish_value(key, [pane.into_data(record)])
 
     async def finalize(self):
+        """Cancel any in-flight publish."""
         if self.status != 'stopped':
             logging.error(f"Job {self.id} finalized before completion")
         if self._publisher is not None:
@@ -640,29 +696,35 @@ class Job:
 
 
 class Jobs:
+    """Registry of jobs, published as the `"jobs"` topic."""
     def __init__(self):
         self.inner: t.Dict[JobID, Job] = {}
         self.broker: Broker = Broker()
         """Broker for the manager-level `"jobs"` topic."""
 
     def state(self) -> t.List[JobState]:
+        """Return the state of every job."""
         return [job.state() for job in self.inner.values()]
 
     async def notify_changed(self, cause: t.Optional[t.Any] = None):
+        """Republish the `"jobs"` topic with `cause`."""
         # 'state' is a synthetic dep: the `jobs` view ignores the cache and reads
         # `server.jobs` directly, so all that matters here is bumping its generation.
         self.broker.cache.update_raw({'state': None})
         await self.broker.publish_dirty(frozenset({'state'}), cause=cause)
 
     async def add(self, job: Job, queue: bool = True):
-        """Register `job`, queueing it for a worker unless `queue` is false (a job which
-        drives itself, e.g. `phaser/web/debug.py`'s fake jobs)"""
+        """Register `job` and publish, queueing it for a worker if `queue`."""
         self.inner[job.id] = job
         if queue:
             server.job_queue.append(job)
         await self.notify_changed({'job_id': job.id, 'status': job.status})
 
     async def remove(self, job_id: JobID):
+        """Finalize and unregister the job, close its subscriptions, and publish.
+
+        Ignores unknown ids.
+        """
         try:
             job = self.inner.pop(job_id)
         except KeyError:
@@ -688,6 +750,7 @@ class Jobs:
         return self.inner.values()
 
     async def finalize(self):
+        """Finalize all jobs."""
         await asyncio.gather(*(job.finalize() for job in self.inner.values()))
 
 
@@ -695,6 +758,7 @@ _ID_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 
 class Server:
+    """The Quart app, with its jobs, workers, job queue, and websocket sessions."""
     def __init__(self):
         self.app: Quart = Quart(
             __name__,
@@ -734,11 +798,7 @@ class Server:
                 self.compute_pool.shutdown(wait=False, cancel_futures=True)
 
     def take_queued_job(self) -> t.Optional[Job]:
-        """The next job actually waiting to run, discarding any that no longer are.
-
-        `Job.cancel` and `Job.delete` only move a job's status -- a queued job stays in the
-        deque -- so a job is checked when it comes out, not when it stops being wanted.
-        """
+        """Pop the next job that is still queued, discarding cancelled or deleted ones."""
         while self.job_queue:
             job = self.job_queue.popleft()
             if job.status == 'queued' and job.id in self.jobs:
@@ -746,12 +806,10 @@ class Server:
         return None
 
     def resolve_in_root(self, path: str) -> t.Optional[Path]:
-        """`path`, relative to the file root or absolute, or None if it escapes the root.
+        """Return `path` (relative to the file root, or absolute) normalized, or `None` if it escapes the root.
 
-        Normalized lexically rather than resolved, so a symlinked directory under the root
-        can be traversed. `..` is still collapsed textually, and the caller must use the
-        path returned here -- listing the un-normalized spelling would follow a symlink
-        first and land outside the root.
+        `..` is collapsed lexically, so symlinked directories under the root are traversed.
+        Callers must use the returned path.
         """
         full = Path(os.path.normpath(self.file_root / Path(path).expanduser()))
         if full.is_relative_to(self.file_root):
@@ -762,20 +820,24 @@ class Server:
         return resolved if resolved.is_relative_to(self.file_root) else None
 
     def get_worker_url(self, worker_id: WorkerID, host: t.Optional[str] = None) -> str:
-        """URL a worker reports to. `host` overrides the address the server is bound to,
-        for a worker on another machine (see `phaser/web/config.py`)."""
+        """Return the update URL for a worker.
+
+        `host` overrides the address the server is bound to, for workers on other machines.
+        """
         assert self.host is not None
         url_adapter = self.app.url_map.bind(host or self.host, self.root_path, url_scheme='http')
         url = url_adapter.build('worker_update', dict(worker_id=worker_id), method='POST', force_external=True)
         return url
 
     def make_workerid(self) -> WorkerID:
+        """Return a new random worker ID, unique among current workers."""
         while True:
             id = "".join(_ID_CHARS[random.randrange(0, len(_ID_CHARS))] for _ in range(10))
             if id not in self.workers:
                 return id
 
     def make_jobid(self) -> JobID:
+        """Return a new random job ID, unique among current jobs."""
         while True:
             id = "".join(_ID_CHARS[random.randrange(0, len(_ID_CHARS))] for _ in range(10))
             if id not in self.jobs:
@@ -820,6 +882,14 @@ class Server:
         serving_cb: t.Optional[t.Callable[[], t.Any]] = None,
         debug: bool = False,
     ):
+        """Serve the app on `hostname:port` (default 5050) until shutdown. Blocks.
+
+        Args:
+            root_path: URL prefix when behind a proxy. Defaults to `$SCRIPT_NAME`.
+            verbosity: Higher values log more.
+            serving_cb: Called before serving starts.
+            debug: Register the debug routes (`phaser/web/debug.py`).
+        """
         self.compute_pool: ThreadPoolExecutor = ThreadPoolExecutor()
         """Shared threadpool for pub/sub view compute + array decode (`phaser/web/pubsub.py`)."""
         self.futs: t.List[asyncio.Task[t.Any]] = []
@@ -1014,5 +1084,6 @@ def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
 
 
 server: Server = Server()
+"""Global server instance."""
 
 from . import routes  # noqa: E402, F401

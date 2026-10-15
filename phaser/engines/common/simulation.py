@@ -1,3 +1,5 @@
+"""Simulation state, scan grouping, and multislice helpers."""
+
 import collections
 import logging
 import typing as t
@@ -42,6 +44,13 @@ logger = logging.getLogger(__name__)
 
 
 class GroupManager:
+    """Partition of scan positions into groups of size `grouping` (default 64).
+
+    Args:
+        compact: Form spatially compact groups instead of sparse ones.
+        seed: Seed for group formation and shuffling.
+    """
+
     def __init__(
         self,
         scan: NDArray[numpy.floating],
@@ -66,6 +75,11 @@ class GroupManager:
         self, scan: NDArray[numpy.floating],
         i: int = 0, shuffle_groups: bool = False,
     ) -> t.Iterator[NDArray[numpy.int64]]:
+        """Iterate over groups of scan indices.
+
+        Groups are re-formed if `shuffle_groups` is set or none exist yet. Otherwise
+        the existing groups are visited in a new order.
+        """
         if shuffle_groups or self.groups is None:
             self.groups = self._make(scan, i)
             return iter(self.groups)
@@ -80,6 +94,10 @@ def stream_patterns(
     groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
     xp: t.Any, buf_n: int = 1
 ) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
+    """Yield `(group, patterns)`, transferring patterns to `xp` and prefetching `buf_n` groups ahead.
+
+    Each yielded array is ready on the device.
+    """
     if buf_n == 0:
         for group in groups:
             group_patterns = xp.asarray(patterns[tuple(group)])
@@ -109,22 +127,36 @@ def stream_patterns(
 
 @tree_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))
 class SimulationState:
+    """Reconstruction state with the noise model, constraints, and their states."""
+
     state: ReconsState
+    """Reconstruction state."""
 
     ky: NDArray[numpy.floating]
+    """Probe reciprocal-space y coordinates [1/angstrom]."""
     kx: NDArray[numpy.floating]
+    """Probe reciprocal-space x coordinates [1/angstrom]."""
 
     noise_model: NoiseModel
+    """Noise model."""
     group_constraints: t.Tuple[GroupConstraint[t.Any], ...]
+    """Constraints applied after each group."""
     iter_constraints: t.Tuple[IterConstraint[t.Any], ...]
+    """Constraints applied after each iteration."""
 
     noise_model_state: t.Any
+    """Noise model state."""
     group_constraint_states: t.Tuple[t.Any, ...]
+    """States of `group_constraints`."""
     iter_constraint_states: t.Tuple[t.Any, ...]
+    """States of `iter_constraints`."""
 
     xp: t.Any
+    """Array module."""
     dtype: t.Type[numpy.floating]
+    """Real floating-point dtype."""
     start_iter: int
+    """Total iteration count at the start of the run."""
 
     def __init__(
         self, *,
@@ -159,6 +191,7 @@ class SimulationState:
         (self.ky, self.kx) = state.probe.sampling.recip_grid(dtype=dtype, xp=xp)
 
     def apply_group_constraints(self, group: NDArray[numpy.integer]) -> Self:
+        """Apply `group_constraints` for `group`, updating `state` and the constraint states in place."""
         def apply_reg(reg: GroupConstraint[t.Any], state: t.Any):
             (self.state, state) = reg.apply_group(group, self.state, state)
             return state
@@ -170,6 +203,7 @@ class SimulationState:
         return self
 
     def apply_iter_constraints(self) -> Self:
+        """Apply `iter_constraints`, updating `state` and the constraint states in place."""
         def apply_reg(reg: IterConstraint[t.Any], state: t.Any):
             (self.state, state) = reg.apply_iter(self.state, state)
             return state
@@ -182,6 +216,14 @@ class SimulationState:
 
 
 def make_propagators(state: ReconsState, bwlim_frac: t.Optional[float] = 2/3) -> t.Optional[NDArray[numpy.complexfloating]]:
+    """Return Fresnel propagators between adjacent object slices, shape `(n_slices - 1, Ny, Nx)`.
+
+    Args:
+        bwlim_frac: Bandwidth limit as a fraction of the minimum probe `k_max`. `None` disables the limit.
+
+    Returns:
+        `None` if the object has a single slice.
+    """
     xp = get_array_module(state.probe.data)
     dtype = to_real_dtype(state.probe.data.dtype)
     complex_dtype = to_complex_dtype(dtype)
@@ -220,10 +262,7 @@ def prepare_mtf(
     dtype: t.Type[numpy.floating],
     xp: t.Any,
 ) -> t.Union[PreparedOTF[numpy.inexact], PreparedPSF[numpy.floating]]:
-    """
-    Prepare a detector MTF for application to simulated diffraction pattern
-    intensities, sampled at `state.probe.sampling`'s shape (in detector pixels).
-    """
+    """Prepare a detector MTF for convolution with simulated intensities of shape `state.probe.data.shape[-2:]`."""
     mtf_args: FilterArgs = {'wavelength': float(state.wavelength)}
     if isinstance(mtf, MtfPlan):
         filt = mtf.filter(mtf_args)
@@ -243,11 +282,15 @@ def tilt_propagators(
     props: t.Optional[NDArray[numpy.complexfloating]],  # shape: (Nz-1, Ny, Nx)
     tilts: t.Optional[NDArray[numpy.floating]]          # shape: (..., 2), in mrad
 ) -> t.Optional[NDArray[numpy.complexfloating]]:
-    """
-    Applies tilt and slice-dependent propagation phase shifts to props.
-    -------
-    NDArray[complex] or None
-        Tilted propagators of shape (n_layers-1, ..., Ny, Nx), or None if no slices.
+    """Return `props` with phase ramps for beam `tilts` [mrad] applied.
+
+    Args:
+        props: Propagators `(n_slices - 1, Ny, Nx)`, as from `make_propagators`.
+        tilts: Tilts `(..., 2)` in `(y, x)` order [mrad]. `None` for untilted.
+
+    Returns:
+        Propagators `(n_slices - 1, ..., Ny, Nx)`, or `None` if `props` is `None`.
+        Without `tilts`, a length-1 axis is inserted after the slice axis.
     """
     if props is None:
         return None
@@ -290,7 +333,11 @@ def cutout_group(
     state: ReconsState, group: NDArray[numpy.integer],
     return_filters: bool = False
 ):
-    """Returns (probe, obj) in the cutout region"""
+    """Return `(probes, obj, scan)`: sub-pixel shifted probes, object cutouts, and scan positions for `group`.
+
+    Probes have shape `(len(group), modes, Ny, Nx)`. If `return_filters`, the sub-pixel shift
+    filters are appended.
+    """
     probes = state.probe.data
 
     group_scan = state.scan.data[tuple(group)]
@@ -313,6 +360,10 @@ def slice_forwards(
     f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT], *,
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
+    """Thread `state` through `f(i, props[i], state)` for slices `i = 0..n-2`, then `f(n-1, None, state)`.
+
+    Uses `jax.lax.scan` for JAX arrays. `jit_unroll_slices` is its `unroll` argument.
+    """
     if props is None:
         return f(0, None, state)
 
@@ -339,6 +390,10 @@ def slice_backwards(
     f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT],
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
+    """Thread `state` through `f(i, props[i-1], state)` for slices `i = n-1..1`, then `f(0, None, state)`.
+
+    Uses `jax.lax.fori_loop` for JAX arrays. `jit_unroll_slices` is its `unroll` argument.
+    """
     if props is None:
         return f(0, None, state)
 

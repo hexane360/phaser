@@ -1,6 +1,4 @@
-"""
-Utilities for configuration
-"""
+"""Loading and default-file generation for per-user YAML configuration."""
 
 from pathlib import Path
 import functools
@@ -17,6 +15,7 @@ PaneClassT = t.TypeVar('PaneClassT', bound=pane.PaneBase)
 
 @functools.cache
 def get_config_dir() -> Path:
+    """Return the per-user phaser configuration directory."""
     import platformdirs
     return platformdirs.user_config_path(
         'phaser', roaming=True, use_site_for_root=True,
@@ -24,7 +23,7 @@ def get_config_dir() -> Path:
 
 
 def get_class_docstrings(cls: type) -> t.Dict[str, str]:
-    """Extract attribute docstrings from class `cls`"""
+    """Return the attribute docstrings of class `cls`, keyed by field name."""
     # TODO: can probably replace this with griffe or something
     import ast
     import inspect
@@ -128,6 +127,16 @@ def _make_dumper() -> type:
 
 
 class Config(t.Generic[PaneClassT]):
+    """A YAML configuration file `{config_name}.yaml` in the user configuration directory.
+
+    Args:
+        name: Configuration name.
+        ty: Pane class the file is parsed into. Must be constructible from no arguments.
+        example: Values written by `write_default` in place of the field defaults.
+
+    Raises:
+        TypeError: If `ty` is not a pane class.
+    """
     def __init__(self, name: str, ty: t.Type[PaneClassT], example: t.Optional[PaneClassT] = None):
         self.config_name = name
         self.ty = ty
@@ -138,21 +147,27 @@ class Config(t.Generic[PaneClassT]):
             raise TypeError(f"Config type '{self.ty.__name__}' must be a pane class.")
 
     def path(self) -> Path:
+        """Return the path of the configuration file."""
         return get_config_dir() / f'{self.config_name}.yaml'
 
     def variant(self, name: str) -> 'Config[PaneClassT]':
-        """Named variant of this configuration, stored in '{config_name}_{name}.yaml'"""
+        """Return the variant of this configuration stored in `{config_name}_{name}.yaml`.
+
+        Raises:
+            ValueError: If `name` contains characters other than letters, digits, `-` and `_`.
+        """
         if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
             raise ValueError(f"Invalid config name '{name}'. Use only letters, digits, '-' and '_'.")
         return Config(f'{self.config_name}_{name}', self.ty, self.example)
 
     def variants(self) -> t.List[str]:
-        """Names of the existing variants of this configuration"""
+        """Return the sorted names of the existing variants of this configuration."""
         prefix = f'{self.config_name}_'
         names = (path.stem[len(prefix):] for path in get_config_dir().glob(f'{prefix}*.yaml'))
         return sorted(name for name in names if re.fullmatch(r'[A-Za-z0-9_-]+', name))
 
     def default(self) -> PaneClassT:
+        """Return the configuration with all fields at their defaults."""
         try:
             return pane.from_data({}, self.ty)
         except pane.ConvertError as e:
@@ -162,6 +177,12 @@ class Config(t.Generic[PaneClassT]):
             ) from e
 
     def get(self) -> PaneClassT:
+        """Load the configuration file, or return the defaults if it does not exist or is empty.
+
+        Raises:
+            ValueError: If the file contains multiple YAML documents.
+            pane.ConvertError: If the file does not match the config type.
+        """
         logger = logging.getLogger()
         path = self.path()
         logger.debug(f"Configuration path: '{path}'")
@@ -191,13 +212,12 @@ class Config(t.Generic[PaneClassT]):
         return config[0]
 
     def write_default(self) -> bool:
-        """
-        Write a default configuration file.
+        """Write a configuration file with every setting commented out.
 
-        Documentation is commented with '##', and the settings themselves with '# ', so
-        uncommenting a setting is unambiguous.
+        Field documentation is commented with `##`, and settings with `# `.
 
-        Does nothing and returns `False` if the file already exists
+        Returns:
+            `False` if the file already exists (it is not modified), otherwise `True`.
         """
         logger = logging.getLogger()
         path = self.path()

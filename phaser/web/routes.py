@@ -1,3 +1,4 @@
+"""HTTP and websocket routes."""
 import asyncio
 import json
 import logging
@@ -56,15 +57,17 @@ from .types import (
 
 
 def serialize(obj: t.Any, ty: t.Any = None) -> bytes:
+    """Return `obj` as UTF-8 JSON, converted as type `ty` if given."""
     return json.dumps(pane.into_data(obj, ty)).encode('utf-8')
 
 
 def frame(msg: t.Any) -> bytes:
-    """`msg` as a binary frame for the browser (see `frames.py`), with strict JSON."""
+    """Return `msg` as a binary frame for the browser (see `frames.py`), with strict JSON."""
     return frames.pack_bytes(pane.into_data(msg), allow_nan=False)
 
 
 def json_response(obj: t.Any, ty: t.Any = None, status: t.Optional[int] = None) -> Response:
+    """Return `obj` as a JSON `Response`."""
     return Response(
         serialize(obj, ty),
         status=status,
@@ -73,10 +76,11 @@ def json_response(obj: t.Any, ty: t.Any = None, status: t.Optional[int] = None) 
 
 
 app: Quart = server.app
+"""The Quart app that routes register on."""
 
 
 def wants_html() -> bool:
-    """Whether the client is a browser navigating, rather than an API/XHR caller."""
+    """Return whether the client is a browser navigating, rather than an API/XHR caller."""
     if not request:  # not in request, websocket context
         return False
     accept = request.accept_mimetypes
@@ -85,6 +89,7 @@ def wants_html() -> bool:
 
 @app.errorhandler(HTTPException)
 async def handle_http_error(e: HTTPException) -> ResponseReturnValue:
+    """Render an HTTP error as an HTML page for browsers, otherwise as JSON."""
     # `abort(Response(...))`/`abort(json_response(...))` attach an explicit response;
     # pass those through so existing error paths keep their own bodies.
     if e.response is not None:
@@ -103,10 +108,12 @@ async def handle_http_error(e: HTTPException) -> ResponseReturnValue:
 
 @app.get("/")
 async def index():
+    """Serve the job manager page."""
     return await render_template("manager.html")
 
 @app.get("/version")
 async def version():
+    """Return the server version info."""
     return json_response(version_info())
 
 # Entries of a single directory, for path completion in the manager. Names only: the client
@@ -139,6 +146,10 @@ def _ls_dir(dir: Path) -> t.List[str]:
 
 @app.get("/ls_path")
 async def ls_path():
+    """List directories and YAML files in `?path=` for path completion.
+
+    Responds 403 if the path is outside the server root.
+    """
     dir = server.resolve_in_root(request.args.get('path', ''))
     if dir is None:
         abort(json_response({'result': 'error', 'msg': "Path is outside the server root"}, status=403))
@@ -148,6 +159,7 @@ async def ls_path():
 
 @app.post("/shutdown")
 async def shutdown():
+    """Shut down the server."""
     async def shutdown():
         await asyncio.sleep(0.0)
         server.shutdown_event.set()
@@ -254,6 +266,10 @@ async def _start_slurm_worker(worker_id: WorkerID, body: t.Union[str, bytes]):
 
 @app.post("/worker/<string:worker_type>/start")
 async def start_worker(worker_type: str):
+    """Start a `manual`, `local`, or `slurm` worker and return its state.
+
+    The body of a `slurm` request is an optional `SlurmLaunch` JSON object.
+    """
     body = await request.get_data()
 
     if worker_type not in ('manual', 'local', 'slurm'):
@@ -285,6 +301,10 @@ async def start_worker(worker_type: str):
 
 @app.post("/job/start")
 async def start_job():
+    """Queue jobs from a plan, given as `{"source": "path", "path": ...}` or `{"source": "yaml", "data": ...}`.
+
+    Responds 400 if the plan is invalid.
+    """
     body = await request.get_data()
     d = json.loads(body)
     source = d['source']
@@ -310,6 +330,7 @@ async def start_job():
 
 @app.get("/job/<string:job_id>")
 async def job_dashboard(job_id: JobID):
+    """Serve the dashboard page for job `job_id`."""
     if job_id not in server.jobs and job_id != "fake":
         abort(404, description=Markup(
             "Job <code>{}</code> not found. It may have been deleted, "
@@ -319,6 +340,7 @@ async def job_dashboard(job_id: JobID):
 
 @app.post("/job/<string:job_id>/cancel")
 async def cancel_job(job_id: JobID):
+    """Cancel job `job_id`. Ignores unknown jobs."""
     try:
         job = server.jobs[job_id]
         await job.cancel()
@@ -329,6 +351,7 @@ async def cancel_job(job_id: JobID):
 
 @app.post("/job/<string:job_id>/delete")
 async def delete_job(job_id: JobID):
+    """Delete job `job_id`. Responds 400 if it is running."""
     try:
         job = server.jobs[job_id]
     except KeyError:
@@ -342,9 +365,10 @@ async def delete_job(job_id: JobID):
 
 @app.get("/job/<string:job_id>/logs")
 async def job_logs(job_id: JobID):
-    """A page of log records. `before`/`after` are exclusive cursors on a record's `i`,
-    bounding the window on either side: both give the range between them (filled forwards
-    from `after`), neither gives the newest `limit` records."""
+    """Return a page of job `job_id`'s log records (see `LogBuffer.page`).
+
+    Query parameters: `before`, `after`, `limit` (at most 1000), `min_level`.
+    """
     try:
         job = server.jobs[job_id]
     except KeyError:
@@ -362,7 +386,7 @@ async def job_logs(job_id: JobID):
 
 @app.get("/job/<string:job_id>/logs.txt")
 async def job_logs_text(job_id: JobID):
-    """The job's complete log as plaintext, for download."""
+    """Return job `job_id`'s log, filtered by `?min_level=`, as a plaintext download."""
     try:
         job = server.jobs[job_id]
     except KeyError:
@@ -381,6 +405,7 @@ async def job_logs_text(job_id: JobID):
 
 
 def format_logs(records: t.Iterable[LogRecord]) -> str:
+    """Format `records` as plaintext, one per line, with stack info following."""
     def format_log(record: LogRecord) -> str:
         level = logging.getLevelName(record.log_level)
         line = f"{record.timestamp:%Y-%m-%d %H:%M:%S} {level:<8} {record.logger_name}: {record.log}"
@@ -390,6 +415,7 @@ def format_logs(records: t.Iterable[LogRecord]) -> str:
 
 @app.post("/worker/<string:worker_id>/shutdown")
 async def shutdown_worker(worker_id: WorkerID):
+    """Shut down worker `worker_id`. Ignores unknown workers."""
     try:
         worker = server.workers[worker_id]
         await worker.cancel()
@@ -400,6 +426,7 @@ async def shutdown_worker(worker_id: WorkerID):
 
 @app.post("/worker/<string:worker_id>/reload")
 async def reload_worker(worker_id: WorkerID):
+    """Reload worker `worker_id`. Ignores unknown workers."""
     try:
         worker = server.workers[worker_id]
         await worker.reload()
@@ -410,12 +437,12 @@ async def reload_worker(worker_id: WorkerID):
 
 @app.websocket("/listen")
 async def listen():
-    """Unified pub/sub endpoint, replacing the old per-manager/-dashboard websockets.
-    An optional `?job=<id>` scopes the session: `default_topic={"job": id}` is merged
-    into every dict topic the client subscribes to (default fills missing keys, an
-    explicit client key wins). The dashboard opens `/listen?job=<id>` and subs
-    abbreviated `{view: ...}` topics; the manager opens `/listen` and subs `"jobs"` /
-    `"workers"`."""
+    """Pub/sub websocket.
+
+    `?job=<id>` sets the session's default topic `{"job": id}`, which fills missing keys of
+    dict topics. Clients send `sub`, `unsub`, and `ping` messages. Responds 400 for an
+    unknown job.
+    """
     if (job_id := websocket.args.get('job')):
         try:
             _ = server.jobs[job_id]
@@ -492,6 +519,10 @@ async def _unpack(body: bytes) -> t.Dict[str, t.Any]:
 
 @app.post("/worker/<string:worker_id>/update")
 async def worker_update(worker_id: WorkerID):
+    """Handle a worker message frame and return the server's response.
+
+    With `?upload=`, `?index=`, and `?count=`, the body is one chunk of a larger message.
+    """
     try:
         worker = server.workers[worker_id]
     except KeyError:

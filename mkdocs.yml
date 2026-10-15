@@ -14,7 +14,79 @@ nav:
     - using/algorithms.md
     - using/conventions.md
   - API:
-    - phaser.state: api/state.md
+    - phaser.execute: api/phaser.execute.md
+    - phaser.observer: api/phaser.observer.md
+    - phaser.plan: api/phaser.plan.md
+    - phaser.state: api/phaser.state.md
+    - phaser.types: api/phaser.types.md
+    - phaser.version: api/phaser.version.md
+    - phaser.cli:
+      - phaser.cli: api/phaser.cli.md
+      - calc_drift: api/phaser.cli.calc_drift.md
+      - calc_tilt: api/phaser.cli.calc_tilt.md
+      - config: api/phaser.cli.config.md
+      - process_empad: api/phaser.cli.process_empad.md
+      - utils: api/phaser.cli.utils.md
+      - validate: api/phaser.cli.validate.md
+    - phaser.engines.common:
+      - noise_models: api/phaser.engines.common.noise_models.md
+      - output: api/phaser.engines.common.output.md
+      - position_correction: api/phaser.engines.common.position_correction.md
+      - regularizers: api/phaser.engines.common.regularizers.md
+      - simulation: api/phaser.engines.common.simulation.md
+    - phaser.engines.conventional:
+      - run: api/phaser.engines.conventional.run.md
+      - solvers: api/phaser.engines.conventional.solvers.md
+    - phaser.engines.gradient:
+      - run: api/phaser.engines.gradient.run.md
+      - solvers: api/phaser.engines.gradient.solvers.md
+      - synthetic: api/phaser.engines.gradient.synthetic.md
+    - phaser.hooks:
+      - phaser.hooks: api/phaser.hooks.md
+      - filter: api/phaser.hooks.filter.md
+      - hook: api/phaser.hooks.hook.md
+      - io.empad: api/phaser.hooks.io.empad.md
+      - io.gatan: api/phaser.hooks.io.gatan.md
+      - io.manual: api/phaser.hooks.io.manual.md
+      - io.nion: api/phaser.hooks.io.nion.md
+      - object: api/phaser.hooks.object.md
+      - preprocessing: api/phaser.hooks.preprocessing.md
+      - probe: api/phaser.hooks.probe.md
+      - regularization: api/phaser.hooks.regularization.md
+      - scan: api/phaser.hooks.scan.md
+      - schedule: api/phaser.hooks.schedule.md
+      - solver: api/phaser.hooks.solver.md
+      - tilt: api/phaser.hooks.tilt.md
+    - phaser.io:
+      - empad: api/phaser.io.empad.md
+      - gatan: api/phaser.io.gatan.md
+      - nion: api/phaser.io.nion.md
+    - phaser.utils:
+      - analysis: api/phaser.utils.analysis.md
+      - config: api/phaser.utils.config.md
+      - image: api/phaser.utils.image.md
+      - io: api/phaser.utils.io.md
+      - misc: api/phaser.utils.misc.md
+      - num: api/phaser.utils.num.md
+      - object: api/phaser.utils.object.md
+      - optics: api/phaser.utils.optics.md
+      - physics: api/phaser.utils.physics.md
+      - plotting: api/phaser.utils.plotting.md
+      - scan: api/phaser.utils.scan.md
+      - tree: api/phaser.utils.tree.md
+    - phaser.web:
+      - config: api/phaser.web.config.md
+      - debug: api/phaser.web.debug.md
+      - frames: api/phaser.web.frames.md
+      - notebook: api/phaser.web.notebook.md
+      - pubsub: api/phaser.web.pubsub.md
+      - routes: api/phaser.web.routes.md
+      - server: api/phaser.web.server.md
+      - slurm: api/phaser.web.slurm.md
+      - types: api/phaser.web.types.md
+      - util: api/phaser.web.util.md
+      - views: api/phaser.web.views.md
+      - worker: api/phaser.web.worker.md
 
 theme:
   name: material
@@ -84,7 +156,14 @@ plugins:
             - https://matplotlib.org/stable/objects.inv
             - https://docs.h5py.org/en/latest/objects.inv
           options:
+            docstring_style: google
             docstring_section_style: "spacy"
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            heading_level: 1
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
             separate_signature: true
             show_signature_annotations: true
             signature_crossrefs: true

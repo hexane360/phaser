@@ -1,3 +1,5 @@
+"""Matplotlib plotting helpers for raw data, reconstructed objects and probes."""
+
 import typing as t
 
 import numpy
@@ -27,13 +29,23 @@ if t.TYPE_CHECKING:
 
 
 ColormapLike: t.TypeAlias = t.Union[str, Colormap]
+"""A matplotlib colormap or its name."""
 NormLike: t.TypeAlias = Normalize
+"""A matplotlib normalization."""
 
 
 def plot_pacbed(raw: NDArray[numpy.floating],
     *, ax: t.Optional['Axes'] = None, log: bool = True,
     diff_step: t.Union[t.Tuple[float, float], float, None] = None
 ) -> 'Axes':
+    """Plot the PACBED (the sum of `raw` over all but its last two axes).
+
+    Args:
+        raw: Diffraction patterns `(..., ky, kx)`.
+        ax: Axes to plot into. Defaults to a new figure.
+        log: Use a logarithmic color scale.
+        diff_step: Pixel size `(y, x)` or isotropic [mrad]. If `None`, axes are in pixels.
+    """
     from matplotlib.colors import LogNorm
 
     if ax is None:
@@ -76,6 +88,20 @@ def plot_raw(raw: NDArray[numpy.floating],
     scan_step: t.Union[t.Tuple[float, float], float, None] = None,
     diff_step: t.Union[t.Tuple[float, float], float, None] = None,
 ) -> 'Figure':
+    """Plot a 4D STEM dataset as a virtual image next to a diffraction pattern.
+
+    Args:
+        raw: Dataset of shape `(scan_y, scan_x, ky, kx)`.
+        fig: Figure to plot into. Defaults to a new figure.
+        mask: Detector mask `(ky, kx)` for the virtual image. Defaults to all pixels.
+        interactive: Select the displayed pattern by clicking on the virtual image.
+        log: Use a logarithmic color scale for the diffraction pattern.
+        scan_step: Scan step `(y, x)` or isotropic [angstrom]. If `None`, axes are in pixels.
+        diff_step: Diffraction pixel size `(y, x)` or isotropic [mrad]. If `None`, axes are in pixels.
+
+    Raises:
+        ValueError: If `raw` is not 4D.
+    """
     from matplotlib.colors import Normalize, LogNorm
 
     if raw.ndim != 4:
@@ -299,6 +325,24 @@ def plot_object_phase(
     unwrap: bool = True, remove_ramp: bool = True,
     **imshow_kwargs: t.Any,
 ) -> 'AxesImage':
+    """Plot the phase of an object, averaged over slices.
+
+    Args:
+        data: Object state, or object array `(z, y, x)`.
+        sampling: Object sampling. Required if `data` is an array.
+        ax: Axes to plot into. Defaults to a new figure.
+        cmap: Colormap.
+        norm: Normalization. Overrides `vmin` and `vmax`.
+        vmin: Lower color limit. Defaults to the minimum within the object region.
+        vmax: Upper color limit. Defaults to the maximum within the object region.
+        zoom_roi: Limit the view to the object region (`sampling.region_min` to `sampling.region_max`).
+        unwrap: Unwrap the phase along both axes.
+        remove_ramp: Subtract a linear ramp fitted within the object region.
+        imshow_kwargs: Passed to `imshow`.
+
+    Raises:
+        ValueError: If `data` is an array and `sampling` is not given.
+    """
     if hasattr(data, 'sampling'):
         sampling = t.cast(ObjectSampling, getattr(data, 'sampling'))
         data = t.cast(NDArray[numpy.complexfloating], getattr(data, 'data'))
@@ -354,6 +398,22 @@ def plot_object_mag(
     zoom_roi: bool = True,
     **imshow_kwargs: t.Any,
 ) -> 'AxesImage':
+    """Plot the squared magnitude of an object, taken as the product over slices.
+
+    Args:
+        data: Object state, or object array `(z, y, x)`.
+        sampling: Object sampling. Required if `data` is an array.
+        ax: Axes to plot into. Defaults to a new figure.
+        cmap: Colormap.
+        norm: Normalization. Overrides `vmin` and `vmax`.
+        vmin: Lower color limit. Defaults to the minimum within the object region.
+        vmax: Upper color limit. Defaults to the maximum within the object region.
+        zoom_roi: Limit the view to the object region (`sampling.region_min` to `sampling.region_max`).
+        imshow_kwargs: Passed to `imshow`.
+
+    Raises:
+        ValueError: If `data` is an array and `sampling` is not given.
+    """
     if hasattr(data, 'sampling'):
         sampling = t.cast(ObjectSampling, getattr(data, 'sampling'))
         data = t.cast(NDArray[numpy.complexfloating], getattr(data, 'data'))
@@ -427,6 +487,16 @@ def plot_probes(
     data: t.Union[NDArray[numpy.complexfloating], 'ProbeState'], sampling: t.Optional[Sampling] = None, *,
     fig: t.Optional['Figure'] = None,
 ):
+    """Plot each probe mode as a complex-colorized image.
+
+    Args:
+        data: Probe state, or probe array `(mode, y, x)`.
+        sampling: Probe sampling. Required if `data` is an array.
+        fig: Figure to plot into. Defaults to a new figure.
+
+    Raises:
+        ValueError: If `data` is an array and `sampling` is not given.
+    """
     if hasattr(data, 'sampling'):
         sampling = t.cast(Sampling, getattr(data, 'sampling'))
         data = t.cast(NDArray[numpy.complexfloating], getattr(data, 'data'))
@@ -464,6 +534,20 @@ def plot_probe_overlap(
     subpx: bool = False, grouping: int = 16,
     **imshow_kwargs: t.Any,
 ) -> 'AxesImage':
+    """Plot the summed probe intensity over all scan positions.
+
+    Args:
+        data: Probe state.
+        scan: Scan positions `(..., 2)` in `(y, x)` order [angstrom].
+        ax: Axes to plot into. Defaults to a new figure.
+        cmap: Colormap.
+        norm: Normalization.
+        vmin: Lower color limit. Defaults to 0.
+        vmax: Upper color limit.
+        subpx: Apply sub-pixel shifts to the probes.
+        grouping: Maximum number of positions added at once.
+        imshow_kwargs: Passed to `imshow`.
+    """
     xp = get_array_module(data.data, scan)
     dtype = to_real_dtype(data.data.dtype)
 
@@ -503,6 +587,7 @@ def plot_probe_overlap(
 
 
 def plot_metrics(metrics: t.Dict[str, float]) -> 'Figure':
+    """Plot experimental-parameter metrics in three panels (linear sampling, probe overlap, predicted success)."""
     fig, (ax1, ax2, ax3) = pyplot.subplots(
         ncols=3,
         gridspec_kw={
@@ -663,6 +748,18 @@ def add_scalebar(
     ax: 'Axes', size: float, *, loc: t.Literal['top', 'bot', 'bottom'] = 'bottom',
     height: float = 0.05, label: t.Optional[str] = None
 ):
+    """Add a scale bar to `ax`.
+
+    Args:
+        ax: Axes to add the bar to.
+        size: Bar length in x data units.
+        loc: Vertical position, `'top'` or `'bottom'` (`'bot'` is an alias).
+        height: Bar height as a fraction of the axes height.
+        label: Text placed next to the bar.
+
+    Raises:
+        ValueError: If `loc` is unknown.
+    """
     from matplotlib.patches import Rectangle
     if loc not in ('top', 'bot', 'bottom'):
         raise ValueError(f"Unknown location '{loc}'. Expected one of 'top', 'bot', or 'bottom'.")
@@ -678,6 +775,17 @@ def add_scalebar(
 
 def label_inside_ax(ax: 'Axes', text: str, pos: t.Tuple[float, float] = (0.02, 0.95), color: t.Any = 'white',
                     stroke: t.Any = 'black', strokewidth: float = 3.0, **text_kwargs: t.Any) -> 'Text':
+    """Add outlined text to `ax`.
+
+    Args:
+        ax: Axes to add the text to.
+        text: Text to display.
+        pos: Position in axes coordinates `(x, y)`.
+        color: Text color.
+        stroke: Outline color.
+        strokewidth: Outline width. No outline if `0`.
+        text_kwargs: Passed to `Axes.text`.
+    """
     kwargs = {
         'ha': 'left',
         'va': 'top',

@@ -1,3 +1,5 @@
+"""Observers that receive reconstruction progress events."""
+
 import contextlib
 import logging
 import time
@@ -18,8 +20,13 @@ if t.TYPE_CHECKING:
 P = t.ParamSpec('P')
 
 class Observer(contextlib.AbstractContextManager):
+    """Base class for reconstruction observers. Methods are called at the named events and do nothing by default.
+
+    Usable as a context manager, which calls `close` on exit.
+    """
+
     def init_recons(self, plan: ReconsPlan, *, name: str):
-        """Called when a reconstruction plan beings initialization."""
+        """Called when initialization of a reconstruction plan begins."""
 
     def start_recons(self, init_state: ReconsState):
         """Called when a reconstruction plan is initialized."""
@@ -28,25 +35,25 @@ class Observer(contextlib.AbstractContextManager):
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
-        """Called when an engine begins initialization"""
+        """Called when initialization of an engine begins."""
 
     def start_engine(self, init_state: ReconsState):
-        """Called after engine initialization, before it starts"""
+        """Called after an engine is initialized, before it starts."""
 
     def heartbeat(self):
-        """Called reasonably often by the engine, to e.g. periodically send data"""
+        """Called periodically by the engine."""
 
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
-        """Called when a group is finished, with updated reconstruction state."""
+        """Called when a group finishes, with the updated state. `force` is deprecated and ignored."""
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
-        """Called when an iteration is finished, with updated reconstruction state."""
+        """Called when iteration `i` of `n` finishes, with the updated state and errors by name (`'total_loss'` is the total)."""
 
     def finish_engine(self, state: ReconsState):
-        """Called when an engine is finished"""
+        """Called when an engine finishes."""
 
     def finish_recons(self, state: ReconsState):
-        """Called when the reconstruction is finished"""
+        """Called when the reconstruction finishes."""
 
     def close(self, exc: t.Optional[BaseException] = None):
         """Called to clean up, whether the reconstruction succeeded or failed."""
@@ -62,6 +69,8 @@ class Observer(contextlib.AbstractContextManager):
 
 
 class LoggingObserver(Observer):
+    """Observer that logs progress and timing, and records `'utc'` and `'time'` progress in the state."""
+
     def __init__(self):
         self.logger = logging
 
@@ -82,6 +91,7 @@ class LoggingObserver(Observer):
         return f"{int(mm):02d}:{ss:06.3f}"
 
     def get_utc(self) -> float:
+        """Return the current time [s since the Unix epoch]."""
         return time.time_ns() * 1e-9
 
     def init_recons(self, plan: ReconsPlan, *, name: str):
@@ -161,6 +171,14 @@ class LoggingObserver(Observer):
 
 
 class PatienceObserver(Observer):
+    """Observer that raises `EarlyTermination` after `patience` iterations without improvement of the smoothed `'total_loss'`.
+
+    Args:
+        patience: Number of iterations without improvement.
+        smoothing: Smoothing factor of the error moving average, in `(0, 1]`. Lower values smooth more.
+        continue_next_engine: Whether the reconstruction continues with the next engine after termination.
+    """
+
     def __init__(self, patience: int, smoothing: float = 0.9, continue_next_engine: bool = True):
         self.patience: int = patience
         self.no_improvement_iter: int = 0
@@ -197,6 +215,8 @@ class PatienceObserver(Observer):
 
 
 class SaveObserver(Observer):
+    """Observer that writes states and images to the output directory, per the plan's save options."""
+
     def __init__(self):
         self.out_dir: Path = Path.cwd()
         self.engine_out_dir: t.Optional[Path] = None
@@ -335,12 +355,14 @@ def _fwd_to_children(f: t.Callable[t.Concatenate['ObserverSet', P], None]) -> t.
 
 
 class ObserverSet(Observer):
+    """Observer that forwards all events to a collection of observers."""
+
     def __init__(self, observers: t.Iterable[Observer]):
         self.inner: t.Tuple[Observer, ...] = tuple(observers)
 
     @_fwd_to_children
     def init_recons(self, plan: ReconsPlan, *, name: str):
-        """Called when a reconstruction plan beings initialization."""
+        """Called when initialization of a reconstruction plan begins."""
 
     @_fwd_to_children
     def start_recons(self, init_state: ReconsState):
@@ -351,31 +373,31 @@ class ObserverSet(Observer):
         self, init_state: ReconsState, *, recons_name: str,
         plan: EnginePlan, **kwargs: t.Any
     ):
-        """Called when an engine begins initialization"""
+        """Called when initialization of an engine begins."""
 
     @_fwd_to_children
     def start_engine(self, init_state: ReconsState):
-        """Called after engine initialization, before it starts"""
+        """Called after an engine is initialized, before it starts."""
 
     @_fwd_to_children
     def heartbeat(self):
-        """Called reasonably often by the engine, to e.g. periodically send data"""
+        """Called periodically by the engine."""
 
     @_fwd_to_children
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
-        """Called when a group is finished, with updated reconstruction state."""
+        """Called when a group finishes, with the updated state. `force` is deprecated and ignored."""
 
     @_fwd_to_children
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
-        """Called when an iteration is finished, with updated reconstruction state."""
+        """Called when iteration `i` of `n` finishes, with the updated state and errors by name (`'total_loss'` is the total)."""
 
     @_fwd_to_children
     def finish_engine(self, state: ReconsState):
-        """Called when an engine is finished"""
+        """Called when an engine finishes."""
 
     @_fwd_to_children
     def finish_recons(self, state: ReconsState):
-        """Called when the reconstruction is finished"""
+        """Called when the reconstruction finishes."""
 
     @_fwd_to_children
     def close(self, exc: t.Optional[BaseException] = None):

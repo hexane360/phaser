@@ -1,3 +1,5 @@
+"""`phaser calc_tilt` command."""
+
 import math
 import typing as t
 from pathlib import Path
@@ -19,7 +21,7 @@ from phaser.io.empad import EmpadMetadata, load_4d
 @click.argument('path', type=click.Path(exists=True, dir_okay=False, file_okay=True))
 def calc_tilt(path: t.Union[str, Path]):
     """
-    Calculate the mistilt present in a ptychography datase.
+    Calculate the mistilt present in a ptychography dataset.
 
     PATH should be the path to a JSON metadata file.
     """

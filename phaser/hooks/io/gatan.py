@@ -1,3 +1,5 @@
+"""Load Gatan data."""
+
 
 from pathlib import Path
 import warnings
@@ -15,6 +17,12 @@ from .. import LoadGatanProps, RawData
 
 
 def load_gatan(args: None, props: LoadGatanProps) -> RawData:
+    """Load Gatan `.dm4` data, with the scan and probe hooks taken from its metadata.
+
+    Raises:
+        ValueError: If the voltage or `diff_step` is given by neither `props` nor the metadata,
+            or the data is not found.
+    """
     logger = logging.getLogger(__name__)
 
     path = Path(props.path).expanduser()

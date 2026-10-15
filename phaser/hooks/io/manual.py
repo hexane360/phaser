@@ -1,3 +1,5 @@
+"""Load diffraction patterns from generic file formats."""
+
 
 from itertools import chain
 import math
@@ -15,6 +17,15 @@ from .. import LoadManualProps, RawData
 
 
 def load_manual(args: None, props: LoadManualProps) -> RawData:
+    """Load 4D-STEM patterns from a `.npy`/`.npz`, TIFF, HDF5, or raw binary file.
+
+    The file extension selects the format; others are read as raw binary.
+    Patterns are cast to floating point and `det_flips` applied.
+
+    Raises:
+        ValueError: If both or neither of `kv` and `wavelength` are given, or the data is invalid.
+        NotImplementedError: For `.mat` files.
+    """
     logger = logging.getLogger(__name__)
 
     path = Path(props.path).expanduser()

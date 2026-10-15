@@ -1,3 +1,0 @@
-# phaser.state
-
-::: phaser.state

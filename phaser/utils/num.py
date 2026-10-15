@@ -1,6 +1,4 @@
-"""
-General numeric utilities.
-"""
+"""Array-backend abstraction (numpy, cupy, jax, torch), FFT helpers, and `Sampling`."""
 
 import functools
 from itertools import chain
@@ -22,6 +20,7 @@ if t.TYPE_CHECKING:
 
 
 Device: t.TypeAlias = t.Any
+"""Backend-specific device object."""
 Float: t.TypeAlias = t.Union[float, numpy.floating]
 NumT = t.TypeVar('NumT', bound=numpy.number)
 FloatT = t.TypeVar('FloatT', bound=numpy.floating)
@@ -133,7 +132,14 @@ _BACKEND_LOADER = _BackendLoader()
 
 
 def get_backend_module(backend: t.Optional[BackendName] = None):
-    """Get the module `xp` associated with a compute backend"""
+    """Return the array module (`xp`) for `backend`, loading it if necessary.
+
+    `backend` defaults to [`get_default_backend()`][phaser.utils.num.get_default_backend].
+    The `jax` backend is `jax.numpy`.
+
+    Raises:
+        ValueError: If `backend` is unknown or not available.
+    """
     if backend is None:
         backend = get_default_backend()
 
@@ -141,7 +147,11 @@ def get_backend_module(backend: t.Optional[BackendName] = None):
 
 
 def get_backend_scipy(backend: BackendName):
-    """Get the scipy module associated with a compute backend"""
+    """Return the `scipy` module for `backend` (`jax.scipy`, `cupyx.scipy`, or `scipy`).
+
+    Raises:
+        ValueError: If `backend` is `'torch'` or not available.
+    """
 
     name = _BACKEND_LOADER._normalize(backend)
     # ensure backend is loadable
@@ -160,6 +170,11 @@ def get_backend_scipy(backend: BackendName):
 
 
 def get_default_backend() -> BackendName:
+    """Return the default backend name.
+
+    Prefers a `jax` or `torch` backend with a non-CPU device, then any available
+    of `'jax'`, `'torch'`, `'cupy'`, falling back to `'numpy'`.
+    """
     # check for jax or torch GPUs first
     if _BACKEND_LOADER.get('jax') is not None:
         import jax
@@ -181,6 +196,7 @@ def get_default_backend() -> BackendName:
 
 
 def get_devices() -> t.Tuple[t.Tuple[BackendName, Device], ...]:
+    """Return `(backend, device)` pairs for all devices of all available backends."""
     devices: t.List[t.Tuple[BackendName, Device]] = []
 
     if _BACKEND_LOADER.get('jax') is not None:
@@ -198,6 +214,7 @@ def get_devices() -> t.Tuple[t.Tuple[BackendName, Device], ...]:
 
 
 def repr_device(device: Device) -> str:
+    """Return a short string name for `device`."""
     s = str(device)
 
     return {
@@ -206,6 +223,12 @@ def repr_device(device: Device) -> str:
 
 
 def to_device(device: t.Union[str, Device], xp: t.Any) -> Device:
+    """Convert `device` (a string or device object) to a device of backend `xp`.
+
+    Raises:
+        ValueError: If `device` is invalid for `xp`.
+        TypeError: If `xp` is not an array backend.
+    """
     if xp_is_torch(xp):
         from ._torch_kernels import to_device
         return to_device(device)
@@ -223,6 +246,7 @@ def to_device(device: t.Union[str, Device], xp: t.Any) -> Device:
 
 
 def get_backend_devices(xp: t.Any) -> t.Tuple[Device, ...]:
+    """Return the devices available for backend `xp`."""
     if xp_is_torch(xp):
         from ._torch_kernels import get_devices
         return get_devices()
@@ -239,6 +263,12 @@ def get_backend_devices(xp: t.Any) -> t.Tuple[Device, ...]:
 
 
 def set_default_device(device: Device, xp: t.Any):
+    """Set the default device for backend `xp`.
+
+    Raises:
+        ValueError: If `device` is invalid for `xp`.
+        TypeError: If `xp` is not an array backend.
+    """
     if xp_is_torch(xp):
         from ._torch_kernels import set_default_device
         set_default_device(device)
@@ -258,6 +288,10 @@ def max_supported_float(
     xp: t.Any,
     device: t.Optional[Device] = None,
 ) -> t.Union[t.Type[numpy.float32], t.Type[numpy.float64]]:
+    """Return the widest float dtype supported by backend `xp` on `device`.
+
+    `float64` except on `jax` and `torch` devices without 64-bit support.
+    """
     if xp_is_torch(xp):
         from ._torch_kernels import max_supported_float
         return max_supported_float(device)
@@ -268,6 +302,10 @@ def max_supported_float(
 
 
 def get_array_module(*arrs: t.Optional[ArrayLike]):
+    """Return the array module (`xp`) of the first jax, torch, or cupy array in `arrs`, else `numpy`.
+
+    `jax` and `torch` pytrees are searched for array leaves.
+    """
     if (xp := _BACKEND_LOADER.get('jax')) is not None:
         import jax.tree
         if any(
@@ -289,12 +327,18 @@ def get_array_module(*arrs: t.Optional[ArrayLike]):
 
 
 def cast_array_module(xp: t.Any):
+    """Return `xp`, typed as `numpy` for static type checking."""
     if t.TYPE_CHECKING:
         return numpy
     return xp
 
 
 def get_scipy_module(*arrs: t.Optional[ArrayLike]):
+    """Return the `scipy` module matching the backend of `arrs`.
+
+    Raises:
+        ValueError: If any array in `arrs` is a `torch` tensor.
+    """
     # pyright: ignore[reportMissingImports,reportUnusedImport]
 
     if not t.TYPE_CHECKING:
@@ -313,9 +357,9 @@ def get_scipy_module(*arrs: t.Optional[ArrayLike]):
 
 
 def to_numpy(arr: t.Union[DTypeT, NDArray[DTypeT], float, DTypeT], stream=None) -> NDArray[DTypeT]:
-    """
-    Convert an array to numpy.
-    For cupy backend, this is equivalent to `cupy.asnumpy`.
+    """Convert an array or scalar from any backend to a numpy array.
+
+    `stream` is the cupy stream used for the device-to-host copy.
     """
     if not t.TYPE_CHECKING:
         if is_jax(arr):
@@ -329,9 +373,10 @@ def to_numpy(arr: t.Union[DTypeT, NDArray[DTypeT], float, DTypeT], stream=None) 
 
 
 def as_numpy(arr: ArrayLike, stream=None) -> NDArray:
-    """
-    Convert an ArrayLike to a numpy array.
-    For cupy backend, this is equivalent to `cupy.asnumpy`.
+    """Convert an `ArrayLike` from any backend to a numpy array.
+
+    Unlike [`to_numpy`][phaser.utils.num.to_numpy], numpy inputs are not copied.
+    `stream` is the cupy stream used for the device-to-host copy.
     """
     if not t.TYPE_CHECKING:
         if is_jax(arr):
@@ -345,9 +390,10 @@ def as_numpy(arr: ArrayLike, stream=None) -> NDArray:
 
 
 def as_array(arr: ArrayLike, xp: t.Any = None) -> numpy.ndarray:
-    """
-    Convert an ArrayLike to an array, but not necessarily
-    a numpy array.
+    """Convert `arr` to an array of backend `xp`.
+
+    If `xp` is `None`, arrays already on a non-numpy backend are returned unchanged,
+    and anything else is converted to numpy.
     """
     if not t.TYPE_CHECKING:
         if xp is not None:
@@ -359,12 +405,14 @@ def as_array(arr: ArrayLike, xp: t.Any = None) -> numpy.ndarray:
 
 
 def is_cupy(arr: NDArray[numpy.generic]) -> bool:
+    """Return whether `arr` is a cupy array."""
     if (cupy := _BACKEND_LOADER.try_get('cupy')) is None:
         return False
     return isinstance(arr, cupy.ndarray)
 
 
 def is_jax(arr: t.Any) -> bool:
+    """Return whether `arr` is, or is a pytree containing, a jax array."""
     if (jnp := _BACKEND_LOADER.try_get('jax')) is None:
         return False
     import jax  # pyright[ignoreMissingImports]
@@ -376,6 +424,7 @@ def is_jax(arr: t.Any) -> bool:
 
 
 def is_torch(arr: t.Any) -> bool:
+    """Return whether `arr` is, or is a pytree containing, a torch tensor."""
     if (torch := t.cast(ModuleType, _BACKEND_LOADER.try_get('torch'))) is None:
         return False
 
@@ -386,14 +435,17 @@ def is_torch(arr: t.Any) -> bool:
 
 
 def xp_is_cupy(xp: t.Any) -> bool:
+    """Return whether `xp` is the cupy backend module."""
     if (cupy := _BACKEND_LOADER.try_get('cupy')) is None:
         return False
     return xp is cupy
 
 def xp_is_jax(xp: t.Any) -> bool:
+    """Return whether `xp` is the jax backend module (`jax.numpy`)."""
     return xp is sys.modules.get('jax.numpy', object())
 
 def xp_is_torch(xp: t.Any) -> bool:
+    """Return whether `xp` is the torch backend module."""
     if (torch := _BACKEND_LOADER.try_get('torch')) is None:
         return False
     return xp is torch
@@ -408,6 +460,10 @@ def block_until_ready(arr: NDArray[DTypeT]) -> NDArray[DTypeT]:
     ...
 
 def block_until_ready(arr: t.Any) -> t.Any:
+    """Block until the asynchronous computation of `arr` finishes, and return `arr`.
+
+    Synchronizes the device for `torch` (CUDA) and `cupy`. No-op for `numpy`.
+    """
     if hasattr(arr, 'block_until_ready'):  # jax
         return arr.block_until_ready()  # type: ignore
 
@@ -483,6 +539,12 @@ def jit(
         #compiler_options: t.Optional[t.Dict[str, t.Any]] = None,
         cupy_fuse: bool = False,
 ) -> t.Callable[P, T]:
+    """JIT-compile `f` with `jax.jit` when called with jax arrays.
+
+    Otherwise, `f` is called as-is. The `static_*`, `donate_*`, and `inline` arguments
+    are passed to `jax.jit`. If `cupy_fuse` is set, `f` is also wrapped in `cupy.fuse`
+    for cupy inputs.
+    """
     return _JitKernel(
         f, static_argnums=static_argnums, static_argnames=static_argnames,
         donate_argnums=donate_argnums, donate_argnames=donate_argnames,
@@ -492,15 +554,17 @@ def jit(
 
 
 def fuse(*args, **kwargs) -> t.Callable[[T], T]:
-    """
-    Equivalent to `cupy.fuse`, if supported.
-    """
+    """Return `cupy.fuse(*args, **kwargs)` if cupy is available, else the identity decorator."""
     if (xp := _BACKEND_LOADER.get('cupy')):
         return xp.fuse(*args, **kwargs)  # type: ignore
     return lambda x: x
 
 
 def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwargs):
+    """Call `callback(*args, **kwargs)`, using `jax.debug.callback` if jax is installed.
+
+    The `jax` version also works inside jitted code.
+    """
     try:
         import jax.debug
         return jax.debug.callback(callback, *args, **kwargs)
@@ -509,6 +573,11 @@ def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwa
 
 
 def assert_dtype(arr: numpy.ndarray, dtype: t.Type[numpy.generic]):
+    """Check that `arr` has dtype `dtype`, for any backend.
+
+    Raises:
+        TypeError: If the dtype does not match.
+    """
     if is_torch(arr):
         from ._torch_kernels import to_numpy_dtype, to_torch_dtype
 
@@ -550,8 +619,12 @@ def to_complex_dtype(dtype: DTypeLike) -> t.Type[numpy.complexfloating]:
     ...
 
 def to_complex_dtype(dtype: DTypeLike) -> t.Type[numpy.complexfloating]:
-    """
-    Convert a floating point dtype to a complex version.
+    """Return the complex dtype with the same precision as float `dtype`.
+
+    Complex dtypes are returned unchanged.
+
+    Raises:
+        TypeError: If `dtype` is not a supported floating-point or complex dtype.
     """
     if _BACKEND_LOADER.get('torch') is not None:
         from ._torch_kernels import to_numpy_dtype
@@ -585,8 +658,12 @@ def to_real_dtype(dtype: DTypeLike) -> t.Type[numpy.floating]:
     ...
 
 def to_real_dtype(dtype: DTypeLike) -> t.Type[numpy.floating]:
-    """
-    Convert a complex dtype to a plain float version.
+    """Return the float dtype with the same precision as complex `dtype`.
+
+    Float dtypes are returned unchanged.
+
+    Raises:
+        TypeError: If `dtype` is not a supported floating-point or complex dtype.
     """
     if _BACKEND_LOADER.get('torch') is not None:
         from ._torch_kernels import to_numpy_dtype
@@ -624,10 +701,9 @@ def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]
     ...
 
 def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
-    """
-    Perform an inverse FFT on the last two axes of `a`.
+    """Return the orthonormal inverse FFT of the last two axes of `a`.
 
-    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`).
+    If `shift`, the output is fftshifted so the real-space origin is centered.
     """
     xp = get_array_module(a)
     if shift:
@@ -654,10 +730,9 @@ def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
 def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
-    """
-    Perform a forward FFT on the last two axes of `a`.
+    """Return the orthonormal forward FFT of the last two axes of `a`.
 
-    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`)..
+    If `shift`, the input is ifftshifted first, so it is interpreted with the real-space origin centered.
     """
     xp = get_array_module(a)
     if shift:
@@ -676,12 +751,7 @@ def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
     ...
 
 def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
-    """
-    FFT-shift the last two axes of `a`.
-    
-    Shifts the zero-frequency component to the center of the image
-    (i.e. this is needed to center realspace after an inverse transform).
-    """
+    """Shift the zero-frequency component of the last two axes of `a` from the corner to the center."""
     xp = get_array_module(a)
     return xp.fft.fftshift(a, axes=(-2, -1))
 
@@ -695,12 +765,7 @@ def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
     ...
 
 def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
-    """
-    Inverse FFT-shift the last two axes of `a`.
-
-    Shifts the zero-frequency component to the corner of the image
-    (i.e. this is needed to corner realspace before a forward transform).
-    """
+    """Shift the zero-frequency component of the last two axes of `a` from the center to the corner."""
     xp = get_array_module(a)
     return xp.fft.ifftshift(a, axes=(-2, -1))
 
@@ -714,8 +779,9 @@ def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
     ...
 
 def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
-    """
-    Perform a type-II DCT on the last two axes of `a`, orthonormalized.
+    """Return the orthonormal type-II DCT of the last two axes of `a`.
+
+    Complex input is transformed as real and imaginary parts separately.
     """
     return _dct2(a, inverse=False)
 
@@ -729,9 +795,7 @@ def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
     ...
 
 def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
-    """
-    Invert [`dct2`][phaser.utils.num.dct2] (i.e. a type-III DCT, orthonormalized).
-    """
+    """Return the inverse of [`dct2`][phaser.utils.num.dct2] (orthonormal type-III DCT)."""
     return _dct2(a, inverse=True)
 
 
@@ -754,14 +818,10 @@ def _dct2(a: ArrayLike, inverse: bool) -> NDArray[numpy.inexact]:
 
 
 def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) -> t.Tuple[NDArray[DTypeT], ...]:
-    """
-    Split an array along `axis`, returning a tuple of subarrays.
+    """Split `arr` along `axis` into a tuple of subarrays.
 
-    # Parameters
-
-    - `arr`: Input array to split
-    - `axis`: Axis to split array on. Default: 0
-    - `keepdims`: Whether to keep the split dimension in the returned arrays.
+    Args:
+        keepdims: If `True`, keep the split axis (with size 1) in each subarray.
     """
     xp = get_array_module(arr)
     arrs = xp.split(arr, arr.shape[axis], axis=axis)
@@ -769,6 +829,7 @@ def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) 
 
 
 unstack = split_array
+"""Alias of [`split_array`][phaser.utils.num.split_array]."""
 
 
 @t.overload
@@ -788,11 +849,7 @@ def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
     ...
 
 def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
-    """
-    Return the squared amplitude of a complex array.
-
-    This is cheaper than `abs(x)**2`
-    """
+    """Return the squared amplitude of `x`, without computing a square root."""
     xp = get_array_module(x)
     x = xp.asarray(x)
 
@@ -827,6 +884,13 @@ def pad(
     arr: ArrayLike, pad_width: t.Union[int, t.Tuple[int, int], t.Sequence[t.Tuple[int, int]]], /, *,
     mode: _PadMode = 'constant', cval: float = 0.,
 ) -> numpy.ndarray:
+    """Pad `arr` by `pad_width` using `numpy.pad` semantics.
+
+    Args:
+        pad_width: Padding as `(before, after)` for all axes, or one pair per axis.
+        mode: Padding mode, as in `numpy.pad`.
+        cval: Fill value for `mode='constant'`.
+    """
     xp = get_array_module(arr)
 
     if xp_is_torch(xp):
@@ -851,6 +915,10 @@ def ufunc_outer(ufunc: numpy.ufunc, x: ArrayLike, y: ArrayLike) -> numpy.ndarray
     ...
 
 def ufunc_outer(ufunc: numpy.ufunc, x: ArrayLike, y: ArrayLike) -> numpy.ndarray:
+    """Apply binary `ufunc` over all pairs of elements of `x` and `y`, like `ufunc.outer`.
+
+    The result has shape `(*x.shape, *y.shape)`.
+    """
     if not t.TYPE_CHECKING and is_jax(x):
         from ._jax_kernels import outer
         return outer(ufunc, x, y)
@@ -862,6 +930,14 @@ def ufunc_outer(ufunc: numpy.ufunc, x: ArrayLike, y: ArrayLike) -> numpy.ndarray
 
 
 def check_finite(*arrs: NDArray[numpy.inexact], context: t.Optional[str] = None):
+    """Check that all elements of `arrs` are finite.
+
+    Args:
+        context: Description of the checked values, included in the error message.
+
+    Raises:
+        ValueError: If any element is NaN or infinite.
+    """
     xp = get_array_module(*arrs)
 
     if not all(xp.all(xp.isfinite(arr)) for arr in arrs):
@@ -872,14 +948,23 @@ def check_finite(*arrs: NDArray[numpy.inexact], context: t.Optional[str] = None)
 
 @tree_dataclass(frozen=True, init=False, static_fields=('shape',), drop_fields=('extent', 'shape_tup'))
 class Sampling:
+    """Real-space sampling grid of a given shape and extent.
+
+    Constructed from `shape` and exactly one of `extent` or `sampling`.
+    Scalar values are broadcast to `(y, x)`.
+
+    Raises:
+        ValueError: If `shape`, `extent`, or `sampling` is not a pair, or neither
+            `extent` nor `sampling` is given.
+    """
     shape: NDArray[numpy.int_]
-    """Sampling shape (n_y, n_x)"""
+    """Number of samples `(n_y, n_x)`."""
     extent: NDArray[numpy.float64]
-    """Sampling diameter (b, a)"""
+    """Size of the grid `(y, x)` [length]."""
     sampling: NDArray[numpy.float64]
-    """Sample spacing (s_y, s_x)"""
+    """Sample spacing `(s_y, s_x)` [length]."""
     shape_tup: t.Tuple[int, int]
-    """Sampling shape (n_y, n_x), as plain ints"""
+    """Number of samples `(n_y, n_x)`, as plain `int`s."""
 
     def __eq__(self, other: t.Any) -> bool:
         if type(self) is not type(other):
@@ -892,13 +977,12 @@ class Sampling:
 
     @property
     def k_max(self) -> NDArray[numpy.float64]:
-        """
-        Return maximum frequency (radius) of reciprocal space (1/(2s_y), 1/(2s_x))
-        """
+        """Maximum spatial frequency `(1/(2 s_y), 1/(2 s_x))` [1/length]."""
         return (1/(2 * self.sampling)).astype(numpy.float64)
 
     @property
     def corner(self) -> NDArray[numpy.float64]:
+        """Real-space coordinate `(y, x)` of the first sample [length]."""
         return ((-self.extent + self.sampling) / 2.).astype(numpy.float64)
 
     @t.overload
@@ -961,7 +1045,11 @@ class Sampling:
         ...
 
     def real_grid(self, *, dtype: t.Any = None, xp: t.Any = None) -> t.Tuple[NDArray[numpy.number], NDArray[numpy.number]]:
-        """Return the realspace sampling grid `(yy, xx)`. Grid is centered around `(0, 0)` (but may not contain it!)"""
+        """Return the real-space coordinate grids `(yy, xx)` [length], centered on `(0, 0)`.
+
+        For even shapes the grid does not contain `(0, 0)`. `xp` defaults to the backend
+        of the instance's arrays; `dtype` defaults to `float64`.
+        """
         xp2 = get_array_module(self.shape, self.extent, self.sampling) if xp is None else cast_array_module(xp)
 
         if dtype is None:
@@ -987,10 +1075,10 @@ class Sampling:
     def recip_grid(
         self, *, centered: bool = False, dtype: t.Any = None, xp: t.Any = None
     ) -> t.Tuple[NDArray[numpy.number], NDArray[numpy.number]]:
-        """
-        Return the reciprocal space sampling grid `(kyy, kxx)`.
+        """Return the reciprocal-space coordinate grids `(kyy, kxx)` [1/length].
 
-        Unless `centered` is specified, the grid is fftshifted so the zero-frequency component is in the top left.
+        If `centered`, zero frequency is at the grid center, otherwise at the corner.
+        `dtype` defaults to the widest float supported by `xp`.
         """
         xp2 = get_array_module(self.shape, self.extent, self.sampling) if xp is None else cast_array_module(xp)
 
@@ -1009,28 +1097,22 @@ class Sampling:
         return tuple(xp2.meshgrid(ky, kx, indexing='ij'))  # type: ignore
 
     def bwlim(self) -> float:
-        """Return the bandwidth limit (in inverse length units) for this sampling grid."""
+        """Return the 2/3 bandwidth limit, `2/3 * min(k_max)` [1/length]."""
         return float(numpy.min(self.k_max) * 2./3.)
 
     def mpl_real_extent(self, center: bool = True) -> t.Tuple[float, float, float, float]:
-        """
-        Return the extent of real space, for use in matplotlib.
+        """Return the real-space extent `(left, right, bottom, top)` for `matplotlib.imshow`.
 
-        Extent is returned as `(left, right, bottom, top)`.
-        If `center` is specified (the default), samples correspond to the center of pixels.
-        Otherwise, they correspond to the corners of pixels.
+        If `center`, sample coordinates refer to pixel centers, otherwise to pixel corners.
         """
         # shift pixel corners to centers
         shift = -self.extent/2. + self.sampling/2. * int(not center)
         return (shift[1], self.extent[1] + shift[1], self.extent[0] + shift[0], shift[0])
 
     def mpl_recip_extent(self, center: bool = True) -> t.Tuple[float, float, float, float]:
-        """
-        Return the extent of reciprocal space, for use in matplotlib.
+        """Return the centered reciprocal-space extent `(left, right, bottom, top)` for `matplotlib.imshow`.
 
-        Extent is returned as `(left, right, bottom, top)`.
-        If `center` is specified (the default), samples correspond to the center of pixels.
-        Otherwise, they correspond to the corners of pixels.
+        If `center`, sample coordinates refer to pixel centers, otherwise to pixel corners.
         """
         kmax = self.k_max
         hp = 1/(2. * self.extent)
@@ -1056,6 +1138,19 @@ class Sampling:
         mode: '_InterpBoundaryMode' = 'grid-constant',
         cval: t.Union[NumT, float] = 0.0,
     ) -> NDArray[NumT]:
+        """Resample the last two axes of `arr` from this sampling onto `new_samp`.
+
+        Args:
+            arr: Array with trailing shape `self.shape`.
+            new_samp: Output sampling.
+            rotation: Rotation of the output grid relative to this one [degrees].
+            order: Spline interpolation order.
+            mode: Boundary mode, see [`affine_transform`][phaser.utils.image.affine_transform].
+            cval: Fill value for `mode='grid-constant'`.
+
+        Raises:
+            ValueError: If the trailing shape of `arr` is not `self.shape`.
+        """
         from .image import affine_transform, rotation_matrix
 
         if arr.shape[-2:] != tuple(self.shape):
@@ -1079,6 +1174,15 @@ class Sampling:
         cval: t.Union[NumT, float] = 0.0,
         fftshift: bool = True,
     ) -> NDArray[NumT]:
+        """Resample a reciprocal-space array from this sampling onto `new_samp`.
+
+        Arguments are as in [`resample`][phaser.utils.num.Sampling.resample], but resampling
+        is done in reciprocal space, over the grids of `self` and `new_samp`.
+
+        Args:
+            fftshift: If `True`, `arr` and the result have zero frequency at the corner,
+                otherwise at the center.
+        """
         xp = get_array_module(arr)
         # reciprocal space sampling
         old_samp = Sampling(self.shape, extent=tuple(self.k_max)) # type: ignore
@@ -1143,6 +1247,12 @@ class _AtImpl(t.Generic[DTypeT]):
 
 
 def at(arr: NDArray[DTypeT], idx: IndexLike) -> _AtImpl[DTypeT]:
+    """Return an indexed-update helper like `jax.numpy.ndarray.at[idx]`.
+
+    Methods `set`, `add`, `subtract`, `multiply`, `divide`, `power`, `min`, `max` return
+    the updated array. For jax, the update is out-of-place; for other backends, `arr`
+    is modified in place.
+    """
     if is_jax(arr) and not t.TYPE_CHECKING:
         return arr.at[idx]
 

@@ -1,3 +1,4 @@
+"""Reader for Gatan DigitalMicrograph (`.dm4`) 4D STEM datasets, and their metadata."""
 
 from pathlib import Path
 import re
@@ -33,12 +34,17 @@ def _get_dir(f: pane.io.FileOrPath) -> t.Optional[Path]:
 
 
 class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
+    """Metadata of a Gatan `.dm4` 4D STEM dataset."""
     file_type: t.Literal['gatan_file'] = 'gatan_file'
 
     @classmethod
     def from_dm4(cls, f: pane.io.FileOrPath, *,
                   custom: t.Optional[IntoConverterHandlers] = None) -> Self:
-        
+        """Read metadata from the first image in the `.dm4` file `f`. Requires `rsciio`.
+
+        `diff_step` [mrad] and `scan_step` [m] are derived from the image calibrations.
+        Fields with no corresponding tag (`conv_angle`, `defocus`, ...) take placeholder values.
+        """
         path = _get_dir(f)
         
         file = dm.file_reader(f, lazy=True) 
@@ -158,7 +164,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     """Gatan Metadata version"""
 
     gatan_filename: str
-    # """Gatan 4DSTEM data filename, relative to metadata location."""
+    """Gatan 4DSTEM data filename."""
 
     path: t.Optional[Path] = pane.field(init=False, exclude=True)
     """Current path to experimental folder (based on metadata loading)"""
@@ -190,9 +196,9 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     beam_current: t.Optional[float] = None
     """Approx. beam current (A)."""
     e_scaling:t.Optional[float] = 1.0
-    
-    """Single-electron scaling )."""
+    """Intensity calibration scale (`Brightness` `Scale`)."""
     background_offset:t.Optional[float] = 0.0
+    """Intensity calibration offset (`Brightness` `Origin`)."""
 
     scan_correction: t.Optional[t.Annotated[NDArray[numpy.floating], shape((2, 2))]] = None
     """Scan correction matrix, [x', y'] = scan_correction @ [x, y]"""
@@ -204,30 +210,32 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     """
 
     notes: t.Optional[str] = None
+    """Free-form notes."""
 
     crop: t.Optional[t.Tuple[int, int, int, int]] = None
     """Region scan is valid within, (min_y, max_y, min_x, max_x). Python-style slicing."""
 
     def is_simulated(self) -> bool:
+        """Return whether the dataset is simulated (`file_type == 'pyMultislicer_metadata'`)."""
         return self.file_type == "pyMultislicer_metadata"
 
 
 def load_4d(path: t.Union[str, Path], scan_shape: t.Tuple[int, int],
             memmap: bool = False) -> NDArray[numpy.float32]:
-    """
-    Load a gatan dm4 dataset into memory.
+    """Load the first image of a Gatan `.dm4` file as a 4D dataset. Requires `rsciio`.
 
-    The file is loaded so the dimensions are: (scan_y, scan_x, k_y, k_x), with y decreasing downwards.
+    Patterns are not fftshifted or normalized, and no flips are applied.
 
-    Patterns are not fftshifted or normalized upon loading.
+    Args:
+        path: Path to the `.dm4` file.
+        scan_shape: Scan shape `(n_y, n_x)`.
+        memmap: Load lazily (the result is then a lazy array, not a `numpy.ndarray`).
 
-    # Parameters
+    Returns:
+        `float32` array of shape `(n_y, n_x, k_y, k_x)`.
 
-     - `path`: Path to file to load
-     - `scan_shape`: Scan shape of dataset. Will be inferred from the filename if not specified.
-     - `memmap`: If specified, memmap the file as opposed to loading it eagerly.
-
-    Returns a numpy array (or `numpy.memmap`)
+    Raises:
+        ValueError: If the product of the first two axes is not `n_y * n_x`.
     """
     path = Path(path)
 

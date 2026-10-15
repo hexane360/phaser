@@ -1,3 +1,5 @@
+"""Object initialization hooks."""
+
 
 import numpy
 
@@ -9,6 +11,7 @@ from . import ObjectHookArgs, RandomObjectProps
 
 
 def random_object(args: ObjectHookArgs, props: RandomObjectProps) -> PixelatedObjectState:
+    """Return a unit-amplitude object with random phase."""
     sampling = args['sampling']
 
     if args['slices'] is not None:

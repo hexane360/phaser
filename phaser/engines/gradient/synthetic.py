@@ -1,3 +1,5 @@
+"""Synthetic variables, constraining updates of a source variable to a subspace."""
+
 import typing as t
 
 import numpy
@@ -10,8 +12,7 @@ from phaser.utils.num import get_array_module
 
 
 class SyntheticGrad(HasState[StateT], t.Protocol[StateT]):
-    """
-    Gradient constructed by projection onto a constrained subspace.
+    """Gradient constructed by projection onto a constrained subspace.
 
     Applied to the gradient going into a solver, and to the update coming out.
     """
@@ -26,20 +27,19 @@ class SyntheticGrad(HasState[StateT], t.Protocol[StateT]):
     def project(
         self, sim: ReconsState, state: StateT, arr: NDArray[numpy.floating]
     ) -> NDArray[numpy.floating]:
-        """Project a gradient or update."""
+        """Project a gradient or update `arr` onto the subspace."""
         ...
 
 
 class AffineSyntheticGrad(SyntheticGrad[None]):
-    """
-    Constrains position updates to a linear transform of the current positions,
-    `u = pos @ M.T` for a 2x2 matrix `M`. `pos` is mean-centered, so `M` carries
-    no translation.
+    """Position updates constrained to a linear transform of the positions.
+
+    Updates have the form `u = pos @ M.T` for a 2x2 matrix `M`, where `pos` is mean-centered.
     """
 
     source: t.ClassVar[ReconsVar] = 'positions'
-    # regularization, in machine epsilons
     eps: t.Final[float] = 100.0
+    """Tikhonov regularization strength [machine epsilons]."""
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -59,6 +59,8 @@ class AffineSyntheticGrad(SyntheticGrad[None]):
 
 
 class LineState(t.NamedTuple):
+    """Row grouping for `LineSyntheticGrad`."""
+
     raster_rows: NDArray[numpy.integer]
     """Contiguous line index of each (flattened) position, shape `(n,)`."""
     counts: NDArray[numpy.integer]
@@ -66,9 +68,9 @@ class LineState(t.NamedTuple):
 
 
 class LineSyntheticGrad(SyntheticGrad[LineState]):
-    """
-    Constrains position updates to be constant along each fast-scan line, as
-    grouped by the `raster_rows` scan metadata. `project` is the per-line mean.
+    """Position updates constrained to be constant along each fast-scan line.
+
+    Lines are given by the `raster_rows` scan metadata; `project` returns the per-line mean.
     """
 
     source: t.ClassVar[ReconsVar] = 'positions'
@@ -105,16 +107,19 @@ SYNTHETIC_GRADS: t.Mapping[ReconsVar, t.Type[SyntheticGrad[t.Any]]] = {
     'positions_affine': AffineSyntheticGrad,
     'positions_line': LineSyntheticGrad,
 }
+"""Synthetic gradient class for each synthetic variable."""
 
 SYNTHETIC_VARS: t.FrozenSet[ReconsVar] = frozenset[ReconsVar](SYNTHETIC_GRADS)
+"""All synthetic variables."""
 
 SYNTHETIC_SOURCES: t.Mapping[ReconsVar, ReconsVar] = {
     var: cls.source for (var, cls) in SYNTHETIC_GRADS.items()
 }
+"""Source variable of each synthetic variable."""
 
 
 def source_var(var: ReconsVar) -> ReconsVar:
-    """Get the source variable for a (possibly synthetic) variable `var`."""
+    """Return the source variable of `var`; `var` itself if it is not synthetic."""
     return SYNTHETIC_SOURCES.get(var, var)
 
 
