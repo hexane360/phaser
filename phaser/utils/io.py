@@ -1,3 +1,5 @@
+"""Reading and writing reconstruction state as HDF5, and TIFF metadata helpers."""
+
 import json
 import typing as t
 from pathlib import Path
@@ -23,7 +25,9 @@ from phaser.utils.object import ObjectSampling
 from phaser.utils.misc import freeze
 
 HdfLike: t.TypeAlias = h5py.File | str | Path
+"""An open HDF5 file, or a path to one."""
 OpenMode: t.TypeAlias = t.Literal['r', 'r+', 'w', 'w-', 'x', 'a']
+"""`h5py` file open mode."""
 DTypeT = t.TypeVar('DTypeT', bound=numpy.generic)
 
 _DTYPE_CATEGORIES: dict[type[numpy.generic], type[numpy.generic]] = {
@@ -60,6 +64,11 @@ _CATEGORY_MIN_DTYPE: dict[type[numpy.generic], type[numpy.generic]] = {
 
 
 def open_hdf5(file: HdfLike, mode: str = 'r', **kwargs: t.Any) -> h5py.File:
+    """Open `file` with `h5py.File`, or return it unchanged if it is already an `h5py.File`.
+
+    Raises:
+        ValueError: If `mode` is invalid.
+    """
     if mode not in ('r', 'r+', 'w', 'w-', 'x', 'a'):
         raise ValueError("Invalid mode. Must be one of 'r', 'r+', 'w', 'w-', 'x', or 'a'.")
 
@@ -74,6 +83,15 @@ def open_hdf5(file: HdfLike, mode: str = 'r', **kwargs: t.Any) -> h5py.File:
 
 
 def hdf5_read_state(file: HdfLike) -> PartialReconsState:
+    """Read a `phaser_state` file, as written by `hdf5_write_state`.
+
+    Groups missing from the file are `None` in the result (`iter` is `IterState.empty()`).
+    Versions below `0.2` are also read.
+
+    Raises:
+        ValueError: If the file is not a `phaser_state` file, has a version above `0.2`,
+            or has a missing or malformed dataset.
+    """
     file = open_hdf5(file, 'r')
 
     ty = _hdf5_read_string(file, 'type')
@@ -118,6 +136,7 @@ def hdf5_read_state(file: HdfLike) -> PartialReconsState:
 
 
 def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
+    """Read the probe state stored in `group`."""
     ty = _hdf5_read_string(group, 'type', nullable=True)
     if ty not in (None, 'pixelated'):
         # currently we only support pixelated probes
@@ -138,6 +157,7 @@ def hdf5_read_probe_state(group: h5py.Group) -> ProbeState:
 
 
 def hdf5_read_scan_state(group: h5py.Group) -> ScanState:
+    """Read the scan state stored in `group`."""
     scan = _hdf5_read_array(group, 'data', numpy.float64)
 
     tilt = _hdf5_read_array(group, 'tilt', numpy.float64, nullable=True)
@@ -156,6 +176,7 @@ def hdf5_read_scan_state(group: h5py.Group) -> ScanState:
 
 
 def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
+    """Read the object state stored in `group`."""
     ty = _hdf5_read_string(group, 'type', nullable=True)
     if ty not in (None, 'pixelated'):
         # currently we only support pixelated objects
@@ -183,6 +204,7 @@ def hdf5_read_object_state(group: h5py.Group) -> ObjectState:
 
 
 def hdf5_read_iter_state(group: h5py.Group) -> IterState:
+    """Read the iteration state stored in `group`."""
     engine_num = int(_hdf5_read_scalar(group, 'engine_num', numpy.int64))
     engine_iter = int(_hdf5_read_scalar(group, 'engine_iter', numpy.int64))
     total_iter = int(_hdf5_read_scalar(group, 'total_iter', numpy.int64))
@@ -193,6 +215,10 @@ def hdf5_read_iter_state(group: h5py.Group) -> IterState:
 
 
 def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
+    """Read per-metric progress from `group`, keyed by metric name.
+
+    Old-style files (a single `detector_errors` series) are returned as `{'total_loss': ...}`.
+    """
     if 'iters' in group and 'detector_errors' in group:
         # read old-style, convert to new style
         iters = _hdf5_read_array(group, 'iters', numpy.int64)
@@ -219,6 +245,10 @@ def hdf5_read_progress_state(group: h5py.Group) -> dict[str, ProgressState]:
 
 
 def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
+    """Write `state` as a `phaser_state` file of version `0.2`, overwriting any existing file.
+
+    Components that are `None` are omitted.
+    """
     file = open_hdf5(file, 'w')  # overwrite if existing
     _hdf5_write_string(file, 'type', "phaser_state")
     _hdf5_write_string(file, 'version', "0.2")
@@ -237,6 +267,7 @@ def hdf5_write_state(state: ReconsState | PartialReconsState, file: HdfLike):
 
 
 def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
+    """Write the probe state into `group`."""
     # we only support pixelated probes currently
     assert state.ty == 'pixelated'
     assert state.data.ndim == 3
@@ -254,6 +285,7 @@ def hdf5_write_probe_state(state: ProbeState, group: h5py.Group):
 
 
 def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
+    """Write the object state into `group`."""
     # we only support pixelated objects currently
     assert state.ty == 'pixelated'
     assert state.data.ndim == 3
@@ -286,6 +318,7 @@ def hdf5_write_object_state(state: ObjectState, group: h5py.Group):
 
 
 def hdf5_write_scan_state(state: ScanState, group: h5py.Group):
+    """Write the scan state into `group`."""
     assert state.data.ndim >= 2
     assert state.initial.shape == state.data.shape
     if state.tilt is not None:
@@ -305,12 +338,14 @@ def hdf5_write_scan_state(state: ScanState, group: h5py.Group):
 
 
 def hdf5_write_iter_state(state: IterState, group: h5py.Group):
+    """Write the iteration state into `group`."""
     group.create_dataset("engine_num", (), numpy.uint64, data=state.engine_num)
     group.create_dataset("engine_iter", (), numpy.uint64, data=state.engine_iter)
     group.create_dataset("total_iter", (), numpy.uint64, data=state.total_iter)
 
 
 def hdf5_write_progress_state(state: dict[str, ProgressState], group: h5py.Group):
+    """Write the progress state into `group`."""
     for (k, v) in state.items():
         subgroup = group.require_group(k)
 
@@ -322,6 +357,7 @@ def hdf5_write_progress_state(state: dict[str, ProgressState], group: h5py.Group
 
 
 def hdf5_read_meta(group: h5py.Group, path: str = 'meta') -> frozendict[str, t.Any]:
+    """Read the JSON string dataset `path` in `group` as a frozen dict. Return an empty dict if absent."""
     if path not in group:
         return frozendict()
 
@@ -355,6 +391,7 @@ def hdf5_read_meta(group: h5py.Group, path: str = 'meta') -> frozendict[str, t.A
 
 
 def hdf5_write_meta(group: h5py.Group, meta: frozendict[str, t.Any], path: str = 'meta'):
+    """Write `meta` as a JSON string dataset `path` in `group`. Do nothing if `meta` is empty."""
     if len(meta):
         s = json.dumps(meta, indent='', ensure_ascii=False).encode('utf-8')
         group.create_dataset(path, data=s, dtype=h5py.string_dtype('utf-8'))
@@ -506,6 +543,18 @@ def tiff_write_opts(
     n_slices: int = 1,
     zs: t.Sequence[float] | NDArray[numpy.floating] | None = None,
 ) -> dict[str, t.Any]:
+    """Return `tifffile` write options for a real-space image with OME physical sizes and positions.
+
+    Args:
+        sampling: Pixel size [angstrom] and, by default, the corner position.
+        corner: Position of the first pixel `(y, x)` [angstrom]. Defaults to `sampling.corner`.
+        unit: Length unit of the metadata.
+        n_slices: Number of slices (planes) in the image.
+        zs: Slice z positions. Overrides `n_slices`.
+
+    Returns:
+        Keyword arguments for `tifffile.imwrite`, including a `resolution` in pixels/cm.
+    """
     if corner is None:
         corner = sampling.corner
 
@@ -543,6 +592,11 @@ def tiff_write_opts_recip(
     n_slices: int = 1,
     zs: t.Sequence[float] | NDArray[numpy.floating] | None = None,
 ) -> dict[str, t.Any]:
+    """Return `tifffile` write options for a reciprocal-space image with OME physical sizes.
+
+    Pixel sizes are `1/sampling.extent`. Plane positions are zero.
+    Arguments are as in `tiff_write_opts`.
+    """
     z_dict = {}
     if zs is not None:
         n_slices = len(zs)

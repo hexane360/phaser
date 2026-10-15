@@ -1,3 +1,4 @@
+"""Reader and writer for raw EMPAD datasets, and their metadata."""
 
 from datetime import datetime
 from pathlib import Path
@@ -29,15 +30,17 @@ def _get_dir(f: pane.io.FileOrPath) -> t.Optional[Path]:
 
 
 class UnscannedDataset(BaseException):
-    ...
+    """Raised when metadata describes a dataset that is not a 4D STEM scan."""
 
 
 class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
+    """EMPAD dataset metadata."""
     file_type: t.Literal['pyMultislicer_metadata', 'empad_metadata'] = 'empad_metadata'
 
     @classmethod
     def from_json(cls, f: pane.io.FileOrPath, *,
                   custom: t.Optional[IntoConverterHandlers] = None) -> Self:
+        """Load metadata from a JSON file. `path` is set to the file's directory, if known."""
         path = _get_dir(f)
         self = pane.io.from_json(f, cls, custom=custom)
         object.__setattr__(self, 'path', path)
@@ -122,15 +125,26 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     """
 
     notes: t.Optional[str] = None
+    """Free-form notes."""
 
     crop: t.Optional[t.Tuple[int, int, int, int]] = None
     """Region scan is valid within, (min_y, max_y, min_x, max_x). Python-style slicing."""
 
     def is_simulated(self) -> bool:
+        """Return whether the dataset is simulated (`file_type == 'pyMultislicer_metadata'`)."""
         return self.file_type == "pyMultislicer_metadata"
 
     @staticmethod
     def from_xml(xml_path: t.Union[str, Path]) -> 'EmpadMetadata':
+        """Load metadata from an EMPAD v1 XML file. Requires `lxml`.
+
+        Converts exposure times to seconds and scan rotation to degrees.
+        `scan_step` is `scan_fov / max(scan_shape)`.
+
+        Raises:
+            UnscannedDataset: If the file is not a 4D STEM scan.
+            ValueError: If a required tag is missing.
+        """
         from lxml import etree
 
         orig_path = Path(xml_path).parent
@@ -207,6 +221,15 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
     @staticmethod
     def from_toml(toml_path: t.Union[str, Path]) -> 'EmpadMetadata':
+        """Load metadata from an EMPAD v2 TOML file.
+
+        `raw_filename` is the only `.raw` file next to the metadata, if there is exactly one.
+        Otherwise it is `scan_x{x}_y{y}.raw`. `scan_rotation` is read as degrees.
+
+        Raises:
+            UnscannedDataset: If the file is not a 4D STEM scan (`scan_service != 'stem_raster'`).
+            ValueError: If a required key is missing.
+        """
         try:
             import tomllib
         except ImportError:
@@ -282,23 +305,25 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] = None, *,
             memmap: bool = False, flips: t.Optional[t.Tuple[bool, bool, bool]] = None,
             empad_version: int = 1) -> NDArray[numpy.float32]:
-    """
-    Load a raw EMPAD dataset into memory.
+    """Load a raw EMPAD dataset.
 
-    The file is loaded so the dimensions are: (scan_y, scan_x, k_y, k_x), with y decreasing downwards.
+    Patterns are not fftshifted or normalized.
 
-    Patterns are not fftshifted or normalized upon loading.
+    Args:
+        path: Path to the `.raw` file.
+        scan_shape: Scan shape `(n_y, n_x)`. If `None`, parsed from `x{n_x}_y{n_y}` in the filename.
+        memmap: Memory-map the file instead of reading it.
+        flips: Flips `(flip_y, flip_x, transpose)` applied to the diffraction patterns.
+            Defaults to `(True, False, False)` for `empad_version=1` and no flips for `empad_version=2`.
+        empad_version: Raw format version, `1` or `2`. Version 1 files have 2 extra rows per
+            pattern (`128 + 2` rows), which are dropped.
 
-    # Parameters
+    Returns:
+        Array of shape `(n_y, n_x, 128, 128)`, `numpy.memmap` if `memmap` is set.
 
-     - `path`: Path to file to load
-     - `scan_shape`: Scan shape of dataset. Will be inferred from the filename if not specified.
-     - `memmap`: If specified, memmap the file as opposed to loading it eagerly.
-     - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
-       Defaults to `(True, False, False)` (appears to be the most common orientation).
-     - `empad_version`: Version of empad dataset. Defaults to v1.
-
-    Returns a numpy array (or `numpy.memmap`)
+    Raises:
+        ValueError: If the version is unsupported, `scan_shape` cannot be inferred,
+            or the file size does not match the scan shape.
     """
     path = Path(path)
 
@@ -352,23 +377,22 @@ def save_4d(arr: NDArray[numpy.float32], *, path: None = None, folder: t.Union[s
 def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = None,
             folder: t.Union[str, Path, None] = None, name: t.Optional[str] = None,
             flips: t.Optional[t.Tuple[bool, bool, bool]] = None, empad_version: int = 1):
-    """
-    Save a raw EMPAD dataset.
+    """Save a dataset of shape `(n_y, n_x, 128, 128)` as a raw EMPAD file.
 
-    Either `path` or `folder` can be specified. If `folder` is specified,
-    `name` will be used as a format string to determine the filename.
-    `path` and `folder` cannot be specified simultaneously.
+    Patterns are not fftshifted or normalized. Exactly one of `path` and `folder` must be given.
 
-    Patterns are not fftshifted or normalized upon saving.
+    Args:
+        arr: Array to save.
+        path: Output file path.
+        folder: Output directory. The filename is `name` formatted with `x=n_x, y=n_y`.
+        name: Filename format used with `folder`. Defaults to `"scan_x{x}_y{y}.raw"`.
+        flips: Flips `(flip_y, flip_x, transpose)` applied to the diffraction patterns.
+            Defaults as in `load_4d`.
+        empad_version: Raw format version, `1` or `2`. Version 1 pads each pattern with 2 zero rows.
 
-    Parameters:
-     - `arr`: Array to save
-     - `path`: Path to save dataset to.
-     - `folder`: Folder to save dataset inside.
-     - `name`: When `folder` is specified, format to use to determine filename. Defaults to `"scan_x{x}_y{y}.raw"`.
-       Will be formatted using the scan shape `{'x': n_x, 'y': n_y}`.
-     - `flips`: Flips to apply to the diffraction patterns, `(flip_y, flip_x, transpose)`.
-       Defaults to `(True, False, False)` (appears to be the most common orientation).
+    Raises:
+        ValueError: If `arr` has the wrong shape, the version is unsupported,
+            or `path` and `folder` are both or neither given.
     """
     if empad_version not in (1, 2):
         raise ValueError(f"Unsupported empad file version '{empad_version}'."
