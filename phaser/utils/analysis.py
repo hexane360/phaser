@@ -1,3 +1,5 @@
+"""Analysis utilities: image splitting, Fourier correlation, and ground-truth alignment."""
+
 import typing as t
 
 import numpy
@@ -12,8 +14,9 @@ from phaser.types import cast_length
 
 
 def split_image(img: NDArray[NumT]) -> t.Tuple[NDArray[NumT], NDArray[NumT], NDArray[NumT], NDArray[NumT]]:
-    """
-    Split image into 4 subimages (upper left, upper right, lower left, lower right).
+    """Split an image into 4 interleaved subimages, in row-major order of the starting pixel.
+
+    The last two axes are cropped to even size, then sampled at every second pixel.
     """
     shape = img.shape[-2:]
     # crop image divisible by two
@@ -28,6 +31,7 @@ def split_image(img: NDArray[NumT]) -> t.Tuple[NDArray[NumT], NDArray[NumT], NDA
 
 
 def fourier_correlate(img1: NDArray[NumT], img2: NDArray[NumT]) -> NDArray[numpy.complex128]:
+    """Return the Hann-windowed, normalized cross-power spectrum of `img1` and `img2`, with zero frequency at the center."""
     assert img1.shape == img2.shape
     from skimage.filters import window
 
@@ -61,6 +65,17 @@ def contrast_transfer(
     img1: NDArray[NumT], img2: NDArray[NumT], *,
     inscribed: bool = True, r_spacing: float = 1.0
 ) -> t.Tuple[NDArray[numpy.float64], NDArray[numpy.float64], NDArray[numpy.float64]]:
+    """Return the radially averaged Fourier amplitude ratio of `img1` to `img2`.
+
+    Args:
+        img1: Numerator image.
+        img2: Denominator image, same shape as `img1`.
+        inscribed: Keep only radii within the circle inscribed in the image.
+        r_spacing: Radial bin width [pixels].
+
+    Returns:
+        Tuple `(ratio, r, freq)`: amplitude ratio, bin radii [pixels], and spatial frequency [1/pixel].
+    """
     assert img1.shape == img2.shape
     from skimage.filters import window
 
@@ -94,6 +109,17 @@ def fourier_ring_correlate(
     img1: NDArray[NumT], img2: NDArray[NumT], *,
     inscribed: bool = True, r_spacing: float = 1.0
 ) -> t.Tuple[NDArray[numpy.float64], NDArray[numpy.float64], NDArray[numpy.float64]]:
+    """Return the Fourier ring correlation of `img1` and `img2`.
+
+    Args:
+        img1: First image.
+        img2: Second image, same shape as `img1`.
+        inscribed: Keep only radii within the circle inscribed in the image.
+        r_spacing: Ring width [pixels].
+
+    Returns:
+        Tuple `(frc, r, freq)`: correlation per ring, ring radii [pixels], and spatial frequency [1/pixel].
+    """
     assert img1.shape == img2.shape
     from skimage.filters import window
 
@@ -127,6 +153,11 @@ def fourier_ring_correlate(
 
 
 def frc_intersect_threshold(frc: NDArray[numpy.floating], freq: NDArray[numpy.floating], threshold: float) -> t.Tuple[float, float]:
+    """Return the `(freq, frc)` point where `frc` first crosses below `threshold`, by linear interpolation.
+
+    Raises:
+        ValueError: If `frc` has no downward crossing of `threshold`.
+    """
     diff = frc - threshold
     lastdiff = numpy.roll(diff, shift=1)
     # find negative zero crossing
@@ -189,10 +220,26 @@ def align_object_to_ground_truth(
     order: int = 1,
     return_crop: bool = False,
 ) -> t.Union[t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating]], t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating], t.Tuple[slice, slice]]]:
-    """
-    ground_truth: Ground truth phase (in radians, or radians/angstrom for multislice data)
+    """Align a reconstructed object phase to a ground-truth phase image.
 
-    Returns a tuple (object, ground_truth)
+    The object is resampled onto the ground-truth grid, shifted by cross-correlation and
+    optionally refined with an affine fit, then both are cropped to the object region.
+
+    Args:
+        object: Reconstructed object.
+        ground_truth: Ground-truth phase [radians], or [radians/angstrom] for multislice objects.
+        ground_truth_sampling: Ground-truth pixel size `(y, x)` [angstrom].
+        rotation_angle: Rotation applied to the object [degrees].
+        refinement_niter: Maximum function evaluations of the affine refinement. `0` skips it.
+        order: Interpolation order used when resampling.
+        return_crop: Also return the crop slices.
+
+    Returns:
+        Tuple `(object_phase, ground_truth)` cropped to the object region, with `object_phase` of
+        shape `(n_slices, ny, nx)`. With `return_crop`, a third element `(slice_y, slice_x)` is appended.
+
+    Raises:
+        ValueError: If the ground-truth extent is smaller than the object extent.
     """
     xp = get_array_module(object.data, ground_truth)
     ground_truth = xp.asarray(ground_truth)

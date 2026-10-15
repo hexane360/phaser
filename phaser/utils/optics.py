@@ -1,6 +1,4 @@
-"""
-Probe/optics utilities
-"""
+"""Probe and optics utilities."""
 
 import logging
 import typing as t
@@ -17,6 +15,7 @@ def aberration_surface(
     thetay: NDArray[numpy.floating], thetax: NDArray[numpy.floating],
     aberrations: t.Iterable[Aberration]
 ) -> NDArray[numpy.floating]:
+    """Return the aberration wavefront error [length] at scattering angles `thetay`, `thetax` [rad]."""
     xp = get_array_module(thetay, thetax)
     chi = xp.zeros_like(thetay)
     omega = thetax + thetay*1.j
@@ -51,10 +50,15 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
 def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
                        aperture: Float, *, defocus: Float = 0.,
                        aberrations: t.Sequence[Aberration] = ()) -> NDArray[numpy.complexfloating]:
-    """
-    Create a focused probe from a circular aperture of semi-angle `aperture` (in mrad).
+    """Return a focused probe from a circular aperture, normalized to unit total intensity.
 
-    Optionally, give it some defocus (positive corresponds to overfocus).
+    Args:
+        ky: Reciprocal-space y coordinates [1/length].
+        kx: Reciprocal-space x coordinates [1/length].
+        wavelength: Electron wavelength [length].
+        aperture: Aperture semi-angle [mrad].
+        defocus: Defocus [length]. Positive is overfocus.
+        aberrations: Aberrations to apply.
     """
     xp = get_array_module(ky, kx)
 
@@ -80,11 +84,17 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
 def make_hermetian_modes(
     base_probe: NDArray[NumT], n_modes: int, base_mode_power: float = 0.7, rel_powers: ArrayLike = 1.0
 ) -> NDArray[NumT]:
-    """
-    Create Hermitian-Gauss probe modes based on `base_probe`.
+    """Return `n_modes` Hermite-Gaussian probe modes derived from `base_probe`.
 
-    Creates `n_modes` modes. The base mode will have power `base_mode_power`, while the
-    other modes will split the remaining power according to `rel_powers` (which may be a list).
+    Args:
+        base_probe: Probe used for the first mode.
+        n_modes: Number of modes, including the base mode.
+        base_mode_power: Fraction of total power in the base mode, in `[0, 1)`.
+        rel_powers: Relative powers of the other modes, which split the remaining power.
+            The last value is repeated if fewer than `n_modes - 1` are given.
+
+    Raises:
+        ValueError: If `base_mode_power` is outside `[0, 1)`.
     """
     xp = get_array_module(base_probe)
 
@@ -121,12 +131,15 @@ def make_hermetian_modes(
 
 
 def hermetian_modes(base_probe: NDArray[NumT], y_orders: ArrayLike, x_orders: ArrayLike) -> NDArray[NumT]:
-    """
-    Split `base_probe` into Hermite-Gaussian modes. y_orders and x_orders (broadcast together)
-    are the orders of modes to return.
+    """Return Hermite-Gaussian modes of `base_probe`, orthogonal and normalized.
 
-    Return a ndarray of shape `(*y_orders.shape, *base_probe.shape)`.
-    Each mode is orthogonal and normalized.
+    Args:
+        base_probe: Probe to split.
+        y_orders: Mode orders along y. Broadcast against `x_orders`.
+        x_orders: Mode orders along x.
+
+    Returns:
+        Modes of shape `(*y_orders.shape, *base_probe.shape)`.
     """
     xp = get_array_module(base_probe)
     real_dtype = to_real_dtype(base_probe.dtype)
@@ -175,18 +188,15 @@ def fourier_shift_filter(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating
     ...
 
 def fourier_shift_filter(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], shifts: ArrayLike) -> NDArray[numpy.complexfloating]:
-    """
-    Create a phase ramp / Fourier shift filter, using the reciprocal space frequencies `ky` & `kx`.
+    """Return the Fourier phase ramp that shifts an image by `shifts`.
 
-    A frequency-shift filter can be created using `fourier_shift_filter(yy, xx, -shifts)`.
+    Args:
+        ky: Reciprocal-space y coordinates [1/length].
+        kx: Reciprocal-space x coordinates [1/length].
+        shifts: Shifts of shape `(..., 2)` in `(y, x)` order [length].
 
-    # Parameters:
-
-     - `ky`, `kx`: Frequency grid filter is created with
-     - `shifts`: Vector(s) to shift by. Should be an array of shape `(..., 2)`, with the last dimension
-       representing `(y, x)` coordinates.
-
-    Returns a ndarray of shape `(*shifts.shape[:-1], *ky.shape)`
+    Returns:
+        Filter of shape `(*shifts.shape[:-1], *ky.shape)`.
     """
     xp = get_array_module(ky, kx)
     dtype = to_complex_dtype(ky.dtype)
@@ -215,18 +225,14 @@ def fresnel_propagator(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
 
 def fresnel_propagator(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
                        delta_z: Float, tilt: t.Tuple[float, float] = (0., 0.)) -> NDArray[numpy.complexfloating]:
-    """
-    Return a Fresnel diffraction filter in frequency space, for use in free-space propagation. Roughly taken from Kirkland [1].
+    """Return the Fresnel free-space propagation filter in reciprocal space.
 
-    # Parameters
-
-     - `ky`, `kx`: Frequency grid filter is created with
-     - `wavelength`: Wavelength
-     - `delta_z`: Distance to propagate by
-     - `tilt`: `(x, y)` mistilt to apply (in mrad). 
-
-    [1]. Kirkland, E. J. Advanced Computing in Electron Microscopy. (Springer US, Boston, MA, 2010). doi:10.1007/978-1-4419-6533-2.
-
+    Args:
+        ky: Reciprocal-space y coordinates [1/length].
+        kx: Reciprocal-space x coordinates [1/length].
+        wavelength: Electron wavelength [length].
+        delta_z: Propagation distance [length].
+        tilt: Mistilt `(x, y)` [mrad].
     """
     xp = get_array_module(ky, kx)
 
@@ -239,12 +245,18 @@ def fresnel_propagator(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
 
 def estimate_probe_radius(wavelength: Float, aperture: Float, defocus: Float, *,
                           threshold: t.Union[t.Literal['geom'], Float] = 0.9, xp: t.Any = None) -> float:
-    """
-    Estimate the radius of a probe created by a circular aperture of
-    maximum semi-angle `aperture` (in mrad) defocused by `defocus` (in length units).
+    """Return the radius [length] of a probe from a circular aperture with defocus.
 
-    `threshold` is used to determine the intensity cutoff for size calcuation.
-    'geom' may be specified to use the geometric approximation (valid for large defocuses).
+    Args:
+        wavelength: Electron wavelength [length].
+        aperture: Aperture semi-angle [mrad].
+        defocus: Defocus [length].
+        threshold: Fraction of probe intensity enclosed by the radius. `'geom'` uses the
+            geometric approximation `|defocus * aperture|`, valid for large defocus.
+        xp: Array module.
+
+    Raises:
+        ValueError: If the radius cannot be calculated.
     """
     xp2 = numpy if xp is None else cast_array_module(xp)
 
@@ -295,12 +307,25 @@ def calc_metrics(*,
     probe_radius: t.Optional[float] = None, xp: t.Any = None,
     threshold: t.Union[t.Literal['geom'], float] = 0.9,
 ) -> t.Dict[str, float]:
-    """
-    Calculate sampling metrics for the given parameters. Units are as follows:
+    """Return sampling metrics for the given acquisition parameters.
 
-    voltage: volts
-    wavelength, scan_step, defocus: length units (must be consistent)
-    conv_angle, diff_step: mrad
+    Args:
+        wavelength: Electron wavelength [length]. One of `wavelength` or `voltage` is required.
+        voltage: Accelerating voltage [V].
+        conv_angle: Convergence semi-angle [mrad].
+        defocus: Defocus [length].
+        scan_step: Scan step [length].
+        diff_step: Diffraction pixel size [mrad].
+        probe_radius: Probe radius [length]. Estimated if not given.
+        xp: Array module.
+        threshold: Intensity threshold for estimating `probe_radius`, see `estimate_probe_radius`.
+
+    Returns:
+        Dictionary of the metrics `probe_radius`, `fund_samp`, `probe_samp`, `linear_oversamp`,
+        `areal_oversamp`, `ronchi_mag`, and the input parameters.
+
+    Raises:
+        ValueError: If neither `wavelength` nor `voltage` is given.
     """
 
     if wavelength is None:
@@ -369,14 +394,10 @@ class _FittedQDA:
 
 
 def predict_recons_success(ronchi_mag: ArrayLike, areal_oversamp: ArrayLike) -> NDArray[numpy.floating]:
-    """
-    Empirically predict the probability of reconstruction success, given the Ronchigram magnification
-    and areal oversampling.
+    """Return the empirical probability of reconstruction success.
 
-    Broadcasts `ronchi_mag` and `areal_oversamp` together, and returns an array of the same shape,
-    with values indicating the estimated probability of success.
-
-    Fitted on simulated Si data, using an intensity threshold of 90% to calculate the probe radius.
+    `ronchi_mag` and `areal_oversamp` are broadcast together. The model is fitted on simulated Si
+    data, with the probe radius taken at a 90% intensity threshold.
     """
 
     clf = _FittedQDA(

@@ -1,6 +1,4 @@
-"""
-Object & object cutout utilities
-"""
+"""Object sampling and cutout utilities."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -34,16 +32,14 @@ def random_phase_object(shape: t.Iterable[int], sigma: float = 1e-6, *, seed: t.
 
 def random_phase_object(shape: t.Iterable[int], sigma: float = 1e-6, *, seed: t.Optional[object] = None,
                         dtype: t.Optional[DTypeLike] = None, xp: t.Any = None) -> NDArray[numpy.complexfloating]:
-    """
-    Construct a random phase object of shape `shape`.
+    """Return a unit-amplitude object with normally distributed random phase.
 
-    # Parameters
-
-      - `shape`: Shape of random phase object to generate
-      - `sigma`: Standard deviation of phase variation to create
-      - `seed`: Random seed or existing random number generator to use. See `create_rng` for more details.
-      - `dtype`: Output datatype of object. Must be complex. Defaults to `numpy.float64`
-      - `xp`: Array module to create object on.
+    Args:
+        shape: Object shape.
+        sigma: Standard deviation of the phase [radians].
+        seed: Random seed or generator. See `create_rng`.
+        dtype: Complex output dtype. Defaults to `numpy.complex128`.
+        xp: Array module.
     """
     xp2 = numpy if xp is None else cast_array_module(xp)
 
@@ -60,23 +56,26 @@ def resample_slices(
     pad_mode: t.Literal['edge', 'vacuum', 'average'] = 'vacuum',
     rescale_projected: bool = False,
 ) -> NDArray[NumT]:
-    """
-    Resample an object in Z, such that average potential is roughly conserved.
+    """Resample an object along z, approximately conserving the average potential.
 
-    `align` determines how the old object is aligned relative to the new object. The
-    default, 'center' keeps the center of the object fixed, padding or cropping both
-    object surfaces equally. 'top' and 'bottom' align the top and bottom surfaces,
-    respectively.
+    Single-slice to multislice and multislice to single-slice conversions conserve the projected
+    potential, assuming a uniform distribution.
 
-    `pad_mode` determines how the edges of the sample are handled. The default,
-    'vacuum', pads with vacuum slices. 'edge' duplicates the edge slice, and
-    'average' duplicates with the average object potential.
+    Args:
+        obj: Complex object of shape `(n_slices, ny, nx)`.
+        old_thicknesses: Slice thicknesses of `obj` [length].
+        new_thicknesses: Slice thicknesses of the result [length].
+        align: Alignment of the old object relative to the new one. `'middle'` pads or crops both
+            surfaces equally, `'top'` and `'bottom'` align that surface.
+        pad_mode: Handling of the object edges. `'vacuum'` pads with vacuum slices, `'edge'`
+            repeats the edge slice, `'average'` pads with the average potential.
+        rescale_projected: Experimental. Rescale the result to match the projected potential of `obj`.
 
-    In the case of a multi <-> single slice conversion, the position or thickness
-    of the single slice is not taken into account. Instead, projected potential is
-    conserved such as to create a uniform potential distribution.
+    Returns:
+        Object of shape `(max(1, len(new_thicknesses)), *obj.shape[1:])`.
 
-    Returns an object of shape `(max(1, len(new_thicknesses)), *obj.shape[1:])`.
+    Raises:
+        ValueError: If `obj` does not match `old_thicknesses`, or `align` or `pad_mode` is unknown.
     """
     xp = get_array_module(obj)
 
@@ -189,28 +188,41 @@ def _interp1d(arr: NDArray[NumT], old_zs: NDArray[numpy.floating], new_zs: NDArr
 
 @tree_dataclass(frozen=True, init=False)
 class ObjectSampling:
+    """Real-space sampling grid of an object, with an optional region of interest.
+
+    Args:
+        shape: Grid shape `(n_y, n_x)`.
+        sampling: Sample spacing `(s_y, s_x)` [length]. A scalar applies to both axes.
+        corner: Position of the first sample. Defaults to centering the grid on the origin.
+        region_min: Minimum position of the region of interest.
+        region_max: Maximum position of the region of interest.
+    """
+
     shape: NDArray[numpy.int_]
-    """Sampling shape `(n_y, n_x)`"""
+    """Sampling shape `(n_y, n_x)`."""
     sampling: NDArray[numpy.float64]
-    """Sample spacing `(s_y, s_x)`"""
+    """Sample spacing `(s_y, s_x)` [length]."""
     corner: NDArray[numpy.float64]
-    """Corner of sampling `(y_min, x_min)`"""
+    """Position of the first sample `(y_min, x_min)` [length]."""
 
     region_min: t.Optional[NDArray[numpy.float64]]
+    """Minimum `(y, x)` position of the region of interest [length]."""
     region_max: t.Optional[NDArray[numpy.float64]]
+    """Maximum `(y, x)` position of the region of interest [length]."""
 
     @property
     def min(self) -> NDArray[numpy.float64]:
-        """Minimum object pixel position (y, x). Alias for `corner`."""
+        """Minimum sample position `(y, x)`. Alias for `corner`."""
         return self.corner
 
     @property
     def max(self) -> NDArray[numpy.float64]:
-        """Maximum pixel position (y, x)."""
+        """Maximum sample position `(y, x)`."""
         return (self.corner + (self.shape - 1) * self.sampling).astype(numpy.float64)
 
     @property
     def extent(self) -> NDArray[numpy.float64]:
+        """Size of the sampling grid `(y, x)` [length]."""
         return (self.shape * self.sampling).astype(numpy.float64)
 
     def __init__(self, shape: t.Tuple[int, int], sampling: ArrayLike, corner: t.Optional[ArrayLike] = None,
@@ -238,10 +250,9 @@ class ObjectSampling:
         )
 
     def crop(self, min: ArrayLike | None = None, max: ArrayLike | None = None, pad: ArrayLike = 0.) -> t.Self:
-        """
-        Crop the sampling to the given region.
+        """Return the sampling cropped to the region `min` to `max`, expanded by `pad` [length].
 
-        Can be used in conjunction with ObjectSampling.resample to crop reconstruction objects.
+        Unspecified bounds leave that side uncropped. The region of interest is clipped to the result.
         """
         if min is None:
             min_i, min_j = 0, 0
@@ -277,7 +288,10 @@ class ObjectSampling:
 
     @classmethod
     def from_scan(cls: t.Type[Self], scan_positions: NDArray[numpy.floating], sampling: ArrayLike, pad: ArrayLike = 0) -> Self:
-        """Create an ObjectSampling around the given scan positions, padded by at least a radius `pad` in real-space."""
+        """Return a sampling covering `scan_positions` with at least `pad` [length] of padding on each side.
+
+        The region of interest is set to the extent of the scan.
+        """
         sampling = as_numpy(sampling).astype(numpy.float64)
         pad = numpy.broadcast_to(pad, (2,)).astype(numpy.float64)
 
@@ -287,6 +301,10 @@ class ObjectSampling:
         return cls((n[0], n[1]), sampling, scan_min - pad, scan_min, scan_max)
 
     def expand_to_scan(self, scan_positions: NDArray[numpy.floating], pad: ArrayLike = 0.) -> Self:
+        """Return the sampling grown to cover `scan_positions` with at least `pad` [length] of padding.
+
+        Returns `self` if no growth is needed. The region of interest is expanded to include the scan.
+        """
         pad = numpy.broadcast_to(pad, (2,)).astype(numpy.float64)
 
         (scan_min, scan_max) = self._scan_extent(scan_positions)
@@ -307,6 +325,11 @@ class ObjectSampling:
         )
 
     def check_scan(self, scan_positions: NDArray[numpy.floating], pad: ArrayLike = 0.):
+        """Check that `scan_positions` lie within the grid, expanded by `pad` [length].
+
+        Raises:
+            ValueError: If any position is outside.
+        """
         xp = get_array_module(scan_positions)
 
         pad = numpy.broadcast_to(pad, (2,)).astype(numpy.float64)
@@ -333,17 +356,7 @@ class ObjectSampling:
             / xp.array(self.sampling.copy(), dtype=dtype) + shift).astype(dtype)  # type: ignore
 
     def slice_at_pos(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> t.Tuple[slice, slice]:
-        """
-        Return slices to cutout a region of shape `cutout_shape` around the object position `pos`.
-
-        # Parameters
-
-         - `pos`: Object position to return a cutout around `(y, x)`
-         - `cutout_shape`: Shape of cutout to return.
-
-        Returns slices which can be used to index into an object. E.g. `obj[slice_at_pos(pos, (32, 32))]`
-        will return an array of shape `(32, 32)`.
-        """
+        """Return slices for a cutout of shape `cutout_shape` centered on `pos` `(y, x)`, rounded to a pixel."""
         xp = get_array_module(pos)
 
         idxs = self._pos_to_object_idx(pos, cutout_shape)
@@ -355,11 +368,7 @@ class ObjectSampling:
         )
 
     def get_subpx_shifts(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> NDArray[numpy.float64]:
-        """
-        Get the subpixel shifts between `pos` and the cutout region around `pos`.
-
-        Returns the shift from the rounded position towards the actual position, in length units.
-        """
+        """Return the shift `(y, x)` [length] from the cutout position, rounded to a pixel, to `pos`."""
         xp = get_array_module(pos)
         dtype = max_supported_float(xp)
 
@@ -377,30 +386,32 @@ class ObjectSampling:
         ...
 
     def cutout(self, arr: numpy.ndarray, pos: ArrayLike, shape: t.Tuple[int, ...]) -> ObjectCutout[t.Any]:
+        """Return an `ObjectCutout` of `arr` with cutouts of shape `shape` around positions `pos`."""
         xp = get_array_module(arr, pos)
         return ObjectCutout(self, xp.asarray(arr), xp.asarray(pos), shape)
 
     def get_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, shape: t.Tuple[int, ...]) -> NDArray[NumT]:
-        """
-        Get cutout views of `arr` of shape `shape` around positions `pos`
-        """
+        """Return cutouts of `arr` of shape `shape` around positions `pos`."""
         return self.cutout(arr, pos, shape).get()
 
     def set_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, view: numpy.ndarray) -> NDArray[NumT]:
-        """
-        Set cutout views of `arr` of shape `shape` around positions `pos`
+        """Set cutouts of `arr` around positions `pos` to `view` and return the array.
+
+        May modify `arr` in place.
         """
         cutout = self.cutout(arr, pos, view.shape).set(view)
         return cutout.obj
 
     def add_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, view: numpy.ndarray) -> NDArray[NumT]:
-        """
-        Add to cutout views of `arr` of shape `shape` around positions `pos`
+        """Add `view` to cutouts of `arr` around positions `pos` and return the array.
+
+        May modify `arr` in place.
         """
         cutout = self.cutout(arr, pos, view.shape).add(view)
         return cutout.obj
 
     def get_region_crop(self, pad: ArrayLike = 0.) -> t.Tuple[slice, slice]:
+        """Return slices selecting the region of interest, expanded by `pad` [length]."""
         pad = numpy.asarray(pad)
         if self.region_min is None:
             min_i, min_j = None, None
@@ -414,17 +425,20 @@ class ObjectSampling:
         return (slice(min_i, max_i), slice(min_j, max_j))
 
     def get_region_mask(self, pad: ArrayLike = 0., *, xp: t.Any = None) -> NDArray[numpy.bool_]:
+        """Return a mask that is `True` within the region of interest, expanded by `pad` [length]."""
         xp2 = numpy if xp is None else cast_array_module(xp)
         mask = xp2.zeros(tuple(self.shape), dtype=numpy.bool_)
         mask = at(mask, self.get_region_crop(pad=pad)).set(t.cast(numpy.bool_, True))
         return mask
 
     def get_region_center(self) -> NDArray[numpy.floating]:
+        """Return the center `(y, x)` of the region of interest."""
         region_max = self.region_max if self.region_max is not None else self.max
         region_min = self.region_min if self.region_min is not None else self.min
         return (region_max + region_min) / 2.0
 
     def get_region_extent(self) -> NDArray[numpy.floating]:
+        """Return the size `(y, x)` of the region of interest."""
         region_max = self.region_max if self.region_max is not None else self.max
         region_min = self.region_min if self.region_min is not None else self.min
         return region_max - region_min
@@ -440,7 +454,7 @@ class ObjectSampling:
         ...
 
     def grid(self, *, dtype: t.Any = None, xp: t.Any = None) -> t.Tuple[NDArray[numpy.number], NDArray[numpy.number]]:
-        """Return the sampling grid `(yy, xx)` for this object"""
+        """Return the sample positions `(yy, xx)` [length]."""
         xp2 = get_array_module(self.sampling, self.corner) if xp is None else cast_array_module(xp)
 
         if dtype is None:
@@ -452,12 +466,9 @@ class ObjectSampling:
         return tuple(xp2.meshgrid(ys, xs, indexing='ij'))  # type: ignore
 
     def mpl_extent(self, center: bool = True) -> t.Tuple[float, float, float, float]:
-        """
-        Return the extent of the sampling grid, for use in matplotlib.
+        """Return the grid extent `(left, right, bottom, top)` for matplotlib `imshow`.
 
-        Extent is returned as `(left, right, bottom, top)`.
-        If `center` is specified (the default), samples correspond to the center of pixels.
-        Otherwise, they correspond to the corners of pixels.
+        If `center`, sample positions are pixel centers, otherwise pixel corners.
         """
         # shift pixel corners to centers
         shift = self.min - self.sampling/2. * int(center)
@@ -470,6 +481,20 @@ class ObjectSampling:
         rotation: t.Optional[float] = None,
         affine: t.Optional[ArrayLike] = None,
     ) -> NDArray[NumT]:
+        """Resample `arr`, defined on this sampling, onto `new_samp`.
+
+        Args:
+            arr: Array with last two axes matching `shape`.
+            new_samp: Target sampling.
+            order: Spline interpolation order.
+            mode: Boundary handling, see `phaser.utils.image.affine_transform`.
+            cval: Fill value for out-of-bounds samples.
+            rotation: Rotation about the region center [degrees]. Exclusive with `affine`.
+            affine: Affine matrix mapping old to new real-space `(y, x)` positions.
+
+        Raises:
+            ValueError: If `arr` does not match `shape`, or both `rotation` and `affine` are given.
+        """
         from .image import affine_transform, to_affine_matrix, translation_matrix, scale_matrix, rotation_matrix
 
         if arr.shape[-2:] != tuple(self.shape):
@@ -503,6 +528,7 @@ class ObjectSampling:
         )
 
     def with_sampling(self, sampling: ArrayLike) -> Self:
+        """Return a sampling with spacing `sampling`, grown (never shrunk) to cover the same extent."""
         sampling = numpy.broadcast_to(sampling, (2,))
         new_shape = numpy.ceil(self.sampling / sampling * self.shape).astype(int)
         growth = sampling * new_shape - self.sampling * self.shape
@@ -519,10 +545,16 @@ class ObjectSampling:
 
 @dataclass
 class ObjectCutout(t.Generic[DTypeT]):
+    """Cutouts of an object around a set of positions."""
+
     sampling: ObjectSampling
+    """Object sampling."""
     obj: NDArray[DTypeT]
+    """Object array, with last two axes matching `sampling`."""
     pos: NDArray[numpy.floating]
+    """Cutout positions `(..., 2)` in `(y, x)` order [length]."""
     cutout_shape: t.Tuple[int, ...]
+    """Shape of each cutout."""
 
     _start_idxs: NDArray[numpy.int_] = field(init=False)
 
@@ -532,9 +564,11 @@ class ObjectCutout(t.Generic[DTypeT]):
 
     @property
     def shape(self) -> t.Tuple[int, ...]:
+        """Shape of the result of `get`."""
         return (*self.pos.shape[:-1], *self.obj.shape[:-2], *self.cutout_shape[-2:])
 
     def get(self) -> NDArray[DTypeT]:
+        """Return the cutouts, of shape `(*pos.shape[:-1], *obj.shape[:-2], *cutout_shape[-2:])`."""
         if is_jax(self.obj):
             from ._jax_kernels import get_cutouts
             return t.cast(NDArray[DTypeT], get_cutouts(self.obj, self._start_idxs, tuple(self.cutout_shape)))
@@ -559,6 +593,10 @@ class ObjectCutout(t.Generic[DTypeT]):
         return out
 
     def set(self, view: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:
+        """Set the cutouts to `view` and return the updated cutout.
+
+        Modifies `obj` in place, except for JAX arrays.
+        """
         if is_jax(self.obj):
             from ._jax_kernels import set_cutouts
             obj = t.cast(NDArray[DTypeT], set_cutouts(self.obj, view, self._start_idxs))
@@ -578,6 +616,10 @@ class ObjectCutout(t.Generic[DTypeT]):
         return self
 
     def add(self, view: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:
+        """Add `view` to the cutouts and return the updated cutout.
+
+        Modifies `obj` in place, except for JAX arrays.
+        """
         if is_jax(self.obj):
             from ._jax_kernels import add_cutouts
             obj = t.cast(NDArray[DTypeT], add_cutouts(self.obj, view, self._start_idxs))
