@@ -333,11 +333,10 @@ def cutout_group(
     state: ReconsState, group: NDArray[numpy.integer],
     return_filters: bool = False
 ):
-    """Return the sub-pixel shifted probes, object cutouts, and scan positions for `group`.
+    """Return `(probes, obj, scan)`: sub-pixel shifted probes, object cutouts, and scan positions for `group`.
 
-    Returns:
-        `(probes, obj, scan)`, with probes of shape `(len(group), modes, Ny, Nx)`.
-            If `return_filters`, the sub-pixel shift filters are appended.
+    Probes have shape `(len(group), modes, Ny, Nx)`. If `return_filters`, the sub-pixel shift
+    filters are appended.
     """
     probes = state.probe.data
 

@@ -24,6 +24,6 @@ Typically, these intensities are kept in units of particles (electrons or photon
 
 Phase follows the convention where a plane wave is defined as $\exp(2\pi i (\mathbf{k} \cdot \mathbf{r}))$. This is the most common convention, equivalent to defining the Fourier transform as $F(\mathbf{k}) = \int f(\mathbf{r}) \exp(-2\pi i (\mathbf{k} \cdot \mathbf{r})) \:d\mathbf{r}$. However, older crystallography literature uses an opposite sign convention. See Spence and Zuo [1] for more information. A positive defocus aberration is used to indicate overfocus.
 
-The helper functions `phaser.num.fft2` and `phaser.num.ifft2`, as well as `phaser.num.Sampling` help to enforce these conventions.
+The helper functions [`fft2`][phaser.utils.num.fft2] and [`ifft2`][phaser.utils.num.ifft2], as well as [`Sampling`][phaser.utils.num.Sampling], help to enforce these conventions.
 
 [1] Spence, J. C.H. & Zuo, J. M. Electron Microdiffraction. (Plenum Press, New York, 1992).
