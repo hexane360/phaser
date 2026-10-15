@@ -1,3 +1,5 @@
+"""`phaser config` command group."""
+
 import importlib
 import typing as t
 
