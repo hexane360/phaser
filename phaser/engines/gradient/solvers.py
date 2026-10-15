@@ -1,5 +1,5 @@
 """
-Gradient-descent solvers
+Gradient-descent solvers.
 
 Much of this is adapted from [Optax](https://github.com/google-deepmind/optax),
 but modified to use our generic array and pytree utilities.
@@ -42,11 +42,15 @@ Updates: t.TypeAlias = Params
 
 
 class TransformInitFn(t.Protocol):
+    """Function creating the optimizer state for `params`."""
+
     def __call__(self, params: Params) -> OptState:
         ...
 
 
 class TransformUpdateFn(t.Protocol):
+    """Function returning transformed `updates` and the new optimizer state."""
+
     def __call__(
       self, updates: Updates, state: OptState, params: t.Optional[Params] = None,
       **extra_args: t.Any,
@@ -55,6 +59,8 @@ class TransformUpdateFn(t.Protocol):
 
 
 class GradientTransformation(t.NamedTuple):
+    """Optax-style gradient transformation."""
+
     init: TransformInitFn
     update: TransformUpdateFn
 
@@ -63,6 +69,8 @@ ScheduledSolverState: t.TypeAlias = t.Tuple[t.Any, t.Dict[str, t.Optional[float]
 
 
 class ScheduledSolver(GradientSolver[ScheduledSolverState]):
+    """Solver wrapping a `GradientTransformation` whose hyperparameters follow schedules."""
+
     def __init__(self, name: str, factory: t.Callable[..., GradientTransformation], hyperparams: t.Mapping[str, ScheduleLike],
                  params: t.Iterable[ReconsVar]):
         self.factory: t.Callable[..., GradientTransformation] = factory
@@ -100,6 +108,8 @@ class ScheduledSolver(GradientSolver[ScheduledSolverState]):
 
 
 class SGDSolver(ScheduledSolver):
+    """Stochastic gradient descent (SGD) solver, with optional momentum."""
+
     def __init__(self, args: GradientSolverArgs, props: SGDSolverPlan):
         hparams = {
             'learning_rate': props.learning_rate
@@ -120,6 +130,8 @@ class SGDSolver(ScheduledSolver):
 
 
 class AdamSolver(ScheduledSolver):
+    """Adaptive moment estimation (Adam) solver."""
+
     def __init__(self, args: GradientSolverArgs, props: AdamSolverPlan):
         hparams = {
             'learning_rate': props.learning_rate
@@ -135,6 +147,8 @@ class AdamSolver(ScheduledSolver):
 
 
 class PolyakSGDSolver(ScheduledSolver):
+    """SGD solver with a stochastic Polyak step size."""
+
     def __init__(self, args: GradientSolverArgs, props: PolyakSGDSolverPlan):
         hparams = {
             'max_learning_rate': props.max_learning_rate,
@@ -156,6 +170,7 @@ class PolyakSGDSolver(ScheduledSolver):
 def chain(
     *args: GradientTransformation
 ) -> GradientTransformation:
+    """Compose `args` into one transformation, applied in order."""
     init_fns = tuple(arg.init for arg in args)
     update_fns = tuple(arg.update for arg in args)
 
@@ -177,6 +192,7 @@ def trace(
     nesterov: bool = False,
     accumulator_dtype: t.Optional[t.Any] = None,
 ) -> GradientTransformation:
+    """Accumulate a decaying trace of the updates (momentum), optionally with Nesterov acceleration."""
 
     def init_fn(params):
         return tree.zeros_like(params, dtype=accumulator_dtype)
@@ -201,6 +217,7 @@ def scale_by_learning_rate(
     learning_rate: float, *,
     flip_sign: bool = False,
 ) -> GradientTransformation:
+    """Multiply updates by `learning_rate`."""
     if flip_sign:
         learning_rate *= -1
 
@@ -213,6 +230,8 @@ def scale_by_learning_rate(
 
 
 class ScaleByAdamState(t.NamedTuple):
+    """State of `scale_by_adam`."""
+
     n: NDArray[numpy.int32]  # shape ()
     mu: Updates
     nu: Updates
@@ -227,6 +246,7 @@ def scale_by_adam(
     *,
     nesterov: bool = False,
 ) -> GradientTransformation:
+    """Rescale updates by bias-corrected first and second moment estimates (Adam)."""
     def init_fn(params: Params) -> ScaleByAdamState:
         xp = get_array_module(params)
         mu = tree.zeros_like(params, dtype=mu_dtype)  # First moment
@@ -278,6 +298,11 @@ def scale_by_polyak(
     max_learning_rate: float = 1.0,
     eps: float = 0.0
 ) -> GradientTransformation:
+    r"""Scale updates by the Polyak step size $\min\left(\frac{f - f_{min}}{|g|^2 + \epsilon}, \eta_{max}\right)$.
+
+    The step is zero when $|g|^2 + \epsilon$ is below machine epsilon.
+    `update` requires the current loss $f$ as the `value` keyword argument.
+    """
     def update_fn(
         updates: Updates, state: None, params: t.Any = None, *, value: float, **kwargs: t.Any
     ):
@@ -298,6 +323,7 @@ def scale_by_polyak(
 
 
 def safe_increment(n: NDArray[numpy.int32]) -> NDArray[numpy.int32]:
+    """Return `n + 1`, saturating at the maximum of its dtype."""
     xp = get_array_module(n)
 
     max_value = xp.iinfo(n.dtype).max

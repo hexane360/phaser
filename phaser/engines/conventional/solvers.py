@@ -1,3 +1,5 @@
+"""ePIE and LSQML solvers for the conventional engine."""
+
 from functools import partial
 import logging
 import typing as t
@@ -17,6 +19,8 @@ from phaser.engines.common.simulation import (
 
 
 class LSQMLSolver(ConventionalSolver):
+    """Least-squares maximum-likelihood (LSQML) solver (Odstrčil et al. 2018)."""
+
     def __init__(self, engine_plan: ConventionalEnginePlan, props: LSQMLSolverPlan):
         self.plan: LSQMLSolverPlan = props
         self.engine_plan: ConventionalEnginePlan = engine_plan
@@ -317,6 +321,8 @@ def lsqml_run(
 
 
 class EPIESolver(ConventionalSolver):
+    """Extended ptychographic iterative engine (ePIE) solver. Multislice objects use 3PIE."""
+
     def __init__(self, engine_plan: ConventionalEnginePlan, props: EPIESolverPlan):
         self.engine_plan: ConventionalEnginePlan = engine_plan
         self.plan: EPIESolverPlan = props

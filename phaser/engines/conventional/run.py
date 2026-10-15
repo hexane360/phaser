@@ -1,3 +1,5 @@
+"""Conventional engine driver."""
+
 import logging
 
 from phaser.utils.misc import mask_fraction_of_groups
@@ -11,6 +13,7 @@ from ..common.simulation import SimulationState, make_propagators, prepare_mtf, 
 
 
 def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
+    """Run a conventional (ePIE or LSQML) engine."""
     logger = logging.getLogger(__name__)
 
     xp = cast_array_module(args['xp'])
