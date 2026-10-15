@@ -1,15 +1,4 @@
-"""
-Topic-based pub/sub broker.
-
-A `Broker` owns one `Cache` (a job's or manager's latest state) plus the set of
-currently-subscribed `Topic`s derived from it. Views are pure functions of the cache
-(`phaser/web/views.py`), computed lazily (only while subscribed), memoized per tick by
-dependency generation, and distributed to subscribing `Session`s' conflating `Mailbox`es.
-
-See the design doc for the full picture; this module implements section 2 ("Server
-architecture") minus the view registry (`views.py`) and the wiring into `Job`/`Jobs`/
-`Worker`/`Workers` (`server.py`).
-"""
+"""Topic-based pub/sub broker: `Broker`, `Session`, and the views they serve (`views.py`)."""
 from __future__ import annotations
 
 import asyncio
@@ -22,12 +11,11 @@ from .types import ErrorMessage, JobID, TopicUpdate, canonical_topic
 from .types import Topic as WireTopic
 
 Conflation: t.TypeAlias = t.Literal['latest', 'append']
+"""How pending updates to one topic combine in a `Mailbox`."""
 
 
 class Cache:
-    """An owner's (a `Job`'s, or a manager singleton's) latest state. `raw[field]` is the
-    value as last received, with arrays as read-only views into the received frame (see
-    `frames.py`)."""
+    """Latest state of a `Job` or manager, as fields with generation counters."""
 
     def __init__(self) -> None:
         self._raw: t.Dict[str, t.Any] = {}
@@ -35,37 +23,34 @@ class Cache:
 
     @property
     def raw(self) -> t.Mapping[str, t.Any]:
+        """Field values as last received (arrays are read-only views into the received frame)."""
         return self._raw
 
     def generation(self, field: str) -> int:
+        """Return the number of updates to `field`."""
         return self._generations.get(field, 0)
 
     def update_raw(self, fields: t.Mapping[str, t.Any]) -> None:
-        """Store new values and bump each field's generation. Values may be
-        synthetic (e.g. `status`), not just worker-sent fields."""
+        """Store `fields` and bump each field's generation."""
         for k, v in fields.items():
             self._raw[k] = v
             self._generations[k] = self._generations.get(k, 0) + 1
 
 
 class View(t.NamedTuple):
+    """A topic's computation from cache fields to data."""
     deps: t.FrozenSet[str]
-    """Raw cache fields this view reads. A worker/manager update only recomputes views
-    whose deps intersect the changed field set."""
+    """Cache fields this view reads. An update recomputes it only if one of these changed."""
     retained: bool
-    """If true, a snapshot is computed and sent on subscribe (replaces `Connected`)."""
+    """Whether a snapshot is sent on subscribe."""
     conflation: Conflation
-    """`'latest'`: a slow session only ever sees the newest value for this topic.
-    `'append'`: pending `data` lists are concatenated instead of replaced (logs)."""
+    """`'latest'` keeps only the newest value; `'append'` concatenates pending `data` lists."""
     compute: t.Callable[[Cache, t.Mapping[str, t.Any]], t.Any]
-    """Pure function of the cache + resolved params -> JSON-like data, with numpy arrays
-    as leaves (sent as frame buffers, see `frames.py`)."""
+    """Pure function of the cache and topic params, returning JSON-like data with numpy arrays as leaves."""
 
 
 class Topic:
-    """One distinct subscribed topic on one owner (`Broker`). Holds the resolved `View`
-    + params and memoizes `(dep-generation-tuple, value)` so recomputation only happens
-    when a dependency actually changed."""
+    """A subscribed topic on one `Broker`, with its memoized view value."""
 
     def __init__(self, key: str, view: View, params: t.Mapping[str, t.Any], cache: Cache):
         self.key: str = key
@@ -79,11 +64,11 @@ class Topic:
         return tuple(self.cache.generation(d) for d in sorted(self.view.deps))
 
     def has_deps(self) -> bool:
-        """Whether every dependency has been populated at least once -- gates whether a
-        snapshot can be computed on subscribe."""
+        """Return whether every dependency of the view has been populated."""
         return all(d in self.cache.raw for d in self.view.deps)
 
     async def value_async(self) -> t.Any:
+        """Return the view value, recomputed (in a thread) only if a dependency changed."""
         gens = self._dep_generations()
         if self._memo is not None and self._memo[0] == gens:
             return self._memo[1]
@@ -93,19 +78,18 @@ class Topic:
 
 
 MailboxItem: t.TypeAlias = t.Union[TopicUpdate, ErrorMessage]
+"""Message queued for a session."""
 
 
 class Mailbox:
-    """A session's conflating outbox. Bounded by the number of distinct subscribed
-    topics: `latest` overwrites pending data for that topic, `append` concatenates it.
-    While a slow `ws.send` awaits, producers keep conflating into `pending` instead of
-    growing an unbounded queue."""
+    """A session's outbox, holding at most one pending item per topic."""
 
     def __init__(self) -> None:
         self.pending: t.Dict[str, MailboxItem] = {}
         self.event: asyncio.Event = asyncio.Event()
 
     def put_update(self, update: TopicUpdate, conflation: Conflation) -> None:
+        """Queue `update`, combining it with any pending update to the topic per `conflation`."""
         key = canonical_topic(update.topic)
         prev = self.pending.get(key)
         if conflation == 'append' and isinstance(prev, TopicUpdate):
@@ -118,10 +102,12 @@ class Mailbox:
         self.event.set()
 
     def put_error(self, topic: WireTopic, reason: str) -> None:
+        """Queue an error for `topic`, replacing any pending item."""
         self.pending[canonical_topic(topic)] = ErrorMessage(topic, reason)
         self.event.set()
 
     async def drain(self) -> t.List[MailboxItem]:
+        """Wait for pending items, then remove and return them."""
         await self.event.wait()
         items = list(self.pending.values())
         self.pending.clear()
@@ -136,9 +122,10 @@ class _Subscription:
 
 
 class Session:
-    """One websocket connection. Owns a conflating `Mailbox`, an optional
-    `default_topic` (from `?job=<id>`), and its subscriptions keyed by broker-canonical
-    topic (for cleanup + rewriting outgoing topics back to the client's sent form)."""
+    """One websocket connection, with its `Mailbox` and subscriptions.
+
+    `default_topic` fills missing keys of dict topics the client subscribes to.
+    """
 
     def __init__(self, default_topic: t.Optional[t.Mapping[str, t.Any]] = None):
         self.default_topic: t.Optional[t.Mapping[str, t.Any]] = default_topic
@@ -148,16 +135,18 @@ class Session:
         """Set to drop this connection (`phaser/web/debug.py`), as an unexpected close"""
 
     def _merge(self, client_topic: WireTopic) -> WireTopic:
-        """Merge rule: default fills missing keys, an explicit client key wins."""
+        """Fill missing keys of `client_topic` from `default_topic`; explicit keys win."""
         if self.default_topic is None or isinstance(client_topic, str):
             return client_topic
         return {**self.default_topic, **client_topic}
 
     def client_topic_for(self, key: str) -> WireTopic:
+        """Return the topic as the client sent it, given its canonical `key`."""
         sub = self.subscriptions.get(key)
         return sub.client_topic if sub is not None else key
 
     async def subscribe(self, client_topic: WireTopic) -> None:
+        """Subscribe to `client_topic`. Idempotent. An unresolvable topic queues an error."""
         merged = self._merge(client_topic)
         try:
             owner, key, view, params = resolve(merged)
@@ -170,6 +159,7 @@ class Session:
         await owner.subscribe(self, key, view, params)
 
     def unsubscribe(self, client_topic: WireTopic) -> None:
+        """Unsubscribe from `client_topic`, if subscribed."""
         merged = self._merge(client_topic)
         key = canonical_topic(merged)
         sub = self.subscriptions.pop(key, None)
@@ -177,21 +167,21 @@ class Session:
             sub.owner.unsubscribe(self, key)
 
     def close(self) -> None:
-        """Unsubscribe from everything (called when the websocket disconnects)."""
+        """Unsubscribe from all topics."""
         for key, sub in list(self.subscriptions.items()):
             sub.owner.unsubscribe(self, key)
         self.subscriptions.clear()
 
 
 class Broker:
-    """Owns one `Cache` + the set of currently-subscribed `Topic`s for one publishable
-    owner (a `Job`, or the `Jobs`/`Workers` manager singletons)."""
+    """A `Cache` and its subscribed `Topic`s, for a `Job` or the `Jobs`/`Workers` managers."""
 
     def __init__(self) -> None:
         self.cache: Cache = Cache()
         self.active_topics: t.Dict[str, Topic] = {}
 
     async def subscribe(self, session: Session, key: str, view: View, params: t.Mapping[str, t.Any]) -> None:
+        """Subscribe `session` to topic `key`, sending a snapshot if the view is `retained` and populated."""
         topic = self.active_topics.get(key)
         if topic is None:
             topic = Topic(key, view, params, self.cache)
@@ -203,6 +193,7 @@ class Broker:
             session.mailbox.put_update(TopicUpdate.make_unchecked(session.client_topic_for(key), value, None), view.conflation)
 
     def unsubscribe(self, session: Session, key: str) -> None:
+        """Unsubscribe `session` from topic `key`, dropping the topic if it has no subscribers."""
         topic = self.active_topics.get(key)
         if topic is None:
             return
@@ -217,10 +208,10 @@ class Broker:
             )
 
     async def publish_dirty(self, changed: t.FrozenSet[str], cause: t.Any = None) -> None:
-        """Recompute + distribute every active topic whose deps intersect `changed`.
-        Views are computed at most once per tick (memoized on `Topic`, shared across
-        every subscribing session) and every dirtied topic for a given session lands in
-        one conflating `Mailbox.put_update` burst -> one `update` message per tick."""
+        """Recompute and distribute every active topic whose deps intersect `changed`.
+
+        Each view is computed once, shared across subscribers. `cause` is attached to the updates.
+        """
         dirty = [tp for tp in self.active_topics.values() if tp.view.deps & changed]
         if not dirty:
             return
@@ -229,17 +220,14 @@ class Broker:
             self._distribute(tp, v, cause)
 
     def publish_value(self, key: str, value: t.Any, cause: t.Any = None) -> None:
-        """Push an already-computed value directly to a topic's subscribers, bypassing
-        the dep/generation memoization (used for `logs`, which is an append-only event
-        stream rather than a function of generation-memoizable cache state)."""
+        """Send `value` directly to the subscribers of topic `key`, bypassing view computation."""
         topic = self.active_topics.get(key)
         if topic is None:
             return
         self._distribute(topic, value, cause)
 
     def close(self, reason: str) -> None:
-        """Notify every subscriber of every active topic that this owner is gone (e.g. a
-        job was removed), then drop them."""
+        """Send an error with `reason` to every subscriber, then drop all topics."""
         for key, topic in list(self.active_topics.items()):
             for session in list(topic.subscribers):
                 session.mailbox.put_error(session.client_topic_for(key), reason)
@@ -248,15 +236,18 @@ class Broker:
 
 
 class ResolveError(Exception):
+    """A topic could not be resolved to a view."""
     def __init__(self, reason: str):
         self.reason: str = reason
         super().__init__(reason)
 
 
 def resolve(topic: WireTopic) -> t.Tuple[Broker, str, View, t.Mapping[str, t.Any]]:
-    """Resolve a (already default-merged) topic to `(owner, canonical key, view,
-    params)`. Imports `server`/`views` lazily to avoid a module-level import cycle
-    (`server.py` imports `Broker` from this module at load time)."""
+    """Resolve a default-merged topic to `(owner, canonical key, view, params)`.
+
+    Raises:
+        ResolveError: If the topic, job, or view is unknown or the topic is malformed.
+    """
     from .server import server
     from .views import JOBS_VIEW, VIEWS, WORKERS_VIEW
 

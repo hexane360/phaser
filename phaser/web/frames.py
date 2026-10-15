@@ -1,6 +1,7 @@
 """
-Binary frame wire format, shared by worker -> server requests and server -> browser
-websocket messages (mirrored in `src/frames.ts`):
+Binary frame format for worker -> server requests and server -> browser websocket messages.
+
+Layout:
 
 ```
 u32 LE      JSON length H
@@ -12,9 +13,7 @@ buf 0, zero padding to `ALIGN`, buf 1, ...
 ```
 
 Arrays in the message are replaced by `{"_ty": "numpy", "typestr", "shape", "buf": i}`,
-with their (C-contiguous) bytes stored out-of-band in buffer `i`. `bytes` are likewise
-replaced by `{"_ty": "bytes", "buf": i}`. Containers are walked by `json` itself, through
-the `default` and `object_hook` hooks.
+with their C-contiguous bytes in buffer `i`. `bytes` are replaced by `{"_ty": "bytes", "buf": i}`.
 """
 
 import functools
@@ -26,9 +25,10 @@ import numpy
 from pane.converters import Converter
 
 CONTENT_TYPE: str = 'application/x-phaser-frames'
+"""HTTP content type of a frame."""
 
 ALIGN: int = 8
-"""Buffer alignment. Must be a multiple of the largest element size, for JS typed array views."""
+"""Byte alignment of buffers within a frame. A multiple of the largest element size."""
 
 _PREFIX = struct.Struct('<II')
 _SIZE_LEN = 8
@@ -56,8 +56,10 @@ def _encode(obj: t.Any, buffers: t.List[memoryview]) -> t.Any:
 def pack(obj: t.Any, *, allow_nan: bool = True) -> t.List[t.Union[bytes, memoryview]]:
     """Encode `obj` as a frame, returned as a list of parts to concatenate.
 
-    With `allow_nan=False`, non-finite floats raise `ValueError` rather than being written
-    as `NaN`/`Infinity`, which `JSON.parse` rejects."""
+    Raises:
+        ValueError: If `allow_nan` is `False` and `obj` contains a non-finite float.
+        TypeError: If `obj` contains an unencodable type.
+    """
     buffers: t.List[memoryview] = []
     header = json.dumps(obj, default=functools.partial(_encode, buffers=buffers), allow_nan=allow_nan).encode('utf-8')
 
@@ -104,7 +106,11 @@ def _decode(obj: t.Dict[str, t.Any], buffers: t.Sequence[memoryview]) -> t.Any:
 
 
 def unpack(body: t.Union[bytes, bytearray, memoryview]) -> t.Any:
-    """Decode a frame. Arrays are read-only views into `body`. Raises `ValueError` if malformed."""
+    """Decode a frame. Arrays are read-only views into `body`.
+
+    Raises:
+        ValueError: If the frame is malformed.
+    """
     view = memoryview(body)
     if len(view) < _PREFIX.size:
         raise ValueError("Frame truncated before header")
@@ -130,8 +136,7 @@ def unpack(body: t.Union[bytes, bytearray, memoryview]) -> t.Any:
 
 
 class ArrayDataConverter(Converter[t.Any]):
-    """Passes values through unchanged, so arrays reach `pack` intact (rather than being
-    converted to lists by `pane.into_data`)."""
+    """`pane` converter that passes values through unchanged, leaving arrays intact for `pack`."""
 
     def expected(self, plural: bool = False) -> str:
         return "data"

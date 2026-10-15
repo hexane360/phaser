@@ -1,3 +1,4 @@
+"""Wire-format message types for the browser <-> server and worker <-> server protocols."""
 import datetime
 import json
 import logging
@@ -15,38 +16,33 @@ WorkerID: t.TypeAlias = str
 
 WorkerStatus: t.TypeAlias = t.Literal['queued', 'starting', 'reloading', 'idle', 'running', 'stopping', 'stopped', 'unknown']
 """
-Enum indicating the state of the connection, as described by either the server or client.
+State of a worker.
 
-- 'queued': Worker is queued/scheduled to start
-- 'starting': Worker is actively being started
-- 'reloading': Worker is being reloaded
-- 'idle': No job is running
-- 'running': Job is running
-- 'stopping': Worker is being stopped
-- 'stopped': Worker has been stopped (normally or abnormally)
-
-- 'unknown': Job hasn't talked in a while, unknown state
+- `'queued'`: Queued/scheduled to start.
+- `'starting'`: Being started.
+- `'reloading'`: Being reloaded.
+- `'idle'`: No job is running.
+- `'running'`: A job is running.
+- `'stopping'`: Being stopped.
+- `'stopped'`: Stopped, normally or abnormally.
+- `'unknown'`: Has not been heard from in a while.
 """
 
 JobStatus: t.TypeAlias = t.Literal['queued', 'starting', 'running', 'stopping', 'stopped']
-"""
-Enum indicating the state of a reconstruction job
-"""
+"""State of a reconstruction job."""
 
 Result: t.TypeAlias = t.Literal['finished', 'errored', 'cancelled', 'interrupted']
 """
-Enum indicating a job or worker result.
+Outcome of a job or worker.
 
-- 'finished': Finished normally
-- 'errored': Encounted an error running
-- 'cancelled': Cancelled/shutdown by the user (from server side)
-- 'interrupted': Cancelled/shutdown by the client/OS
+- `'finished'`: Finished normally.
+- `'errored'`: Raised an error.
+- `'cancelled'`: Cancelled or shut down from the server side.
+- `'interrupted'`: Cancelled or shut down by the worker's client or the OS.
 """
 
 Signal: t.TypeAlias = t.Literal['shutdown', 'cancel', 'reload']
-"""
-Signal sent to a job or worker.
-"""
+"""Signal sent to a job or worker."""
 
 RELOAD_EXIT_CODE: int = 129
 """Exit code a worker exits with to request a restart (128 + SIGHUP)."""
@@ -55,10 +51,12 @@ UPDATE_CHUNK_SIZE: int = 16 * 1024 * 1024
 """Maximum size of one worker -> server request body. Larger `UpdateMessage`s are sent in chunks of this size."""
 
 class ValidationError(Exception):
+    """Invalid request or plan, with a user-facing message `msg`."""
     def __init__(self, msg: str):
         self.msg: str = msg
 
 class SignalException(Exception):
+    """Raised in a worker when the server sends a signal. `urgent` signals request an immediate stop."""
     def __init__(self, signal: Signal, urgent: bool = False):
         self.signal: Signal = signal
         self.urgent: bool = urgent
@@ -66,18 +64,13 @@ class SignalException(Exception):
 # pub/sub wire protocol (browser <-> server)
 
 TopicKey: t.TypeAlias = t.Union[str, int, float]
+"""Value in a dict `Topic`."""
 Topic: t.TypeAlias = t.Union[str, t.Dict[str, TopicKey]]
-"""
-A subscribable topic: either a bare string (`"jobs"`, `"workers"`) or a flat dict of
-string/number values (e.g. `{"job": <id>, "view": "status"}`). Both ends key topics by
-their canonical JSON form (`canonical_topic`), so the *structured* form travels on the
-wire while the canonical string is used as an internal map key.
-"""
+"""Subscribable topic: a bare string (`"jobs"`) or a flat dict (`{"job": <id>, "view": "status"}`)."""
 
 
 def canonical_topic(topic: Topic) -> str:
-    """Canonical JSON key for a `Topic`: sorted keys, no whitespace. Must agree with the
-    TS `canonicalTopic` implementation in `src/types.tsx`."""
+    """Return the canonical JSON key for a `Topic` (sorted keys, no whitespace)."""
     return json.dumps(topic, sort_keys=True, separators=(',', ':'))
 
 
@@ -98,22 +91,23 @@ class HeartbeatMessage(pane.PaneBase):
 ClientMessage: t.TypeAlias = t.Annotated[t.Union[
     SubscribeMessage, UnsubscribeMessage, HeartbeatMessage,
 ], Tagged('msg')]
+"""Any browser -> server message, tagged by `msg`."""
 
 class TopicUpdate(pane.PaneBase):
-    """One topic's new value. Arrays in `data` are sent as frame buffers (see `frames.py`)."""
+    """New value of one topic."""
     topic: Topic
     data: t.Any = pane.field(converter=ArrayDataConverter())
+    """Topic value. Arrays are sent as frame buffers."""
     cause: t.Optional[t.Any] = None
+    """Opaque value identifying what triggered the update, if any."""
 
 class UpdatesMessage(pane.PaneBase):
-    """Server -> client: a batch of topic updates, sent at most once per broker tick per
-    session (all topics dirtied by one worker/manager update, conflated per-session)."""
+    """Server -> client: a batch of topic updates, sent at most once per broker tick."""
     updates: t.List[TopicUpdate]
     msg: t.Literal['update'] = 'update'
 
 class ErrorMessage(pane.PaneBase):
-    """Server -> client: a subscription error (unknown job/view/params, or the job was
-    removed while subscribed)."""
+    """Server -> client: error on a subscription (unknown job, view, or params; or job removed)."""
     topic: Topic
     reason: str
     msg: t.Literal['error'] = 'error'
@@ -123,16 +117,18 @@ class HeartbeatAckMessage(pane.PaneBase):
     msg: t.Literal['pong'] = 'pong'
 
 class ServerShutdownMessage(pane.PaneBase):
-    """Server -> client: Server is shutting down, expect a disconnect."""
+    """Server -> client: the server is shutting down."""
     msg: t.Literal['shutdown'] = 'shutdown'
 
 ServerMessage: t.TypeAlias = t.Annotated[t.Union[
     UpdatesMessage, ErrorMessage, HeartbeatAckMessage, ServerShutdownMessage,
 ], Tagged('msg')]
+"""Any server -> browser message, tagged by `msg`."""
 
 # server -> client messages
 
 class WorkerState(pane.PaneBase):
+    """Server -> client: state of a worker."""
     worker_id: WorkerID
     worker_type: str
     status: WorkerStatus
@@ -141,6 +137,7 @@ class WorkerState(pane.PaneBase):
     start_time: t.Optional[datetime.datetime] = None
     hostname: t.Optional[str] = None
     backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
+    """Available `(backend, device)` pairs."""
     url: t.Optional[str] = None
     """URL the worker reports to. A manual worker is started with it by hand."""
 
@@ -173,19 +170,23 @@ class SlurmLaunch(pane.PaneBase):
     python: t.Optional[str] = None
 
 class JobState(pane.PaneBase):
+    """Server -> client: state of a job."""
     job_id: JobID
     status: JobStatus
     links: t.Dict[str, str] = pane.field(default_factory=dict)
     job_name: t.Optional[str] = None
     start_time: t.Optional[datetime.datetime] = None
     state: t.Dict[str, t.Any] = pane.field(default_factory=dict)
+    """Latest reconstruction state reported by the worker."""
     result: t.Optional[Result] = None
     """Terminal outcome, set once the job stops."""
     error_summary: t.Optional[str] = None
     """The exception's final line, for `result == 'errored'`. The traceback is in the log."""
 
 class LogRecord(pane.PaneBase):
+    """A stored job log record."""
     i: int
+    """Index of the record within the job's log."""
 
     timestamp: datetime.datetime
 
@@ -198,61 +199,64 @@ class LogRecord(pane.PaneBase):
     func_name: t.Optional[str] = None
     stack_info: t.Optional[str] = None
     elapsed: float = 0.
-    """Seconds since the job started (see `Job._elapsed` for what anchors that)"""
+    """Seconds since the job started."""
 
 class LogPage(pane.PaneBase):
-    """A window of log records, ascending by `i`"""
+    """A window of log records, ascending by `i`."""
     logs: t.List[LogRecord] = pane.field(default_factory=list)
     first: t.Optional[int] = None
-    """`i` of the first record returned, or `None` if the page is empty"""
+    """`i` of the first record returned, or `None` if the page is empty."""
     last: t.Optional[int] = None
-    """`i` of the last record returned, or `None` if the page is empty"""
+    """`i` of the last record returned, or `None` if the page is empty."""
     count: int = 0
+    """Number of records returned."""
     total: int = 0
-    """Records matching `min_level`"""
+    """Records matching `min_level`."""
     total_all: int = 0
-    """Records regardless of `min_level`"""
+    """Records regardless of `min_level`."""
     oldest: int = 0
-    """Lowest `i` still retained"""
+    """Lowest `i` still retained."""
     has_before: bool = False
-    """Whether matching records exist before `first`"""
+    """Whether matching records exist before `first`."""
     has_after: bool = False
-    """Whether matching records exist after `last`"""
+    """Whether matching records exist after `last`."""
     min_level: int = 0
-    """Level filter actually applied (the request's `min_level`, snapped down)"""
+    """Level filter applied (the request's `min_level`, snapped down)."""
 
 # worker -> server messages
 
 class ConnectMessage(pane.PaneBase):
-    """Message sent when a worker starts up"""
+    """Worker -> server: sent when a worker starts up."""
     hostname: t.Optional[str] = None
-    """Hostname worker is running on, if known"""
+    """Hostname the worker is running on."""
     backends: t.Optional[t.Sequence[t.Tuple[str, str]]] = None
-    """Computational backends available to worker, dict from backend -> device"""
+    """Available `(backend, device)` pairs."""
     msg: t.Literal['connect'] = 'connect'
 
 class PollMessage(pane.PaneBase):
-    """Message polling the server for a job"""
+    """Worker -> server: request a job."""
     msg: t.Literal['poll'] = 'poll'
 
 class PingMessage(pane.PaneBase):
-    """Message pinging the server, potentially receiving a cancellation"""
+    """Worker -> server: liveness ping. The response may carry a signal."""
     msg: t.Literal['ping'] = 'ping'
 
 class UpdateMessage(pane.PaneBase):
-    """Message containing some state update"""
+    """Worker -> server: a reconstruction state update."""
     state: t.Dict[str, t.Any] = pane.field(converter=ArrayDataConverter())
+    """State fields to merge into the job's state. Arrays are sent as frame buffers."""
     job_id: JobID
     msg: t.Literal['job_update'] = 'job_update'
 
 class JobStartMessage(pane.PaneBase):
-    """Message sent when a worker takes up a job, reporting when (by the worker's clock)"""
+    """Worker -> server: sent when a worker begins a job."""
     job_id: JobID
     start_time: datetime.datetime
+    """Start time by the worker's clock."""
     msg: t.Literal['job_start'] = 'job_start'
 
 class LogMessage(pane.PaneBase):
-    """Message corresponding to a log entry"""
+    """Worker -> server: a log entry."""
     job_id: t.Optional[JobID]
 
     timestamp: datetime.datetime
@@ -270,6 +274,7 @@ class LogMessage(pane.PaneBase):
 
     @classmethod
     def from_logrecord(cls, job_id: t.Optional[JobID], record: logging.LogRecord) -> Self:
+        """Create a message from a `logging.LogRecord`."""
         timestamp = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
         return cls(
             timestamp=timestamp,
@@ -283,13 +288,14 @@ class LogMessage(pane.PaneBase):
         )
 
     def into_record(self, i: int, elapsed: float = 0.) -> LogRecord:
+        """Convert to a `LogRecord` with index `i`."""
         return LogRecord.make_unchecked(
             i, self.timestamp, self.log, self.logger_name, self.log_level,
             self.line_number, self.func_name, self.stack_info, elapsed
         )
 
 class JobResultMessage(pane.PaneBase):
-    """Message indicating job has stopped (normally or abnormally)"""
+    """Worker -> server: a job has stopped, normally or abnormally."""
     job_id: JobID
     result: Result
     error: t.Optional[str] = None
@@ -299,7 +305,7 @@ class JobResultMessage(pane.PaneBase):
     msg: t.Literal['job_result'] = 'job_result'
 
 class WorkerShutdownMessage(pane.PaneBase):
-    """Message indicating a worker has been stopped"""
+    """Worker -> server: the worker has stopped."""
     result: Result
     error: t.Optional[str] = None
     detail: t.Optional[str] = None
@@ -310,26 +316,30 @@ class WorkerShutdownMessage(pane.PaneBase):
 # server -> worker responses
 
 class JobResponse(pane.PaneBase):
-    """Response containing a job to run"""
+    """Server -> worker: a job to run."""
     job_id: JobID
     plan: str
+    """Serialized reconstruction plan."""
     msg: t.Literal['job'] = 'job'
 
 class OkResponse(pane.PaneBase):
-    """Response from server indicating no action should be taken"""
+    """Server -> worker: nothing to do."""
     msg: t.Literal['ok'] = 'ok'
 
 class SignalResponse(pane.PaneBase):
-    """Response from server signalling some action (cancellation, shutdown, or reload)"""
+    """Server -> worker: a signal to cancel the job, shut down, or reload."""
     signal: t.Literal['shutdown', 'cancel', 'reload'] = 'cancel'
     urgent: bool = False
+    """Whether to stop immediately rather than at the next opportunity."""
     msg: t.Literal['signal'] = 'signal'
 
 WorkerMessage: t.TypeAlias = t.Annotated[t.Union[
     PollMessage, ConnectMessage, PingMessage, UpdateMessage,
     LogMessage, JobStartMessage, JobResultMessage, WorkerShutdownMessage,
 ], Tagged('msg')]
+"""Any worker -> server message, tagged by `msg`."""
 
 ServerResponse: t.TypeAlias = t.Annotated[t.Union[
     JobResponse, SignalResponse, OkResponse
 ], Tagged('msg')]
+"""Any server -> worker response, tagged by `msg`."""

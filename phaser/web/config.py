@@ -1,10 +1,4 @@
-"""
-Server configuration: slurm worker profiles, and the address remote workers connect back to.
-
-Read from `<platformdirs config dir>/server.yaml` (see `phaser.utils.config`). The server
-never writes this file; it is re-read whenever a slurm worker is launched, so edits take
-effect without a restart.
-"""
+"""Server configuration (`server.yaml`): slurm worker profiles and the worker callback address."""
 
 import ipaddress
 import os
@@ -26,45 +20,34 @@ class SlurmProfile(pane.PaneBase):
     """Human-readable description, shown in the web interface."""
 
     working_dir: t.Optional[str] = None
-    """
-    Directory the worker is started in ('sbatch --chdir'). Defaults to the directory the
-    server was started in. '%i' is replaced with the worker id.
+    """Directory the worker is started in (`sbatch --chdir`). Defaults to the server's directory.
+    `%i` is replaced with the worker id.
     """
 
     output: t.Optional[str] = None
-    """
-    Where slurm writes the job's output ('sbatch --output'), e.g. 'logs/worker-%i.log'.
-    Relative to 'working_dir'. '%i' is replaced with the worker id, and slurm's own
-    patterns ('%j' for the job id, '%N' for the node) still apply.
+    """Job output path (`sbatch --output`), relative to `working_dir`, e.g. `'logs/worker-%i.log'`.
+    `%i` is replaced with the worker id; slurm's own patterns also apply.
     """
 
     sbatch_args: t.Union[str, t.Sequence[str]] = ()
-    """
-    Arguments passed to `sbatch`, as a string or a list of strings. Applied after the
-    options above, so an option repeated here wins.
-    E.g. '--time=4-0 --partition=gpu --gres=gpu:volta:1'
+    """Extra `sbatch` arguments, as a string or list, e.g. `'--time=4-0 --partition=gpu'`.
+    Applied after the options above, so a repeated option wins.
     """
 
     preamble: str = ''
-    """
-    Shell commands run inside the batch job before the worker starts,
-     e.g. activating a Python environment
-    """
+    """Shell commands run in the batch job before the worker starts, e.g. activating an environment."""
 
     python: t.Optional[str] = None
-    """
-    Python executable to run the worker with. Defaults to 'python' when a preamble is set
-    (the environment it sets up provides one), and to the server's own interpreter otherwise.
+    """Python executable for the worker.
+    Defaults to `'python'` if `preamble` is set, else the server's interpreter.
     """
 
     def args(self) -> t.List[str]:
+        """Return `sbatch_args` as a list."""
         return shlex.split(self.sbatch_args) if isinstance(self.sbatch_args, str) else list(self.sbatch_args)
 
     def sbatch_options(self, worker_id: str) -> t.List[str]:
-        """`sbatch` options from the profile's own fields, in the order they're applied.
-
-        These come before `args()`, so a user repeating one of them there overrides it.
-        """
+        """Return the `sbatch` options from `working_dir` and `output`, for worker `worker_id`."""
         options = {'chdir': self.working_dir, 'output': self.output}
         return [
             f"--{name}={_expand(value, worker_id)}"
@@ -72,28 +55,25 @@ class SlurmProfile(pane.PaneBase):
         ]
 
     def python_exec(self) -> str:
+        """Return the Python executable to run the worker with."""
         if self.python:
             return self.python
         return 'python' if self.preamble.strip() else sys.executable
 
 
 class ServerConfig(pane.PaneBase):
+    """Contents of `server.yaml`."""
+
     worker_host: t.Optional[str] = None
-    """
-    Host (or 'host:port') remote workers should connect back to. Defaults to the address
-    the server was started on, so this is only needed when that address isn't the one
-    workers can reach (a NATed or multi-homed login node).
+    """Host (or `host:port`) remote workers connect back to.
+    Defaults to the address the server was started on.
     """
 
     default_slurm_profile: t.Optional[str] = None
     """Slurm profile used when none is specified. Defaults to the first profile listed."""
 
     slurm_profiles: t.Mapping[str, SlurmProfile] = {}
-    """
-    Named slurm worker profiles.
-    Note that 'preamble' runs as arbitrary shell, and anyone who can reach the web
-    interface can launch a worker with it.
-    """
+    """Named slurm worker profiles. `preamble` runs as arbitrary shell for anyone who can launch a worker."""
 
 
 EXAMPLE_CONFIG: ServerConfig = ServerConfig(
@@ -116,17 +96,20 @@ EXAMPLE_CONFIG: ServerConfig = ServerConfig(
         ),
     },
 )
+"""Example server config."""
 
 SERVER_CONFIG: Config[ServerConfig] = Config('server', ServerConfig, example=EXAMPLE_CONFIG)
+"""Handle for the `server.yaml` file. Re-read at each slurm launch; never written by the server."""
 
 DEFAULT_PROFILE_NAME: str = 'default'
 """Name of the built-in profile used when no profiles are configured."""
 
 
 def resolve_profile(config: ServerConfig, name: t.Optional[str] = None) -> t.Tuple[str, SlurmProfile]:
-    """The named profile, the configured default, or the first profile listed.
+    """Return `(name, profile)` for `name`, else the configured default, else the first profile.
 
-    Raises `ValueError` for a name which isn't configured.
+    Raises:
+        ValueError: If `name` is not a configured profile.
     """
     profiles = config.slurm_profiles
 
@@ -152,7 +135,7 @@ def apply_overrides(
     working_dir: t.Optional[str] = None,
     output: t.Optional[str] = None,
 ) -> SlurmProfile:
-    """`profile` with each specified field replaced, for a single launch."""
+    """Return a copy of `profile` with each non-`None` argument replacing its field."""
     return SlurmProfile(
         description=profile.description,
         working_dir=profile.working_dir if working_dir is None else working_dir,
@@ -197,9 +180,10 @@ def _resolves_remotely(host: str) -> bool:
 
 
 def split_netloc(netloc: str) -> t.Tuple[str, t.Optional[int]]:
-    """Split 'host', 'host:port' or '[::1]:port' into a host and an optional port.
+    """Split `host`, `host:port` or `[::1]:port` into a host and optional port.
 
-    Raises `ValueError` for a port which isn't a number.
+    Raises:
+        ValueError: If the port is not a number.
     """
     if isinstance(_ip_address(netloc), ipaddress.IPv6Address):
         return (netloc, None)  # an unbracketed literal, which `urlsplit` can't parse
@@ -211,6 +195,7 @@ def split_netloc(netloc: str) -> t.Tuple[str, t.Optional[int]]:
 
 
 def join_netloc(host: str, port: t.Optional[int]) -> str:
+    """Join a host and optional port, bracketing IPv6 literals."""
     if isinstance(_ip_address(host), ipaddress.IPv6Address):
         host = f'[{host}]'
     return host if port is None else f'{host}:{port}'
@@ -237,11 +222,11 @@ def _wildcard_host() -> str:
 
 
 def remote_worker_host(bind_host: str, override: t.Optional[str] = None) -> str:
-    """
-    Host a worker on another machine should use to reach a server bound to `bind_host`.
+    """Return the host a remote worker uses to reach a server bound to `bind_host`, or `override` if given.
 
-    Raises `ValueError` when the server isn't reachable remotely (bound to loopback, or
-    to a wildcard address on a machine whose hostname resolves to loopback).
+    Raises:
+        ValueError: If the server is not remotely reachable (bound to loopback, or to a
+            wildcard address on a machine whose hostname resolves to loopback).
     """
     if override:
         return override
@@ -265,7 +250,7 @@ def remote_worker_host(bind_host: str, override: t.Optional[str] = None) -> str:
 
 
 def remote_worker_netloc(bind_netloc: str, override: t.Optional[str] = None) -> str:
-    """`remote_worker_host`, keeping the port of `bind_netloc` unless `override` names one."""
+    """Return `host:port` for remote workers, using the port of `bind_netloc` unless `override` has one."""
     (bind_host, port) = split_netloc(bind_netloc)
     if override:
         (override_host, override_port) = split_netloc(override)

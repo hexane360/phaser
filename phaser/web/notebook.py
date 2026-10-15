@@ -1,3 +1,4 @@
+"""Jupyter integration: run the web server from a notebook and embed its views."""
 import atexit
 import threading
 import multiprocessing
@@ -170,12 +171,18 @@ class _ServerConnection:
 
 
 def iframe(src: str, width: t.Any, height: t.Any) -> ipywidgets.HTML:
+    """Return a widget embedding an iframe of `src`."""
     return ipywidgets.HTML(f'\
 <iframe width="{width}" height="{height}" src="{src}" frameborder="0" allowfullscreen></iframe>\
 ')
 
 
 class Manager:
+    """Runs the web server in a subprocess and displays its views in a notebook.
+
+    Args:
+        port: Port to serve on. A random free port if `None`.
+    """
     def __init__(self, port: t.Optional[int] = None):
         self.port: t.Optional[int] = port
 
@@ -184,9 +191,15 @@ class Manager:
         self.out: t.Optional[ipywidgets.Output] = None
 
     def is_running(self) -> bool:
+        """Return whether the server process is alive."""
         return self._server is not None and self._server.is_alive()
 
     def start(self):
+        """Start the server and display its logs and job manager.
+
+        Raises:
+            RuntimeError: If the server is already running.
+        """
         if self.is_running():
             raise RuntimeError("Manager already running")
 
@@ -199,6 +212,7 @@ class Manager:
         ], titles=['Server logs', 'Job manager'], selected_index=1))
 
     def stop(self):
+        """Stop the server."""
         if self._server:
             self._server.stop()
             self.out = None
@@ -219,6 +233,11 @@ class Manager:
     """
 
     def start_job(self, plan: 'ReconsPlan'):
+        """Submit `plan` (a `ReconsPlan` or its YAML) to the server and display the job view.
+
+        Raises:
+            ValueError: If the server is not running or rejects the plan.
+        """
         from phaser.plan import ReconsPlan
 
         if not self.is_running():
@@ -250,6 +269,11 @@ class Manager:
         display(self.job_view(jobs[0]['job_id']))
 
     def manager_view(self) -> ipywidgets.HTML:
+        """Return a widget showing the job manager.
+
+        Raises:
+            ValueError: If the server is not running.
+        """
         if not self.is_running():
             raise ValueError("Server is not running")
         assert self._server is not None
@@ -259,6 +283,11 @@ class Manager:
         )
 
     def job_view(self, job_id: str) -> ipywidgets.HTML:
+        """Return a widget showing the dashboard for job `job_id`.
+
+        Raises:
+            ValueError: If the server is not running.
+        """
         if not self.is_running():
             raise ValueError("Server is not running")
         assert self._server is not None
