@@ -14,6 +14,12 @@ if t.TYPE_CHECKING:
 
 
 class AmplitudeNoiseModel(NoiseModel[None]):
+    r"""Gaussian noise on diffraction amplitudes.
+
+    Loss is $\frac{2}{1 + \sigma^2} \sum M \left(\sqrt{I_{exp} + o} - \sqrt{I_{model} + o} - \epsilon\right)^2$,
+    with offset $o$, Gaussian variance $\sigma^2$, and mask $M$. Negative $I_{exp}$ is clipped to zero.
+    """
+
     @classmethod
     def name(cls) -> str:
         return "amplitude"
@@ -71,6 +77,8 @@ class AmplitudeNoiseModel(NoiseModel[None]):
 
 
 class AnscombeNoiseModel(AmplitudeNoiseModel):
+    """Amplitude noise model with the Anscombe offset $o = 3/8$ as default."""
+
     @classmethod
     def name(cls) -> str:
         return "anscombe"
@@ -80,6 +88,11 @@ class AnscombeNoiseModel(AmplitudeNoiseModel):
 
 
 class PoissonNoiseModel(NoiseModel[None]):
+    r"""Poisson noise on diffraction intensities.
+
+    Loss is $\sum M \left(I_{model} + \epsilon + I_{exp} (\ln(I_{exp} + \epsilon) - \ln(I_{model} + \epsilon) - 1)\right)$.
+    """
+
     @classmethod
     def name(cls) -> str:
         return "poisson"
@@ -117,4 +130,5 @@ class PoissonNoiseModel(NoiseModel[None]):
         state: None,
         mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], None]:
+        """Raise `NotImplementedError`."""
         raise NotImplementedError()
