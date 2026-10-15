@@ -1,3 +1,5 @@
+"""Phaser version and git checkout information."""
+
 import functools
 import subprocess
 import typing as t
@@ -9,18 +11,21 @@ from . import __version__
 
 
 class GitInfo(pane.PaneBase):
-    """Git state of the checkout phaser is running from"""
+    """Git state of the checkout phaser is running from."""
     commit: str
     short_commit: str
     dirty: bool
-    """Whether tracked files differ from `commit` (untracked files don't count)"""
+    """Whether tracked files differ from `commit`. Untracked files are ignored."""
     branch: t.Optional[str] = None
-    """Current branch, or `None` when HEAD is detached"""
+    """Current branch, or `None` if HEAD is detached."""
 
 
 class VersionInfo(pane.PaneBase):
+    """Phaser version."""
     version: str
+    """Version string."""
     git: t.Optional[GitInfo] = None
+    """Git state, or `None` if phaser is not running from a git checkout."""
 
     def __str__(self) -> str:
         git = ''
@@ -33,6 +38,7 @@ class VersionInfo(pane.PaneBase):
 
 @functools.lru_cache(1)
 def version_info() -> VersionInfo:
+    """Return the (cached) version information of the running phaser."""
     return VersionInfo(__version__, _git_info())
 
 

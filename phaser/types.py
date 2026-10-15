@@ -1,3 +1,5 @@
+"""Shared types and plan-file annotations."""
+
 import typing as t
 from dataclasses import dataclass
 from functools import lru_cache
@@ -38,6 +40,7 @@ def cast_length(val: t.Iterable[T], n: t.Literal[1]) -> t.Tuple[T]:
     ...
 
 def cast_length(val: t.Iterable[T], n: int) -> t.Tuple[T, ...]:
+    """Return `val` as a tuple, typed as having length `n`. The length is not checked."""
     return tuple(val)
 
 
@@ -77,62 +80,91 @@ class _ReconsVarsAnnotation(ConvertAnnotation):
 
 
 BackendName: t.TypeAlias = t.Literal['cupy', 'jax', 'torch', 'numpy']
+"""Array backend names."""
 ReconsVar: t.TypeAlias = t.Literal['object', 'probe', 'positions', 'tilt', 'positions_affine', 'positions_line']
+"""Reconstruction variables."""
 
 ReconsVars: t.TypeAlias = t.Annotated[t.FrozenSet[ReconsVar], _ReconsVarsAnnotation()]
+"""Set of `ReconsVar`. Parsed from a comma-separated string in plan files."""
 EmptyDict: t.TypeAlias = t.Annotated[t.Dict[t.NoReturn, t.NoReturn], _EmptyDictAnnotation()]
+"""Empty dict."""
 
 
 class EarlyTermination(BaseException):
+    """Raised by an observer to end the current engine early.
+
+    Args:
+        state: State at termination.
+        continue_next_engine: Whether to continue with the next engine.
+    """
     def __init__(self, state: 'ReconsState', continue_next_engine: bool = False):
         self.state: ReconsState = state
         self.continue_next_engine: bool = continue_next_engine
 
 
 class Dataclass(pane.PaneBase, kw_only=True, allow_extra=False):
-    ...
+    """Base class for plan dataclasses. Fields are keyword-only and unknown keys are rejected."""
 
 
 class SliceList(Dataclass):
+    """Slices given by explicit thicknesses."""
     thicknesses: t.List[float]
+    """Thickness of each slice [angstrom]."""
 
 class SliceStep(Dataclass):
+    """Slices of equal thickness, given by thickness."""
     n: int
+    """Number of slices."""
     slice_thickness: float
+    """Thickness of each slice [angstrom]."""
 
     @property
     def zs(self) -> t.List[float]:
+        """Depth of the top of each slice [angstrom]."""
         return [float(z) for z in numpy.arange(self.n) * self.slice_thickness]
 
     @property
     def thicknesses(self) -> t.List[float]:
+        """Thickness of each slice [angstrom]."""
         return [self.slice_thickness] * self.n
 
 class SliceTotal(Dataclass):
+    """Slices of equal thickness, given by total thickness."""
     n: int
+    """Number of slices."""
     total_thickness: float
+    """Total thickness of all slices [angstrom]."""
 
     @property
     def zs(self) -> t.List[float]:
+        """Depth of the top of each slice [angstrom]."""
         return [float(z) for z in numpy.arange(self.n) * self.total_thickness / self.n]
 
     @property
     def thicknesses(self) -> t.List[float]:
+        """Thickness of each slice [angstrom]."""
         return [self.total_thickness / self.n] * self.n
 
 Slices: t.TypeAlias = t.Union[SliceList, SliceStep, SliceTotal]
+"""Specification of object slices."""
 
 
 class ComplexCartesian(pane.PaneBase, kw_only=True):
+    """Complex number in Cartesian form."""
     re: float
+    """Real part."""
     im: float = 0.0
+    """Imaginary part."""
 
     def __complex__(self) -> complex:
         return complex(self.re, self.im)
 
 class ComplexPolar(pane.PaneBase, kw_only=True):
+    """Complex number in polar form."""
     mag: float
-    angle: float = 0.0  # degrees
+    """Magnitude."""
+    angle: float = 0.0
+    """Phase angle [degrees]."""
 
     def __complex__(self) -> complex:
         theta = numpy.deg2rad(self.angle)
@@ -140,9 +172,13 @@ class ComplexPolar(pane.PaneBase, kw_only=True):
 
 
 class Krivanek(pane.PaneBase):
+    """Aberration of radial order `n` and azimuthal order `m` in Krivanek notation."""
     n: int
+    """Radial order."""
     m: int
+    """Azimuthal order."""
     scale_factor: float = 1.0
+    """Factor relating a named coefficient to $C_{nm}$."""
 
     def __post_init__(self):
         if (
@@ -154,22 +190,29 @@ class Krivanek(pane.PaneBase):
 
     @staticmethod
     def from_known(s: str) -> 'Krivanek':
+        """Return the aberration with name `s` (case-insensitive), e.g. `'c1'` or `'a2'`.
+
+        Raises:
+            ValueError: If `s` is not a known aberration.
+        """
         try:
             return _KNOWN_ABERRATIONS[s.lower()]
         except (KeyError, TypeError):
             raise ValueError(f"Unknown aberration '{s}'") from None
 
 class KrivanekComplex(Krivanek, kw_only=True):
+    """Aberration with a complex coefficient."""
     val: complex
+    """Coefficient [angstrom]."""
 
     def __complex__(self) -> complex:
         return self.val
 
 class KrivanekCartesian(Krivanek, ComplexCartesian, kw_only=True):
-    ...
+    """Aberration with a coefficient in Cartesian form."""
 
 class KrivanekPolar(Krivanek, ComplexPolar, kw_only=True):
-    ...
+    """Aberration with a coefficient in polar form."""
 
 
 _KNOWN_ABERRATIONS: t.Dict[str, Krivanek] = {
@@ -191,13 +234,16 @@ KnownAberration: t.TypeAlias = t.Annotated[str, Condition(
     'known aberration',
     lambda exp, plural: pluralize('known aberration', plural)
 )]
+"""Name of a known aberration (e.g. `'c1'`, `'a1'`, `'c3'`)."""
 
 Aberration: t.TypeAlias = t.Union[
     t.Dict[KnownAberration, t.Union[complex, ComplexCartesian, ComplexPolar]],
     KrivanekComplex, KrivanekCartesian, KrivanekPolar,
 ]
+"""Aberration given by name or by orders `n` and `m`."""
 
 def process_aberrations(aberrations: t.Iterable[Aberration]) -> t.Iterator[KrivanekComplex]:
+    """Yield each aberration, with named aberrations expanded, as a `KrivanekComplex`."""
     for ab in aberrations:
         if isinstance(ab, dict):
             for known, val in ab.items():
@@ -208,12 +254,18 @@ def process_aberrations(aberrations: t.Iterable[Aberration]) -> t.Iterator[Kriva
 
 
 class SimpleFlag(Dataclass):
+    """Flag that is true on a regular schedule of engine iterations (1-indexed)."""
     after: int = 0
+    """True only for iterations after this one."""
     every: int = 1
+    """True every this many iterations, counted from `after`."""
     before: t.Optional[int] = None
+    """True only for iterations before this one. `None` for no limit."""
     first: bool = False
+    """Also true on the first iteration."""
 
     def any_true(self, niter: int) -> bool:
+        """Return whether the flag may be true for an engine with `niter` iterations."""
         return self.first or (
             self.after < niter
             and (self.before is None or self.before > 0)
@@ -230,6 +282,7 @@ class SimpleFlag(Dataclass):
         )
 
     def resolve(self) -> Self:
+        """Return `self`."""
         return self
 
 
@@ -243,6 +296,7 @@ class _ConstFlag:
 
 @lru_cache
 def process_flag(flag: 'FlagLike') -> 'Flag':
+    """Return `flag` as a callable, converting a `bool` to a constant flag."""
     if isinstance(flag, bool):
         return _ConstFlag(flag)
     return flag
@@ -250,12 +304,14 @@ def process_flag(flag: 'FlagLike') -> 'Flag':
 
 @lru_cache
 def process_schedule(schedule: 'ScheduleLike') -> 'Schedule':
+    """Return `schedule` as a callable, converting a number to a constant schedule."""
     if isinstance(schedule, (int, float)):
         return lambda _: schedule
     return schedule
 
 
 def flag_any_true(flag: t.Callable[['FlagArgs'], bool], niter: int) -> bool:
+    """Return whether `flag` may be true during an engine with `niter` iterations. Arbitrary flags are assumed to be."""
     if isinstance(flag, SimpleFlag):
         return flag.any_true(niter)
     elif isinstance(flag, _ConstFlag):
@@ -266,6 +322,13 @@ def flag_any_true(flag: t.Callable[['FlagArgs'], bool], niter: int) -> bool:
 
 @dataclass(init=False, frozen=True)
 class IsVersion(ConvertAnnotation):
+    """Annotation restricting a version string `'major.minor...'` to a range.
+
+    Args:
+        min: Minimum accepted version, inclusive.
+        max: Maximum accepted version, inclusive.
+        exactly: Only accepted version. Cannot be combined with `min` or `max`.
+    """
     min: t.Optional[t.Tuple[int, ...]] = None
     max: t.Optional[t.Tuple[int, ...]] = None
 
@@ -290,6 +353,7 @@ class IsVersion(ConvertAnnotation):
 
 
 Version: t.TypeAlias = t.Annotated[str, IsVersion()]
+"""Version string, e.g. `'1.0'`."""
 
 
 class _VersionConverter(Converter[t.Any]):
