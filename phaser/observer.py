@@ -91,6 +91,7 @@ class LoggingObserver(Observer):
         return f"{int(mm):02d}:{ss:06.3f}"
 
     def get_utc(self) -> float:
+        """Return the current time [s since the Unix epoch]."""
         return time.time_ns() * 1e-9
 
     def init_recons(self, plan: ReconsPlan, *, name: str):

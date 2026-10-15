@@ -46,6 +46,7 @@ class LSQMLSolver(ConventionalSolver):
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
     ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
+        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
         xp = cast_array_module(xp)
 
         if self.engine_plan.buffer_n_groups is None:
@@ -162,6 +163,12 @@ def lsqml_dry_run(
     obj_mag: NDArray[numpy.floating],
     probe_mag: NDArray[numpy.floating]
 ) -> t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating], NDArray[numpy.floating]]:
+    """Accumulate object and probe illumination for `group` without updating `sim`.
+
+    Returns:
+        `(obj_mag, probe_mag, rescale)`, where `rescale` is the ratio of experimental to
+        modeled intensity for each pattern.
+    """
     xp = cast_array_module(sim.xp)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
@@ -219,6 +226,12 @@ def lsqml_run(
     illum_reg_probe: float,
     gamma: float,
 ) -> t.Tuple[SimulationState, NDArray[numpy.floating], NDArray[numpy.floating], t.Optional[NDArray[numpy.floating]], t.Optional[NDArray[numpy.floating]]]:
+    """Run one LSQML update on `group`.
+
+    Returns:
+        `(sim, new_obj_mag, new_probe_mag, errors, pos_update)`. `errors` is `None` unless
+        `calc_error`, and `pos_update` is `None` unless `update_position`.
+    """
     xp = cast_array_module(sim.xp)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
@@ -344,6 +357,7 @@ class EPIESolver(ConventionalSolver):
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
     ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
+        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
         xp = cast_array_module(xp)
 
         if self.engine_plan.buffer_n_groups is None:
@@ -443,6 +457,7 @@ def epie_dry_run(
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
 ) -> NDArray[numpy.floating]:
+    """Return the ratio of experimental to modeled intensity for each pattern in `group`."""
     xp = cast_array_module(sim.xp)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
@@ -484,6 +499,12 @@ def epie_run(
     calc_error: bool = True,
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> t.Tuple[SimulationState, t.Optional[NDArray[numpy.floating]], t.Optional[NDArray[numpy.floating]]]:
+    """Run one ePIE update on `group`.
+
+    Returns:
+        `(sim, errors, pos_update)`. `errors` is `None` unless `calc_error`, and `pos_update`
+        is `None` unless `update_position`.
+    """
     xp = cast_array_module(sim.xp)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
