@@ -1,3 +1,5 @@
+"""Probe initialization hooks."""
+
 import logging
 
 from phaser.utils.optics import make_focused_probe
@@ -7,6 +9,11 @@ from . import FocusedProbeProps, ProbeHookArgs
 
 
 def focused_probe(args: ProbeHookArgs, props: FocusedProbeProps) -> PixelatedProbeState:
+    """Return a focused probe with the given convergence angle, defocus, and aberrations.
+
+    Raises:
+        ValueError: If `conv_angle` or `defocus` is not set.
+    """
     logger = logging.getLogger(__name__)
 
     if props.conv_angle is None:

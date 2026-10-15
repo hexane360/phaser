@@ -1,3 +1,5 @@
+"""Load EMPAD data."""
+
 
 from pathlib import Path
 import warnings
@@ -14,6 +16,13 @@ from .. import LoadEmpadProps, RawData
 
 
 def load_empad(args: None, props: LoadEmpadProps) -> RawData:
+    """Load EMPAD data from a raw file or a `.json` metadata file.
+
+    Metadata supplies defaults for `props` and the scan, probe, and tilt hooks.
+
+    Raises:
+        ValueError: If the voltage or `diff_step` is unknown, or the data is not found.
+    """
     logger = logging.getLogger(__name__)
 
     path = Path(props.path).expanduser()

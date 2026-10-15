@@ -1,3 +1,5 @@
+"""Hooks that modify raw data and patterns."""
+
 import logging
 import math
 import typing as t
@@ -32,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 def crop_data(raw_data: RawData, props: CropDataProps) -> RawData:
+    """Crop the scan dimensions of `raw_data['patterns']`, updating a raster `scan_hook` shape.
+
+    Raises:
+        ValueError: If the patterns are not 4D.
+    """
     if raw_data['patterns'].ndim != 4:
         raise ValueError(f"'crop_data' expects a 4D array of patterns, got shape {raw_data['patterns'].shape} instead")
 
@@ -50,14 +57,17 @@ def crop_data(raw_data: RawData, props: CropDataProps) -> RawData:
 
 
 def scale_patterns(raw_data: RawData, props: ScaleProps) -> RawData:
+    """Multiply the patterns by `props.scale`."""
     raw_data['patterns'] *= props.scale
     return raw_data
 
 def offset_patterns(raw_data: RawData, props: OffsetProps) -> RawData:
+    """Subtract `props.offset` from the patterns."""
     raw_data['patterns'] -= props.offset
     return raw_data
 
 def bin_patterns(raw_data: RawData, props: BinProps) -> RawData:
+    """Sum the patterns in `props.bin` by `props.bin` blocks along the detector axes."""
     #xp = get_array_module(raw_data['patterns'])
     bin_factor = props.bin
     patterns = raw_data['patterns']
@@ -72,6 +82,11 @@ def bin_patterns(raw_data: RawData, props: BinProps) -> RawData:
     return raw_data
 
 def set_detector_mask(raw_data: RawData, props: SetDetectorMaskProps):
+    """Replace the detector mask with one loaded from a `.npy`, `.npz`, `.tif`, or `.tiff` file.
+
+    Raises:
+        ValueError: If the extension is unsupported, or the mask is not real-valued with the detector shape.
+    """
     logger = logging.getLogger(__name__)
     dtype = raw_data['mask'].dtype
     path = props.path
@@ -109,6 +124,7 @@ def set_detector_mask(raw_data: RawData, props: SetDetectorMaskProps):
 
 
 def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
+    """Scale the patterns by `props.scale`, then sample Poisson and Gaussian noise."""
     xp = get_array_module(raw_data['patterns'])
     dtype = raw_data['patterns'].dtype
 
@@ -133,6 +149,7 @@ def add_poisson_noise(raw_data: RawData, props: PoissonProps) -> RawData:
 
 
 def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
+    """Filter each pattern with the detector filter `props.mtf`."""
     xp = get_array_module(raw_data['patterns'])
     filt = props.mtf(raw_data)
 
@@ -155,6 +172,13 @@ def apply_mtf(raw_data: RawData, props: ApplyMtfProps) -> RawData:
 
 
 def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patterns, ReconsState]:
+    """Drop patterns whose fraction of NaN pixels exceeds `props.threshold`, with their scan positions and tilts.
+
+    Flattens the scan and patterns to a single scan dimension.
+
+    Raises:
+        ValueError: If the number of scan or tilt positions matches neither the original nor filtered pattern count.
+    """
     xp = get_array_module(args['data'].patterns)
 
     scan = args['state'].scan
@@ -209,6 +233,7 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
 
 
 def diffraction_align(args: PostInitArgs, props: t.Any = None) -> t.Tuple[Patterns, ReconsState]:
+    """Shift the patterns and mask, by bilinear interpolation, so the mean pattern is centered at the origin."""
     patterns, state = args['data'], args['state']
 
     xp = cast_array_module(args['xp'])
