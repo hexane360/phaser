@@ -843,6 +843,7 @@ class Server:
             register_debug_routes(self.app)
 
         logging.basicConfig(level=logging.INFO if verbosity == 0 else logging.DEBUG)
+        logging.getLogger("asyncio").setLevel(logging.DEBUG if verbosity > 2 else logging.INFO)
 
         @self.app.before_request
         async def _time_request():
