@@ -31,21 +31,18 @@ engines:
 
    solver:
      type: 'lsqml'
-     beta_probe:
-       type: expr
-       expr: '1.0 - np.exp(-i / 3)'
-     beta_object:
-       type: expr
-       expr: '1.0 - np.exp(-i / 3)'
+     beta_probe: 0.1
+     beta_object: 0.5
 
-     gamma: 1.0e-4
-     illum_reg_object: 50.0
-     illum_reg_probe: 0.1
+     illum_reg_object: 0.01
+     illum_reg_probe: 0.0
+     gamma: 0.0
 
    position_solver:
      type: momentum
-     momentum: 0.90
-     step_size: 1.0e-3
+     # `step_size` is a fraction of the LSQ optimal step
+     momentum: 0.9
+     step_size: 2.0
      max_step_size: 0.2
 
    group_constraints: []

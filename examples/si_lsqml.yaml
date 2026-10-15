@@ -29,22 +29,23 @@ engines:
 
    noise_model:
      type: 'amplitude'
-     eps: 1.0e-2
+     eps: 1.0
 
    solver:
      type: 'lsqml'
-     beta_probe: 0.9
-     beta_object: 0.9
-     gamma: 1.0e-2
+     beta_probe: 0.1
+     beta_object: 0.5
 
-     illum_reg_object: 50.0
-     illum_reg_probe: 0.1
+     illum_reg_object: 0.01
+     illum_reg_probe: 0.0
+     gamma: 0.0
 
    position_solver:
      type: momentum
-     momentum: 0.90
-     step_size: 1.0e-3
-     max_step_size: 0.2
+     # `step_size` is a fraction of the LSQ optimal step
+     momentum: 0.9
+     step_size: 2.0
+     max_step_size: 0.1  # angstrom
 
    group_constraints: []
    iter_constraints:
@@ -52,7 +53,7 @@ engines:
        max_angle: 26.0
      - type: layers
        sigma: 100.0
-       weight: 0.3
+       weight: 0.15
      - type: obj_low_pass
        max_freq: 0.4
 

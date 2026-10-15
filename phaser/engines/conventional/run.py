@@ -107,7 +107,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
         )
         assert_dtype(sim.state.object.data, cdtype)
         assert_dtype(sim.state.probe.data, cdtype)
-        check_finite(sim.state.object.data, sim.state.probe.data, context=f"NaN or inf encountered, iteration {i}")
+        check_finite(sim.state.object.data, sim.state.probe.data, context=f"iteration {i}")
 
         sim = sim.apply_iter_constraints()
 
@@ -117,7 +117,10 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
 
             # subtract mean position update
             pos_update -= xp.mean(pos_update, tuple(range(pos_update.ndim - 1)))
-            pos_update, position_solver_state = position_solver.perform_update(sim.state.scan.data, pos_update, position_solver_state)
+            pos_update, position_solver_state = position_solver.perform_update(
+                sim.state.scan.data, pos_update, position_solver_state,
+                {'state': sim.state, 'niter': props.niter},
+            )
             # subtract mean again (this can change with momentum)
             pos_update -= xp.mean(pos_update, tuple(range(pos_update.ndim - 1)))
             pos_update_rms = float(xp.mean(xp.linalg.norm(pos_update, axis=-1, keepdims=True)))
