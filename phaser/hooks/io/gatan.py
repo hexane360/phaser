@@ -20,7 +20,8 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
     """Load Gatan `.dm4` data, with the scan and probe hooks taken from its metadata.
 
     Raises:
-        ValueError: If the metadata has no voltage or `diff_step`, or the data is not found.
+        ValueError: If the voltage or `diff_step` is given by neither `props` nor the metadata,
+            or the data is not found.
     """
     logger = logging.getLogger(__name__)
 
