@@ -1,6 +1,4 @@
-"""
-Utilities for probe positions/scan
-"""
+"""Utilities for probe positions and scans."""
 
 import typing as t
 
@@ -22,19 +20,18 @@ def make_raster_scan(shape: tuple[int, int], scan_step: ArrayLike,
 
 def make_raster_scan(shape: tuple[int, int], scan_step: ArrayLike,
                      rotation: float = 0., affine: None | ArrayLike = None, *, dtype: t.Any = None, xp: t.Any = None) -> NDArray[numpy.floating]:
-    """
-    Make a raster scan, centered around the origin.
+    """Return a raster scan centered on the origin.
 
-    Returns an array of shape `(n_y, n_x, 2)`, with the last dimension corresponding to `(y, x)` pairs.
+    Args:
+        shape: Scan shape `(n_y, n_x)`.
+        scan_step: Step size `(s_y, s_x)` [angstrom].
+        rotation: Rotation about the scan center [degrees CCW].
+        affine: Affine matrix applied to the positions before `rotation`.
+        dtype: Position dtype. Defaults to `numpy.float64`.
+        xp: Array module.
 
-    # Parameters
-
-    - `shape`: Shape `(n_y, n_x)` of scan to create
-    - `scan_step`: Scan step size `(s_y, s_x)`
-    - `rotation`: Scan rotation to add (degrees CCW). Rotation is applied
-      around the center of the scan.
-    - `dtype`: Datatype of positions to return. Defaults to `numpy.float64`.
-    - `xp`: Array module
+    Returns:
+        Positions of shape `(n_y, n_x, 2)`, with the last axis in `(y, x)` order [angstrom].
     """
     xp2 = get_array_module(shape, scan_step) if xp is None else cast_array_module(xp)
 
