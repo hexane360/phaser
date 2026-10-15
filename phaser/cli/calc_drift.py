@@ -1,3 +1,5 @@
+"""`phaser calc_drift` command."""
+
 from pathlib import Path
 from queue import Queue, Empty
 from threading import Thread, Event
@@ -25,6 +27,7 @@ from phaser.cli.utils import natural_key
 
 
 def load_adf(path: t.Union[str, Path]) -> t.Tuple[numpy.ndarray, t.Any]:
+    """Load the image and parsed JSON metadata from a single-image HDF5 file."""
     f = h5py.File(path)
 
     images = t.cast(h5py.Group, f['Data/Image'])
@@ -43,18 +46,26 @@ def load_adf(path: t.Union[str, Path]) -> t.Tuple[numpy.ndarray, t.Any]:
 
 
 def normed_to_uint8(data: numpy.ndarray) -> NDArray[numpy.uint8]:
+    """Convert `data` clipped to `[0, 1]` to `uint8`."""
     return numpy.floor(numpy.clip(data, 0, 1) * 255.999).astype(numpy.uint8)
 
 
 def normed_to_color(data: numpy.ndarray, color: ArrayLike) -> NDArray[numpy.uint8]:
+    """Convert `data` clipped to `[0, 1]` to `uint8` intensities of `color`, shape `(*data.shape, len(color))`."""
     return numpy.floor(numpy.clip(data, 0, 1)[..., None] * color).astype(numpy.uint8)
 
 
 def signed_angle(v1: numpy.ndarray, v2: numpy.ndarray) -> float:
+    r"""Return $\pi - \theta$, where $\theta \in [0, 2\pi)$ is the angle from `v1` to `v2` [rad]."""
     return numpy.pi - numpy.mod(numpy.arctan2(v1[0] * v2[1] - v1[1] * v2[0], numpy.dot(v1, v2)), 2.*numpy.pi)
 
 
 def load_files(paths: t.Iterable[t.Union[str, Path]], inner: float, outer: float) -> t.Iterable[t.Tuple[Path, EmpadMetadata, NDArray[numpy.float32]]]:
+    """Yield `(path, metadata, virtual_image)` for each metadata file in `paths`, loading in a background thread.
+
+    The virtual image sums detector pixels with radius in `[inner, outer]` [px].
+    Files which are not valid metadata are skipped. Other loading errors are printed and end iteration.
+    """
     queue: Queue[t.Tuple[Path, EmpadMetadata, NDArray[numpy.float32]]] = Queue(1)
     finished = Event()
 
@@ -123,6 +134,7 @@ def load_files(paths: t.Iterable[t.Union[str, Path]], inner: float, outer: float
 
 
 def calibrated_meta_path(meta_path: Path):
+    """Return the `_calib` metadata path corresponding to `meta_path`."""
     meta_path_name = meta_path.stem
     if meta_path_name.endswith('_orig'):
         meta_path_name = meta_path_name[:-5]
@@ -226,6 +238,11 @@ def calc_drift(path: t.Union[str, Path], include: t.Sequence[str] = (), exclude:
 def calc_drift_one(
     console: Console, meta: EmpadMetadata, virtual_img: NDArray[numpy.float32], params: t.Dict[str, t.Any]
 ) -> t.Optional[NDArray[numpy.number]]:
+    """Interactively fit the linear drift of a virtual image.
+
+    Returns:
+        Scan correction matrix, or `None` if cancelled.
+    """
     print(meta)
     scan_step_4d = numpy.array(meta.scan_step) * 1e10  # m to angstrom
     scan_size_4d = scan_step_4d * meta.scan_shape

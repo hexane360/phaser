@@ -1,3 +1,5 @@
+"""`phaser validate` command."""
+
 from contextlib import nullcontext
 from pathlib import Path
 import sys
