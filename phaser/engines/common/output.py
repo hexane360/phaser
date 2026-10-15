@@ -1,3 +1,5 @@
+"""Writing of reconstruction images and state files."""
+
 from functools import partial
 import logging
 from pathlib import Path
@@ -14,6 +16,14 @@ from phaser.plan import SaveOptions
 
 
 def output_images(state: ReconsState, out_dir: Path, options: SaveOptions, *, initial: bool = False):
+    """Write each image type in `options.images` to `out_dir`.
+
+    Args:
+        initial: Use the initial-state filename format `options.img_fmt_init` instead of `options.img_fmt`.
+
+    Raises:
+        ValueError: If an image type is unknown or the filename format is invalid.
+    """
     k = 'img_fmt_init' if initial else 'img_fmt'
     img_fmt: str = getattr(options, k)
 
@@ -36,6 +46,14 @@ def output_images(state: ReconsState, out_dir: Path, options: SaveOptions, *, in
 
 
 def output_state(state: ReconsState, out_dir: Path, options: SaveOptions, *, initial: bool = False):
+    """Write `state` as an HDF5 file in `out_dir`.
+
+    Args:
+        initial: Use the initial-state filename format `options.hdf5_fmt_init` instead of `options.hdf5_fmt`.
+
+    Raises:
+        ValueError: If the filename format is invalid.
+    """
     k = 'hdf5_fmt_init' if initial else 'hdf5_fmt'
     hdf5_fmt: str = getattr(options, k)
 
