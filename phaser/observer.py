@@ -134,7 +134,7 @@ class LoggingObserver(Observer):
 
         w = len(str(n))
 
-        error_s = f" Error: {error:.3e}" if (error := errors.get('total_loss')) else ""
+        error_s = f" Error: {error:.3e}" if (error := errors.get('total_loss')) is not None else ""
         other_errors = ", ".join(f"{k}: {v:.3e}" for (k, v) in errors.items() if k != 'total_loss')
         other_errors = f"\n    Error breakdown: {other_errors}" if other_errors else ""
         self.logger.info(f"Finished iter {i:{w}}/{n}{time_s}{error_s}{other_errors}")
@@ -161,7 +161,7 @@ class LoggingObserver(Observer):
 
 
 class PatienceObserver(Observer):
-    def __init__(self, patience: int, smoothing: float = 0.1, continue_next_engine: bool = True):
+    def __init__(self, patience: int, smoothing: float = 0.9, continue_next_engine: bool = True):
         self.patience: int = patience
         self.no_improvement_iter: int = 0
         self.best_error: t.Optional[float] = None
@@ -174,27 +174,22 @@ class PatienceObserver(Observer):
         plan: EnginePlan, **kwargs: t.Any
     ):
         self.no_improvement_iter = 0
-
-    def _error_from_state(self, state: t.Union[ReconsState, PartialReconsState]) -> t.Optional[float]:
-        if state.progress is None or (progress := state.progress['total_loss']) is None or not len(progress.values):
-            return None
-        return progress.values[-1]
+        self.best_error = None
+        self.smoothed_error = None
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         if (error := errors.get('total_loss')) is None:
             return
 
-        if self.best_error is None or error < self.best_error:
-            self.best_error = error
+        # Exponential moving average
+        self.smoothed_error = error if self.smoothed_error is None else \
+            (1. - self.smoothing) * self.smoothed_error + self.smoothing * error
+
+        if self.best_error is None or self.smoothed_error < self.best_error:
+            self.best_error = self.smoothed_error
             self.no_improvement_iter = 0
         else:
             self.no_improvement_iter += 1
-
-        # Exponential moving average
-        if self.smoothed_error is None:
-            self.smoothed_error = error
-        else:
-            self.smoothed_error = (1 - self.smoothing) * self.smoothed_error + self.smoothing * error
 
         if self.no_improvement_iter >= self.patience:
             logging.info(f"Early termination: no improvement for {self.patience} iterations")

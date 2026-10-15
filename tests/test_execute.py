@@ -1,10 +1,13 @@
+import logging
+import re
 import typing as t
 from pathlib import Path
 
 import pytest
 
-from phaser.execute import execute_plan
+from phaser.execute import execute_plan, initialize_reconstruction
 from phaser.hooks import EngineArgs, EngineHook
+from phaser.observer import LoggingObserver, Observer, PatienceObserver
 from phaser.plan import EnginePlan, ReconsPlan
 from phaser.state import ReconsState
 
@@ -12,8 +15,8 @@ from phaser.state import ReconsState
 class FakeEnginePlan(EnginePlan, kw_only=True):
     fail_at: t.Optional[int] = None
     """Iteration to raise an exception at"""
-    plateau_at: t.Optional[int] = None
-    """Iteration after which the loss stops improving"""
+    losses: t.Optional[t.List[t.Optional[float]]] = None
+    """Loss at each iteration (`None` to omit `total_loss`). Defaults to `1/i`"""
 
 
 def run_fake_engine(args: EngineArgs, props: FakeEnginePlan) -> ReconsState:
@@ -30,11 +33,23 @@ def run_fake_engine(args: EngineArgs, props: FakeEnginePlan) -> ReconsState:
 
         state.iter.engine_iter = i
         state.iter.total_iter = start_i + i
-        loss = 1. / (i if props.plateau_at is None else min(i, props.plateau_at))
-        observer.update_iteration(state, i, props.niter, {'total_loss': loss})
+        loss = 1. / i if props.losses is None else props.losses[i - 1]
+        observer.update_iteration(state, i, props.niter, {} if loss is None else {'total_loss': loss})
 
     observer.finish_engine(state)
     return state
+
+
+class RecordingObserver(Observer):
+    def __init__(self):
+        self.iters: list[int] = []
+        self.state: t.Optional[ReconsState] = None
+
+    def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
+        self.iters.append(int(state.iter.total_iter))
+
+    def finish_recons(self, state: ReconsState):
+        self.state = state
 
 
 @pytest.fixture(autouse=True)
@@ -200,7 +215,8 @@ def test_rerun_clears_finished(cwd: Path):
 
 def test_early_termination(cwd: Path):
     execute_plan(make_plan([
-        {'niter': 5, 'save': True, 'early_termination': 1, 'plateau_at': 2, 'save_options': ENGINE_DIRS},
+        {'niter': 5, 'save': True, 'early_termination': 1, 'early_termination_smoothing': 1.,
+         'losses': [1., .5, .5, .5, .5], 'save_options': ENGINE_DIRS},
         {'save': True, 'save_options': ENGINE_DIRS},
     ]))
     assert layout(cwd) == {
@@ -208,3 +224,102 @@ def test_early_termination(cwd: Path):
         'test/engine2/iter004.h5', 'test/engine2/iter005.h5', 'test/engine2/finished',
         'test/finished',
     }
+
+
+def test_early_termination_saves_final(cwd: Path):
+    execute_plan(make_plan([
+        {'niter': 5, 'save': {'every': 100}, 'early_termination': 1, 'losses': [1.] * 5},
+    ]))
+    assert layout(cwd) == {'test/iter002.h5', 'test/finished'}
+
+
+@pytest.mark.parametrize(('patience', 'smoothing', 'losses', 'expected'), [
+    pytest.param(1, 1., [5., 4., 3., 2., 1.], 5, id='improving'),
+    pytest.param(1, 1., [1., 1., 1., 1., 1.], 2, id='ties'),
+    pytest.param(2, 1., [1., 2., .5, 2., 2., .1], 5, id='reset_on_improvement'),
+    pytest.param(1, 1., [1., None, None, 2., .5], 4, id='missing_loss'),
+    pytest.param(0, 1., [1., 1., 1.], 3, id='disabled'),
+    pytest.param(2, 1., [1., .9, .2, .8, .7, .6, .5], 5, id='outlier_raw'),
+    pytest.param(2, .25, [1., .9, .2, .8, .7, .6, .5], 7, id='outlier_smoothed'),
+    pytest.param(2, 1., [1., 2., .9, 2., .8, 2., .7], 7, id='noisy_raw'),
+    pytest.param(2, .5, [1., 2., .9, 2., .8, 2., .7], 3, id='noisy_smoothed'),
+])
+def test_patience(cwd: Path, patience: int, smoothing: float, losses: list[t.Optional[float]], expected: int):
+    recorder = RecordingObserver()
+    execute_plan(make_plan([{
+        'niter': len(losses), 'losses': losses,
+        'early_termination': patience, 'early_termination_smoothing': smoothing,
+    }]), observers=recorder)
+    assert recorder.iters == list(range(1, expected + 1))
+
+
+@pytest.mark.parametrize('shared', [False, True], ids=['plan', 'shared_observer'])
+def test_patience_resets_per_engine(cwd: Path, shared: bool):
+    recorder = RecordingObserver()
+    patience = {'early_termination': 1, 'early_termination_smoothing': 1.}
+    engines = [{'losses': [.1, .05], **({} if shared else patience)}, {'losses': [1., .5], **({} if shared else patience)}]
+    observers = [recorder, PatienceObserver(1, smoothing=1.)] if shared else [recorder]
+
+    execute_plan(make_plan(engines), observers=observers)
+    assert recorder.iters == [1, 2, 3, 4]
+
+
+def _mask_times(msg: str) -> str:
+    return re.sub(r'(\d\d:)+\d\d\.\d{3}', '<t>', msg)
+
+
+def test_logging_transcript(cwd: Path, caplog: pytest.LogCaptureFixture):
+    caplog.set_level(logging.INFO)
+    execute_plan(make_plan([
+        {'niter': 3, 'losses': [1., 1., 1.], 'early_termination': 1, 'early_termination_smoothing': 1.},
+        {},
+    ]))
+    assert [_mask_times(r.getMessage()) for r in caplog.records if r.module == 'observer'] == [
+        "Initializing reconstruction...",
+        "Initialized reconstruction in <t>",
+        "Initializing engine...",
+        "Engine initialized",
+        "Finished iter 1/3 [<t>] Error: 1.000e+00",
+        "Finished iter 2/3 [<t>] Error: 1.000e+00",
+        "Early termination: no improvement for 1 iterations",
+        "Engine finished!",
+        "Total engine time: <t>",
+        "Initializing engine...",
+        "Engine initialized",
+        "Finished iter 1/2 [<t>] Error: 1.000e+00",
+        "Finished iter 2/2 [<t>] Error: 5.000e-01",
+        "Engine finished!",
+        "Total engine time: <t>",
+        "Finished reconstruction!",
+        "Total reconstruction time: <t>",
+    ]
+
+
+@pytest.mark.parametrize(('i', 'n', 'errors', 'expected'), [
+    pytest.param(1, 2, {'total_loss': .5}, "Finished iter 1/2 Error: 5.000e-01", id='basic'),
+    pytest.param(1, 10, {'total_loss': .5}, "Finished iter  1/10 Error: 5.000e-01", id='width'),
+    pytest.param(1, 2, {'total_loss': 0.}, "Finished iter 1/2 Error: 0.000e+00", id='zero_loss'),
+    pytest.param(1, 2, {}, "Finished iter 1/2", id='no_loss'),
+    pytest.param(1, 2, {'total_loss': .5, 'a': 1., 'b': 2.},
+                 "Finished iter 1/2 Error: 5.000e-01\n    Error breakdown: a: 1.000e+00, b: 2.000e+00", id='breakdown'),
+])
+def test_logging_iteration(caplog: pytest.LogCaptureFixture, i: int, n: int, errors: dict[str, float], expected: str):
+    state = initialize_reconstruction(make_plan([{}]), override_observers=[]).state
+    caplog.set_level(logging.INFO)
+    LoggingObserver().update_iteration(state, i, n, errors)
+    assert [r.getMessage() for r in caplog.records] == [expected]
+
+
+def test_logging_progress(cwd: Path):
+    recorder = RecordingObserver()
+    execute_plan(make_plan([
+        {'niter': 3, 'losses': [1., 1., 1.], 'early_termination': 1, 'early_termination_smoothing': 1.},
+        {},
+    ]), observers=recorder)
+
+    assert recorder.state is not None
+    utc, time = recorder.state.progress['utc'], recorder.state.progress['time']
+    assert utc.iters == [-1, 0, 1, 2, 3, 4]
+    assert time.iters == [0, 1, 2, 3, 4]
+    assert utc.values == sorted(utc.values)
+    assert time.values == sorted(time.values)

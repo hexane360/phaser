@@ -94,7 +94,6 @@ def execute_engine(
         engine_observer.finish_engine(recons.state)
 
         if not e.continue_next_engine:
-            engine_observer.finish_recons(recons.state)
             raise
 
     return recons
