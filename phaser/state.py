@@ -1,3 +1,5 @@
+"""Reconstruction state dataclasses."""
+
 import typing as t
 
 import numpy
@@ -17,12 +19,15 @@ if t.TYPE_CHECKING:
 
 @tree_dataclass
 class Patterns:
+    """Diffraction patterns and their mask."""
+
     patterns: NDArray[numpy.floating]
-    """Raw diffraction patterns, with 0-frequency sample in corner"""
+    """Diffraction patterns, with the zero-frequency sample at the corner."""
     pattern_mask: NDArray[numpy.floating]
-    """Mask indicating which portions of the diffraction patterns contain data."""
+    """Mask of the pixels of `patterns` that contain data."""
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             to_numpy(self.patterns), to_numpy(self.pattern_mask)
         )
@@ -30,19 +35,22 @@ class Patterns:
 
 @tree_dataclass
 class IterState:
+    """Iteration counters."""
+
     engine_num: int
-    """Engine number. 1-indexed (0 means before any reconstruction)."""
+    """Engine number, 1-indexed. `0` before any engine has started."""
     engine_iter: int
-    """Iteration number on this engine. 1-indexed (0 means before any iterations)."""
+    """Iteration number within the engine, 1-indexed. `0` before any iterations."""
     total_iter: int
-    """Total iteration number. 1-indexed (0 means before any iterations)."""
+    """Iteration number over all engines, 1-indexed. `0` before any iterations."""
 
     n_engine_iters: int | None = None
-    """Total number of iterations in this engine."""
+    """Number of iterations in this engine."""
     n_total_iters: int | None = None
-    """Total number of iterations in the reconstruction."""
+    """Number of iterations in the reconstruction."""
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             int(self.engine_num), int(self.engine_iter), int(self.total_iter),
             int(self.n_engine_iters) if self.n_engine_iters else None,
@@ -50,20 +58,24 @@ class IterState:
         )
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
     @staticmethod
     def empty() -> 'IterState':
+        """Return the state before any iterations."""
         return IterState(0, 0, 0)
 
 
 @tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
 class PixelatedProbeState:
+    """Probe sampled on a real-space grid."""
+
     sampling: Sampling
-    """Probe coordinate system. See `Sampling` for more details."""
+    """Probe coordinate system."""
     data: NDArray[numpy.complexfloating]
-    """Probe wavefunction, in realspace. Shape (modes, y, x)"""
+    """Real-space probe wavefunction. Shape `(modes, y, x)`."""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
     ty: t.Literal['pixelated'] = 'pixelated'
@@ -74,6 +86,10 @@ class PixelatedProbeState:
         order: int = 1,
         mode: '_InterpBoundaryMode' = 'grid-constant',
     ) -> Self:
+        """Return the probe resampled onto `new_samp`.
+
+        `rotation`, `order`, and `mode` are passed to `Sampling.resample`.
+        """
         new_data = self.sampling.resample(
             self.data, new_samp,
             rotation=rotation,
@@ -83,76 +99,87 @@ class PixelatedProbeState:
         return self.__class__(new_samp, new_data, self.meta)
 
     def to_xp(self, xp: t.Any) -> Self:
+        """Return a copy with arrays converted to the array module `xp`."""
         return self.__class__(
             self.sampling, xp.asarray(self.data), self.meta
         )
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             self.sampling, to_numpy(self.data), self.meta
         )
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
 
 # discriminated union of probe state types
 ProbeState: t.TypeAlias = PixelatedProbeState
+"""Probe state of any type."""
 
 
 @tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
 class PixelatedObjectState:
+    """Multislice object sampled on a real-space grid."""
+
     sampling: ObjectSampling
-    """Object coordinate system. See `ObjectSampling` for more details."""
+    """Object coordinate system."""
     data: NDArray[numpy.complexfloating]
-    """Object wavefunction. Shape (z, y, x)"""
+    """Object wavefunction. Shape `(z, y, x)`."""
     thicknesses: NDArray[numpy.floating]
-    """
-    Slice thicknesses (in length units).
-    Length < 2 for single slice, equal to the number of slices otherwise.
-    """
+    """Slice thicknesses [angstrom]. Length is less than 2 for a single slice, and the number of slices otherwise."""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
     ty: t.Literal['pixelated'] = 'pixelated'
 
     def to_xp(self, xp: t.Any) -> Self:
+        """Return a copy with arrays converted to the array module `xp`."""
         return self.__class__(
             self.sampling, xp.asarray(self.data), xp.asarray(self.thicknesses), self.meta,
         )
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             self.sampling, to_numpy(self.data), to_numpy(self.thicknesses), self.meta,
         )
 
     def zs(self) -> NDArray[numpy.floating]:
+        """Return the depth of the top of each slice [angstrom]."""
         xp = get_array_module(self.thicknesses)
         if len(self.thicknesses) < 2:
             return xp.asarray([0.], dtype=self.thicknesses.dtype)
         return xp.cumsum(self.thicknesses) - self.thicknesses
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
 
 # discriminated union of object state types
 ObjectState: t.TypeAlias = PixelatedObjectState
+"""Object state of any type."""
 
 
 @tree_dataclass(static_fields=('meta',))
 class ScanState:
+    """Scan positions and per-position tilts."""
+
     data: NDArray[numpy.floating]
-    """Scan coordinates (y, x), in length units. Shape (..., 2)"""
+    """Scan coordinates `(y, x)` [angstrom]. Shape `(..., 2)`."""
     initial: NDArray[numpy.floating]
-    """Inital scan coordinates (y, x), in length units."""
+    """Initial scan coordinates `(y, x)` [angstrom]. Same shape as `data`."""
     tilt: NDArray[numpy.floating] | None = None
-    """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
+    """Tilt angles `(y, x)` per scan position [mrad]. Shape `(..., 2)`."""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
 
     def to_xp(self, xp: t.Any) -> Self:
+        """Return a copy with arrays converted to the array module `xp`."""
         return self.__class__(
             xp.asarray(self.data),
             xp.asarray(self.initial),
@@ -161,6 +188,7 @@ class ScanState:
         )
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             to_numpy(self.data),
             to_numpy(self.initial),
@@ -169,34 +197,44 @@ class ScanState:
         )
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
 
 @tree_dataclass
 class ProgressState:
+    """Time series of a progress measurement."""
+
     iters: list[int] = field(default_factory=list)
-    """Iterations error measurements were taken at."""
+    """Total iteration numbers of the measurements."""
     values: list[float] = field(default_factory=list)
-    """Detector error measurements at those iterations"""
+    """Measured values at those iterations."""
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
 
 @tree_dataclass(kw_only=True, drop_fields=('progress',))
 class ReconsState:
+    """Reconstruction state."""
+
     iter: IterState
+    """Iteration counters."""
     wavelength: Float
+    """Radiation wavelength [angstrom]."""
 
     probe: ProbeState
     object: ObjectState
     scan: ScanState
 
     progress: dict[str, ProgressState] = field(default_factory=dict)
+    """Progress measurements by name (e.g. `'total_loss'`)."""
 
     def to_xp(self, xp: t.Any) -> Self:
+        """Return a copy with arrays converted to the array module `xp`."""
         return self.__class__(
             iter=self.iter,
             probe=self.probe.to_xp(xp),
@@ -207,6 +245,7 @@ class ReconsState:
         )
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             iter=self.iter.to_numpy(),
             probe=self.probe.to_numpy(),
@@ -217,21 +256,30 @@ class ReconsState:
         )
 
     def copy(self) -> Self:
+        """Return a deep copy."""
         import copy
         return copy.deepcopy(self)
 
     def write_hdf5(self, file: 'HdfLike'):
+        """Write the state to an HDF5 file."""
         from phaser.utils.io import hdf5_write_state
         hdf5_write_state(self, file)
 
     @staticmethod
     def read_hdf5(file: 'HdfLike') -> 'ReconsState':
+        """Read a complete state from an HDF5 file.
+
+        Raises:
+            ValueError: If the file has no probe, object, scan, or wavelength.
+        """
         from phaser.utils.io import hdf5_read_state
         return hdf5_read_state(file).to_complete()
 
 
 @tree_dataclass(kw_only=True, static_fields=('progress',))
 class PartialReconsState:
+    """Reconstruction state with optional components, as read from a file."""
+
     iter: IterState | None = None
     wavelength: Float | None = None
 
@@ -241,6 +289,7 @@ class PartialReconsState:
     progress: dict[str, ProgressState] | None = None
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             iter=self.iter.to_numpy() if self.iter is not None else None,
             probe=self.probe.to_numpy() if self.probe is not None else None,
@@ -251,6 +300,11 @@ class PartialReconsState:
         )
 
     def to_complete(self) -> ReconsState:
+        """Return the complete state, with `iter` and `progress` defaulted if missing.
+
+        Raises:
+            ValueError: If the probe, object, scan, or wavelength is missing.
+        """
         missing = tuple(filter(lambda k: getattr(self, k) is None, ('probe', 'object', 'scan', 'wavelength')))
         if len(missing):
             raise ValueError(f"ReconsState missing {', '.join(map(repr, missing))}")
@@ -267,23 +321,29 @@ class PartialReconsState:
         )
 
     def write_hdf5(self, file: 'HdfLike'):
+        """Write the state to an HDF5 file."""
         from phaser.utils.io import hdf5_write_state
         hdf5_write_state(self, file)
 
     @staticmethod
     def read_hdf5(file: 'HdfLike') -> 'PartialReconsState':
+        """Read a state from an HDF5 file."""
         from phaser.utils.io import hdf5_read_state
         return hdf5_read_state(file)
 
 
 @tree_dataclass(static_fields=('name', 'observer'))
 class PreparedRecons:
+    """Reconstruction ready to run an engine."""
+
     patterns: Patterns
     state: ReconsState
     name: str
+    """Reconstruction name."""
     observer: 'ObserverSet'
 
     def to_xp(self, xp: t.Any) -> Self:
+        """Return a copy with arrays converted to the array module `xp`."""
         return self.__class__(
             self.patterns,
             self.state.to_xp(xp),
@@ -291,11 +351,13 @@ class PreparedRecons:
         )
 
     def to_numpy(self) -> Self:
+        """Return a copy with arrays converted to NumPy."""
         return self.__class__(
             self.patterns.to_numpy(), self.state.to_numpy(), self.name, self.observer
         )
 
     def with_observer(self, observer: t.Union['Observer', t.Iterable['Observer']]) -> Self:
+        """Return a copy with additional observer(s)."""
         from phaser.observer import Observer, ObserverSet
 
         observers = list(self.observer.inner)

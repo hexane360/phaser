@@ -1,3 +1,5 @@
+"""Execution of reconstruction plans."""
+
 import dataclasses
 import itertools
 import logging
@@ -27,6 +29,18 @@ def execute_plan(
     observers: t.Union[Observer, t.Iterable[Observer], None] = None,
     override_observers: t.Union[Observer, t.Iterable[Observer], None] = None,
 ):
+    """Execute all engines of a reconstruction plan.
+
+    Args:
+        plan: Plan to execute.
+        xp: Array module to use. Overrides `plan.backend`.
+        seed: Random seed passed to hooks.
+        name: Reconstruction name. Overrides `plan.name`.
+        init_state: Initial state. Overrides the plan's `init.state`.
+        observers: Observers to run in addition to the default saving and logging observers.
+        override_observers: Observers to run instead of the default observers.
+            Cannot be combined with `observers`.
+    """
     logging.basicConfig(level=logging.INFO)
     logging.info(str(version_info()))
 
@@ -56,6 +70,11 @@ def execute_engine(
     recons: PreparedRecons,
     engine: EngineHook,
 ) -> PreparedRecons:
+    """Prepare for and run a single engine.
+
+    Raises:
+        EarlyTermination: If the engine terminated early and `continue_next_engine` is `False`.
+    """
     xp = get_array_module(recons.state.object.data, recons.state.probe.data)
     dtype = recons.patterns.patterns.dtype.type
     plan = t.cast(EnginePlan, engine.props)
@@ -194,6 +213,14 @@ def load_raw_data(
     plan: ReconsPlan, xp: t.Any, seed: t.Any = None,
     init_state: t.Union[ReconsState, PartialReconsState, None] = None
 ) -> RawData:
+    """Load the plan's raw data and run its `post_load` hooks.
+
+    `plan.init.scan`, `plan.init.tilt` and `plan.init.probe` are merged over the corresponding hooks from the raw data.
+
+    Raises:
+        ValueError: If the wavelength, scan, or probe is not specified by the raw data,
+            `init_state`, or the plan, or if an `init` override has no raw data counterpart.
+    """
     dtype: type = numpy.float32 if plan.dtype == 'float32' else numpy.float64
 
     raw_data = plan.raw_data(None)
@@ -262,6 +289,20 @@ def initialize_reconstruction(
     observers: t.Union[Observer, t.Iterable[Observer], None] = None,
     override_observers: t.Union[Observer, t.Iterable[Observer], None] = None,
 ) -> PreparedRecons:
+    """Load data and initialize the probe, object, and scan of a reconstruction.
+
+    Args:
+        plan: Plan to initialize.
+        xp: Array module to use. Overrides `plan.backend`.
+        device: Device to use. Overrides `plan.device`.
+        seed: Random seed passed to hooks.
+        name: Reconstruction name. Overrides `plan.name`.
+        init_state: Initial state. Overrides the plan's `init.state`.
+            Its probe, object, and scan are reused unless overridden in `plan.init`.
+        observers: Observers to run in addition to the default saving and logging observers.
+        override_observers: Observers to run instead of the default observers.
+            Cannot be combined with `observers`.
+    """
     logging.basicConfig(level=logging.INFO)
 
     if xp is not None:
@@ -414,6 +455,11 @@ def initialize_reconstruction(
 
 
 def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine: EnginePlan) -> t.Tuple[Patterns, ReconsState]:
+    """Resample, pad, and reslice the patterns and state to match an engine's plan.
+
+    Raises:
+        ValueError: If a gradient engine is used with a backend other than `jax` or `torch`.
+    """
     # TODO: more graceful
     if isinstance(engine, GradientEnginePlan) and not (xp_is_jax(xp) or xp_is_torch(xp)):
         raise ValueError("The gradient descent engine requires the 'jax' or 'torch' backend.")
@@ -489,6 +535,12 @@ def prepare_for_engine(patterns: Patterns, state: ReconsState, xp: t.Any, engine
 
 
 def merge(left: t.Any, right: t.Any) -> t.Any:
+    """Recursively merge `right` over `left`.
+
+    `None` on either side defers to the other. Dicts, dataclasses, and `pane` objects
+    are merged key-wise, and hooks are merged if they refer to the same function.
+    Otherwise `right` wins.
+    """
     def _as_dict(val) -> t.Optional[dict]:
         if isinstance(val, dict):
             return val
