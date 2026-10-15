@@ -67,7 +67,8 @@ def open_hdf5(file: HdfLike, mode: str = 'r', **kwargs: t.Any) -> h5py.File:
     """Open `file` with `h5py.File`, or return it unchanged if it is already an `h5py.File`.
 
     Raises:
-        ValueError: If `mode` is invalid.
+        ValueError: If `mode` is invalid, or `mode` requests writing and `file` is a
+            read-only `h5py.File`.
     """
     if mode not in ('r', 'r+', 'w', 'w-', 'x', 'a'):
         raise ValueError("Invalid mode. Must be one of 'r', 'r+', 'w', 'w-', 'x', or 'a'.")

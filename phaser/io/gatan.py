@@ -228,7 +228,7 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Tuple[int, int],
 
     Args:
         path: Path to the `.dm4` file.
-        scan_shape: Scan shape `(n_y, n_x)`. Required.
+        scan_shape: Scan shape `(n_y, n_x)`.
         memmap: Load lazily (the result is then a lazy array, not a `numpy.ndarray`).
 
     Returns:

@@ -84,7 +84,7 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Tuple[int, int], *,
 
     Args:
         path: Path to the zip file.
-        scan_shape: Scan shape `(n_y, n_x)`. Required.
+        scan_shape: Scan shape `(n_y, n_x)`.
         memmap: Unused. The array is always read into memory.
         flips: Flips `(flip_y, flip_x, transpose)` applied to the diffraction patterns.
             Defaults to no flips.
