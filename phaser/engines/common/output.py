@@ -63,7 +63,7 @@ def _save_probe(state: ReconsState, out_path: Path, options: SaveOptions):
         return
 
     img = scale_to_integral_type(
-        colorize_complex(probe), options.img_dtype
+        colorize_complex(probe), options.img_dtype, vmin=0.,
     )
     with tifffile.TiffWriter(out_path, ome=True) as w:
         write_opts['metadata']['axes'] = 'CYXS'
@@ -75,7 +75,9 @@ def _save_probe_mag(state: ReconsState, out_path: Path, options: SaveOptions):
     write_opts = tiff_write_opts(state.probe.sampling, n_slices=probe_mag.shape[0])
 
     if options.img_dtype != 'float':
-        probe_mag = scale_to_integral_type(to_numpy(probe_mag), options.img_dtype, min_range=0.2)
+        probe_mag = scale_to_integral_type(
+            to_numpy(probe_mag), options.img_dtype, min_range=0.2, vmin=0.
+        )
 
     with tifffile.TiffWriter(out_path, ome=True) as w:
         write_opts['metadata']['axes'] = 'CYX'
@@ -95,7 +97,7 @@ def _save_probe_recip(state: ReconsState, out_path: Path, options: SaveOptions):
         return
 
     img = scale_to_integral_type(
-        colorize_complex(probe), options.img_dtype
+        colorize_complex(probe), options.img_dtype, vmin=0.
     )
     with tifffile.TiffWriter(out_path, ome=True) as w:
         write_opts['metadata']['axes'] = 'CYXS'
@@ -108,7 +110,9 @@ def _save_probe_recip_mag(state: ReconsState, out_path: Path, options: SaveOptio
     write_opts = tiff_write_opts_recip(state.probe.sampling, n_slices=probe_mag.shape[0])
 
     if options.img_dtype != 'float':
-        probe_mag = scale_to_integral_type(probe_mag, options.img_dtype, min_range=0.2)
+        probe_mag = scale_to_integral_type(
+            probe_mag, options.img_dtype, min_range=0.2, vmin=0.
+        )
 
     with tifffile.TiffWriter(out_path, ome=True) as w:
         write_opts['metadata']['axes'] = 'CYX'

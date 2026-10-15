@@ -132,7 +132,9 @@ def scale_to_integral_type(
     arr: NDArray[numpy.floating],
     ty: t.Literal['8bit', '16bit', '32bit', '64bit'],
     mask: t.Optional[NDArray[numpy.bool_]] = None,
-    min_range: t.Optional[float] = None,
+    min_range: t.Optional[float] = 1e-8,
+    vmin: t.Optional[float] = None,
+    vmax: t.Optional[float] = None,
 ) -> NDArray[numpy.unsignedinteger]:
     xp = get_array_module(arr)
 
@@ -147,15 +149,14 @@ def scale_to_integral_type(
 
     arr_crop = arr[..., mask] if mask is not None else arr
     # TODO: cupy doesn't support nanquantile
-    vmax = xp.nanquantile(arr_crop, 0.999)
-    vmin = xp.nanquantile(arr_crop, 0.001)
+    vmin_a = arr_crop.dtype.type(vmin) if vmin is not None else xp.nanquantile(arr_crop, 0.001)
+    vmax_a = arr_crop.dtype.type(vmax) if vmax is not None else xp.nanquantile(arr_crop, 0.999)
 
-    if min_range is not None and (delta := min_range - (vmax - vmin)) > 0:
-        # expand max and min to cover min_range
-        vmax += delta/2
-        vmin -= delta/2
+    if min_range is not None and (delta := min_range - (vmax_a - vmin_a)) > 0:
+        # expand max to cover min_range (this keeps actual values near black level)
+        vmax_a += delta
 
-    return (xp.clip((imax + 1) / (vmax - vmin) * (arr - vmin), 0, imax)).astype(dtype)
+    return (xp.clip((imax + 1) / (vmax_a - vmin_a) * (arr - vmin_a), 0, imax)).astype(dtype)
 
 
 _InterpBoundaryMode: t.TypeAlias = t.Literal['constant', 'nearest', 'mirror', 'reflect', 'wrap', 'grid-mirror', 'grid-wrap', 'grid-constant']
