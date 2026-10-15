@@ -1,3 +1,5 @@
+"""Base class for hooks."""
+
 from __future__ import annotations
 
 import abc
@@ -12,7 +14,19 @@ T = t.TypeVar('T')
 U = t.TypeVar('U')
 
 class Hook(t.Generic[T, U], abc.ABC):
+    """Reference to a user-configurable function, with optional properties.
+
+    Calling the hook calls the referenced function as `f(args, props=props)`. Attribute access
+    falls through to `props`.
+
+    Args:
+        ref: Function reference `module.path:function`.
+        type: Name of the known hook that `ref` was resolved from.
+        dependencies: Packages required by the function.
+    """
+
     known: t.ClassVar[t.Dict[str, t.Union[t.Tuple[str, type], t.Tuple[str, type, t.Tuple[str, ...]]]]] = {}
+    """Built-in hooks, mapping name to `(function reference, props type[, dependencies])`."""
 
     def __init__(
         self, ref: str, props: t.Optional[t.Any] = None, type: t.Optional[str] = None,
@@ -25,6 +39,7 @@ class Hook(t.Generic[T, U], abc.ABC):
         self.dependencies: t.Tuple[str, ...] = dependencies
 
     def func_ref(self) -> str:
+        """Return the known hook name if there is one, otherwise the function reference."""
         if self.type is not None:
             return self.type
         return self.ref
@@ -54,6 +69,13 @@ class Hook(t.Generic[T, U], abc.ABC):
         return f
 
     def resolve(self) -> t.Callable[..., U]:
+        """Import and return the referenced function.
+
+        Raises:
+            ValueError: If `ref` has no module path and is not a global name.
+            ImportError: If a dependency or the module is not importable.
+            AttributeError: If the module has no such function.
+        """
         if self.f is None:
             self.f = self._resolve_ref()
         return self.f
@@ -93,6 +115,11 @@ def _to_dict(val: t.Any) -> dict:
 
 
 class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
+    """`pane` converter for [`Hook`][phaser.hooks.hook.Hook] types.
+
+    Accepts a known hook name, a function reference, or a mapping with a `type` key and properties.
+    """
+
     def __init__(self, cls: t.Type[Hook[T, U]], handlers: ConverterHandlers):
         self.cls = cls
         self.inner: Converter[t.Union[str, t.Dict[str, t.Any]]] = make_converter(t.Union[str, t.Dict[str, t.Any]], handlers)
