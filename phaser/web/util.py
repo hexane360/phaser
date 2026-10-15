@@ -1,3 +1,4 @@
+"""Asyncio helpers."""
 import asyncio
 import contextlib
 import sys
@@ -10,11 +11,10 @@ if sys.version_info >= (3, 11):
 else:
     @contextlib.asynccontextmanager
     async def timeout(delay: t.Optional[float]) -> t.AsyncIterator[None]:
-        """`asyncio.timeout` for 3.10: cancel the enclosing task after `delay` seconds and raise
-        `TimeoutError` instead.
+        """Backport of `asyncio.timeout`: raise `TimeoutError` if the block runs longer than `delay` seconds.
 
-        Lacking 3.11's `uncancel`, this can't distinguish its own expiry from a cancellation
-        arriving at the same moment, and nesting two attributes the timeout to the inner one.
+        Cannot distinguish its own expiry from a simultaneous cancellation, and nested
+        timeouts are attributed to the inner one.
         """
         if delay is None:
             yield

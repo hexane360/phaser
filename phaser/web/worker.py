@@ -1,3 +1,4 @@
+"""Worker process: polls the server for jobs, runs them, and reports progress."""
 import dataclasses
 import datetime
 import logging
@@ -37,9 +38,7 @@ from .types import (
 
 
 def failure_log(job_id: JobID, e: BaseException, formatted: str) -> LogMessage:
-    """The failure's log record, pointing at the frame that *raised* rather than the one
-    that caught -- the same module/function/line a `logger.error` at the raise site would
-    have carried. The server appends this to the job's log as-is."""
+    """Return the log record for job failure `e`, located at the frame that raised it."""
     frame, lineno = None, 0
     tb = e.__traceback__
     while tb is not None:
@@ -59,6 +58,10 @@ def failure_log(job_id: JobID, e: BaseException, formatted: str) -> LogMessage:
 
 
 class LogHandler(logging.Handler):
+    """Logging handler that forwards records to the server as `LogMessage`s.
+
+    Records with `extra={'local': True}` are not sent.
+    """
     def __init__(self, send_message: t.Callable[[WorkerMessage], ServerResponse]):
         self.send_message = send_message
         self.job_id: t.Optional[JobID] = None
@@ -76,6 +79,7 @@ class LogHandler(logging.Handler):
 
 
 class WorkerObserver(Observer):
+    """Execution observer that sends state updates to the server and raises `SignalException` on its signals."""
     def __init__(self, job_id: JobID, send_message: t.Callable[[WorkerMessage], ServerResponse]):
         super().__init__()
 
@@ -87,6 +91,11 @@ class WorkerObserver(Observer):
         self.send_every_group: bool = False
 
     def send_message(self, msg: WorkerMessage) -> t.Optional[ServerResponse]:
+        """Send `msg` and return the response, or `None` if the request failed.
+
+        Raises:
+            SignalException: If the server responds with a signal.
+        """
         try:
             resp = self._send_message(msg)
         except (requests.RequestException, pane.ConvertError):
@@ -99,6 +108,7 @@ class WorkerObserver(Observer):
         return resp
 
     def send_update(self, state: t.Union[ReconsState, PartialReconsState]):
+        """Send the non-`None` fields of `state` as an `UpdateMessage`."""
         self.send_message(UpdateMessage.make_unchecked(
             {k: v for (k, v) in dataclasses.asdict(state.to_numpy()).items() if v is not None},
             self.job_id
@@ -113,6 +123,7 @@ class WorkerObserver(Observer):
         self.send_update(init_state)
 
     def heartbeat(self):
+        """Send a ping if no message was sent in the last 5 s."""
         if (time.monotonic() - self.msg_time) > 5:
             self.send_message(PingMessage())
 
@@ -125,7 +136,7 @@ class WorkerObserver(Observer):
 
 
 REQUEST_TIMEOUT: t.Tuple[float, float] = (10., 60.)
-"""(connect, read) timeout for requests to the server"""
+"""`(connect, read)` timeout for requests to the server [s]."""
 
 
 def _error_detail(resp: requests.Response) -> str:
@@ -136,6 +147,11 @@ def _error_detail(resp: requests.Response) -> str:
 
 
 def run_worker(url: str, quiet: bool = False):
+    """Run a worker reporting to the server at `url` until it is told to shut down.
+
+    Connects, then polls for jobs and runs them. Exits with `RELOAD_EXIT_CODE` on a reload
+    signal. If `quiet`, logs go to the server only, not stderr.
+    """
     connect_message = ConnectMessage(
         hostname=socket.gethostname(),
         backends=tuple((backend, repr_device(device)) for (backend, device) in get_devices())
