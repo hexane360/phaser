@@ -349,6 +349,9 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         if k not in state.progress:
             state.progress[k] = ProgressState()
 
+    # created once: creating arrays from Python scalars costs ~2 ms each on jax
+    zero_loss = t.cast(numpy.floating, xp.array(0.0))
+
     # progress gets clobbered by the jits, so we keep track of it manually
     progress = state.progress
 
@@ -367,7 +370,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         iter_shuffle_groups = shuffle_groups({'state': state, 'niter': props.niter})
 
         # accumulated losses across groups
-        losses_gpu = {k: t.cast(numpy.floating, xp.array(0.0)) for k in loss_keys}
+        losses_gpu = {k: zero_loss for k in loss_keys}
 
         # update schedules for this iteration
         # this needs to be done outside the JIT context, which makes this kinda hacky
