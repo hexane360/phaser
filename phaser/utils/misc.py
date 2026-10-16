@@ -120,7 +120,8 @@ def create_sparse_groupings(shape: int | t.Iterable[int] | NDArray[numpy.floatin
     idxs = idxs.reshape(idxs.shape[0], -1).T
 
     rng = create_rng(seed, f'groupings_{i}' if i != 0 else 'groupings')
-    rng.shuffle(idxs)
+    # same permutation as `rng.shuffle(idxs)`, but much faster for 2D arrays
+    idxs = idxs[rng.permutation(idxs.shape[0])]
     return numpy.array_split(idxs.T, numpy.ceil(idxs.shape[0] / max_grouping).astype(numpy.int64), axis=-1)
 
 
