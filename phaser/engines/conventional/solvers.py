@@ -172,7 +172,7 @@ def lsqml_dry_run(
     xp = cast_array_module(sim.xp)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
-    obj_mag += xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    obj_mag += xp.sum(abs2(xp.prod(group_obj, axis=0)), axis=0)
     obj_grid = sim.state.object.sampling
 
     def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
@@ -182,7 +182,7 @@ def lsqml_dry_run(
         )
 
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+            psi = ifft2(fft2(psi * group_obj[slice_i, :, None]) * prop[:, None])
 
         return (probe_mag, psi)
 
@@ -243,8 +243,8 @@ def lsqml_run(
     psi = at(psi, 0).set(probes)
 
     group_probe_mag = xp.zeros_like(probe_mag)
-    #group_obj_mag = xp.sum(abs2(group_obj[:, 0]), axis=0)
-    group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    #group_obj_mag = xp.sum(abs2(group_obj[0]), axis=0)
+    group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=0)), axis=0)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
         (group_probe_mag, psi) = state
@@ -255,7 +255,7 @@ def lsqml_run(
 
         if prop is not None:
             psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[:, slice_i, None]) * prop[:, None])
+                ifft2(fft2(psi[slice_i] * group_obj[slice_i, :, None]) * prop[:, None])
             )
 
         return (group_probe_mag, psi)
@@ -267,7 +267,7 @@ def lsqml_run(
     new_obj_mag += group_obj_mag
     new_probe_mag += group_probe_mag
 
-    model_wave = fft2(psi[-1] * group_obj[:, -1, None])
+    model_wave = fft2(psi[-1] * group_obj[-1, :, None])
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
@@ -285,7 +285,7 @@ def lsqml_run(
     def update_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
         (sim, chi) = state
 
-        delta_P = chi * xp.conj(group_obj[:, slice_i, None])
+        delta_P = chi * xp.conj(group_obj[slice_i, :, None])
 
         if update_object:
             delta_O = chi * xp.conj(psi[slice_i])
@@ -306,7 +306,7 @@ def lsqml_run(
             delta_P_avg /= (group_obj_mag + illum_reg_probe)
 
             # update step per probe mode
-            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * group_obj[:, slice_i, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * group_obj[:, slice_i, None])) + gamma)
+            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * group_obj[slice_i, :, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * group_obj[slice_i, :, None])) + gamma)
 
             probe_update = beta_probe * xp.sum(alpha_P * delta_P_avg * group_obj_mag, axis=0) / (group_obj_mag + eps)
             sim.state.probe.data += probe_update
@@ -319,7 +319,7 @@ def lsqml_run(
         def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
-            prod = delta_P_x * group_obj[:, 0, None]
+            prod = delta_P_x * group_obj[0, :, None]
             alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
             return alpha
 
@@ -463,7 +463,7 @@ def epie_dry_run(
 
     def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+            psi = ifft2(fft2(psi * group_obj[slice_i, :, None]) * prop[:, None])
 
         return psi
 
@@ -516,7 +516,7 @@ def epie_run(
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
             psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[:, slice_i, None]) * prop[:, None])
+                ifft2(fft2(psi[slice_i] * group_obj[slice_i, :, None]) * prop[:, None])
             )
 
         return psi
@@ -525,7 +525,7 @@ def epie_run(
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
     psi = slice_forwards(props, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
 
-    model_wave = fft2(psi[-1] * group_obj[:, -1, None])
+    model_wave = fft2(psi[-1] * group_obj[-1, :, None])
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
@@ -540,8 +540,8 @@ def epie_run(
     def update_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
         (sim, chi) = state
 
-        probe_update = group_obj[:, slice_i, None].conj() * chi / xp.max(
-            abs2(group_obj[:, slice_i, None]),
+        probe_update = group_obj[slice_i, :, None].conj() * chi / xp.max(
+            abs2(group_obj[slice_i, :, None]),
             axis=(-1, -2), keepdims=True
         )
 
@@ -571,7 +571,7 @@ def epie_run(
         def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
             delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
-            prod = delta_P_x * group_obj[:, 0, None]
+            prod = delta_P_x * group_obj[0, :, None]
             alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
             return alpha
 

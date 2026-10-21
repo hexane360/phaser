@@ -402,7 +402,10 @@ class ObjectSampling:
         return ObjectCutout(self, xp.asarray(arr), xp.asarray(pos), shape)
 
     def get_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, shape: t.Tuple[int, ...]) -> NDArray[NumT]:
-        """Return cutouts of `arr` of shape `shape` around positions `pos`."""
+        """Return cutouts of `arr` of shape `shape` around positions `pos`.
+
+        The result has shape `(*arr.shape[:-2], *pos.shape[:-1], *shape[-2:])`.
+        """
         return self.cutout(arr, pos, shape).get()
 
     def set_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, view: numpy.ndarray) -> NDArray[NumT]:
@@ -577,10 +580,10 @@ class ObjectCutout(t.Generic[DTypeT]):
     @property
     def shape(self) -> t.Tuple[int, ...]:
         """Shape of the result of `get`."""
-        return (*self.pos.shape[:-1], *self.obj.shape[:-2], *self.cutout_shape[-2:])
+        return (*self.obj.shape[:-2], *self.pos.shape[:-1], *self.cutout_shape[-2:])
 
     def get(self) -> NDArray[DTypeT]:
-        """Return the cutouts, of shape `(*pos.shape[:-1], *obj.shape[:-2], *cutout_shape[-2:])`."""
+        """Return the cutouts, of shape `(*obj.shape[:-2], *pos.shape[:-1], *cutout_shape[-2:])`."""
         if is_jax(self.obj):
             from ._jax_kernels import get_cutouts
             return t.cast(NDArray[DTypeT], get_cutouts(self.obj, self._start_idxs, tuple(self.cutout_shape)))
@@ -600,7 +603,7 @@ class ObjectCutout(t.Generic[DTypeT]):
         out = xp.empty(self.shape, dtype=self.obj.dtype)
         for idx in numpy.ndindex(self.pos.shape[:-1]):
             # todo make slices outside of loop
-            out[tuple(idx)] = self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], self.cutout_shape))]
+            out[(Ellipsis, *idx, slice(None), slice(None))] = self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], self.cutout_shape))]
 
         return out
 
@@ -624,7 +627,9 @@ class ObjectCutout(t.Generic[DTypeT]):
 
         for idx in numpy.ndindex(self.pos.shape[:-1]):
             # todo make slices outside of loop
-            self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], view.shape))] = view[idx]
+            self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], view.shape))] = view[(
+                Ellipsis, *idx, slice(None), slice(None)
+            )]
         return self
 
     def add(self, view: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:
@@ -647,7 +652,9 @@ class ObjectCutout(t.Generic[DTypeT]):
 
         for idx in numpy.ndindex(self.pos.shape[:-1]):
             # todo make slices outside of loop
-            self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], view.shape))] += view[idx]  # type: ignore
+            self.obj[(Ellipsis, *self.sampling.slice_at_pos(self.pos[idx], view.shape))] += view[(
+                Ellipsis, *idx, slice(None), slice(None)
+            )]  # type: ignore
         return self
 
     def _with_obj(self, obj: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:

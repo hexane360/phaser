@@ -32,8 +32,7 @@ def set_cutouts(obj: cupy.ndarray, cutouts: cupy.ndarray, start_idxs: cupy.ndarr
     assert obj.flags.c_contiguous
 
     # cutouts must be the correct shape
-    assert cutouts.shape[:-2] == (*start_idxs.shape[:-1], *obj.shape[:-2])
-    assert obj.shape[:-2] == cutouts.shape[-obj.ndim:-2]
+    assert cutouts.shape[:-2] == (*obj.shape[:-2], *start_idxs.shape[:-1])
     assert start_idxs.shape[-1] == 2
 
     n_cutouts = numpy.prod((1, *start_idxs.shape[:-1]))
@@ -60,7 +59,7 @@ def get_cutouts(obj: cupy.ndarray, start_idxs: cupy.ndarray, cutout_shape: t.Tup
 
     # check start_idxs shape
     assert start_idxs.shape[-1] == 2
-    cutouts = cupy.empty((*start_idxs.shape[:-1], *obj.shape[:-2], *cutout_shape), dtype=obj.dtype)
+    cutouts = cupy.empty((*obj.shape[:-2], *start_idxs.shape[:-1], *cutout_shape), dtype=obj.dtype)
     # output array must be contiguous
     assert cutouts.flags.c_contiguous
 
@@ -91,8 +90,7 @@ def add_cutouts(obj: cupy.ndarray, cutouts: cupy.ndarray, start_idxs: cupy.ndarr
     assert obj.flags.c_contiguous
 
     # cutouts must be the correct shape
-    assert cutouts.shape[:-2] == (*start_idxs.shape[:-1], *obj.shape[:-2])
-    assert obj.shape[:-2] == cutouts.shape[-obj.ndim:-2]
+    assert cutouts.shape[:-2] == (*obj.shape[:-2], *start_idxs.shape[:-1])
     assert start_idxs.shape[-1] == 2
 
     n_cutouts = numpy.prod((1, *start_idxs.shape[:-1]))
@@ -183,10 +181,9 @@ void {kernel_name}({const_s[0]}T *obj, {const_s[1]}T *cutouts, const long long *
     size_t          i = blockIdx.y * blockDim.y + threadIdx.y;
     size_t cutout_num = blockIdx.z * blockDim.z + threadIdx.z;
 
-    size_t     object_num = cutout_num % n_objects;
-    size_t pos_cutout_num = cutout_num / n_objects;
-
-    
+    // cutouts are object-major: (*obj.shape[:-2], *start_idxs.shape[:-1], y, x)
+    size_t     object_num = cutout_num / n_cutouts;
+    size_t pos_cutout_num = cutout_num % n_cutouts;
 
     // check if our thread is outside the requested cutout
     if (pos_cutout_num >= n_cutouts || object_num >= n_objects || i >= cutout_shape_y || j >= cutout_shape_x) {{

@@ -14,18 +14,13 @@ from phaser.utils.num import _PadMode
 
 
 def get_cutouts(obj: torch.Tensor, start_idxs: torch.Tensor, cutout_shape: t.Tuple[int, int]) -> torch.Tensor:
-    #out_shape = (*start_idxs.shape[:-1], *obj.shape[:-2], *cutout_shape)
+    # out shape: (*obj.shape[:-2], *start_idxs.shape[:-1], *cutout_shape)
     ys, xs = torch.arange(cutout_shape[0], device=obj.device), torch.arange(cutout_shape[1], device=obj.device)
     yy, xx = torch.meshgrid(ys, xs, indexing='ij')
     yy = start_idxs[..., 0][..., None, None] + yy
     xx = start_idxs[..., 1][..., None, None] + xx
 
-    out = obj[..., yy, xx]
-    if obj.ndim > 2:
-        # oof
-        out = torch.permute(out, (*(i + obj.ndim - 2 for i in range(start_idxs.ndim - 1)), *range(obj.ndim - 2), -2, -1))
-        #assert out.shape == out_shape
-    return out
+    return obj[..., yy, xx]
 
 
 _TORCH_TO_NUMPY_DTYPE: t.Dict[torch.dtype, t.Type[numpy.generic]] = {

@@ -337,7 +337,8 @@ def cutout_group(
 ):
     """Return `(probes, obj, scan)`: sub-pixel shifted probes, object cutouts, and scan positions for `group`.
 
-    Probes have shape `(len(group), modes, Ny, Nx)`. If `return_filters`, the sub-pixel shift
+    Probes have shape `(len(group), modes, Ny, Nx)`, and object cutouts have shape
+    `(slices, len(group), Ny, Nx)`. If `return_filters`, the sub-pixel shift
     filters are appended.
     """
     probes = state.probe.data

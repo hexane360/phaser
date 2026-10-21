@@ -583,8 +583,8 @@ def run_model(
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[:, slice_i, None], shift=False) * prop[:, None], shift=False)
-        return psi * group_obj[:, slice_i, None]
+            return ifft2(fft2(psi * group_obj[slice_i, :, None], shift=False) * prop[:, None], shift=False)
+        return psi * group_obj[slice_i, :, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilts)
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
@@ -639,8 +639,8 @@ def dry_run(
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[:, slice_i, None], shift=False) * prop[:, None], shift=False)
-        return psi * group_obj[:, slice_i, None]
+            return ifft2(fft2(psi * group_obj[slice_i, :, None], shift=False) * prop[:, None], shift=False)
+        return psi * group_obj[slice_i, :, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilt)
     model_wave = fft2(slice_forwards(t_props, probes, sim_slice), shift=False)
