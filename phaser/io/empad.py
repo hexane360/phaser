@@ -269,8 +269,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
             voltage=float(get(toml, 'microscope.high_tension.voltage')),  # V
             conv_angle=None if conv_angle is None else float(conv_angle) * 1e3,  # rad to mrad
             camera_length=float(get(optics, 'camera_length')),  # m
-            # TODO: units unresolved, assumed to be degrees
-            scan_rotation=float(get(optics, 'scan_rotation')),
+            scan_rotation=float(get(optics, 'scan_rotation')) * 180. / numpy.pi,  # rad to deg
             scan_shape=scan_shape,
             scan_fov=fov,
             scan_step=scan_step,

@@ -64,6 +64,11 @@ def test_read_empad2_toml_metadata(tmp_path):
     metadata = EmpadMetadata.from_toml(toml_path)
     assert metadata.raw_filename == 'other.raw'
 
+    # scan_rotation is stored in radians
+    toml_path.write_text(toml_path.read_text().replace('scan_rotation = 0.0', 'scan_rotation = 1.5707963267948966'))
+    metadata = EmpadMetadata.from_toml(toml_path)
+    assert metadata.scan_rotation == pytest.approx(90.0)
+
     # only raster scans are 4D STEM datasets
     toml_path.write_text(toml_path.read_text().replace('"stem_raster"', '"other"'))
     with pytest.raises(UnscannedDataset):
