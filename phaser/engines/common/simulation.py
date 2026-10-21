@@ -216,11 +216,14 @@ class ResidentPatterns(PatternSource):
     Before yielding a group, waits until the group `max_in_flight` groups earlier is
     released, i.e. until the output passed to `release_after` is ready. Groups which aren't
     released explicitly don't limit iteration.
+
+    The default `max_in_flight=2` keeps a group queued behind the one running, so the
+    device doesn't idle while the next group is dispatched.
     """
 
     def __init__(
         self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
-        xp: t.Any, max_in_flight: int = 1,
+        xp: t.Any, max_in_flight: int = 2,
     ):
         super().__init__()
         if max_in_flight < 1:

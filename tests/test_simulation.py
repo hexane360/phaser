@@ -158,3 +158,21 @@ def test_pattern_stream_close():
     outputs[1].ready.set()
     time.sleep(0.05)
     assert patterns.loaded == [0, 1]
+
+
+def test_resident_patterns_max_in_flight():
+    patterns = numpy.zeros((10, 4, 4), dtype=numpy.float32)
+    source = ResidentPatterns(_groups(4), patterns, numpy, max_in_flight=2)
+    it = iter(source)
+    outputs = [_Output() for _ in range(4)]
+    for output in outputs:
+        output.ready.set()
+
+    for i in range(2):
+        next(it)
+        source.release_after(outputs[i])
+    assert not any(output.waited for output in outputs)
+    # group 2 waits for group 0, but not group 1
+    next(it)
+    assert outputs[0].waited
+    assert not outputs[1].waited
