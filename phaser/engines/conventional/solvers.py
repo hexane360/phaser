@@ -1,4 +1,4 @@
-"""ePIE and LSQML solvers for the conventional engine."""
+"""Solvers for the conventional engine."""
 
 from functools import partial
 import logging
@@ -163,7 +163,7 @@ def lsqml_dry_run(
     obj_mag: NDArray[numpy.floating],
     probe_mag: NDArray[numpy.floating]
 ) -> t.Tuple[NDArray[numpy.floating], NDArray[numpy.floating], NDArray[numpy.floating]]:
-    """Accumulate object and probe illumination for `group` without updating `sim`.
+    """Solve for initial object and probe illumination.
 
     Returns:
         `(obj_mag, probe_mag, rescale)`, where `rescale` is the ratio of experimental to
@@ -334,7 +334,7 @@ def lsqml_run(
 
 
 class EPIESolver(ConventionalSolver):
-    """Extended ptychographic iterative engine (ePIE) solver. Multislice objects use 3PIE."""
+    """ePIE solver."""
 
     def __init__(self, engine_plan: ConventionalEnginePlan, props: EPIESolverPlan):
         self.engine_plan: ConventionalEnginePlan = engine_plan

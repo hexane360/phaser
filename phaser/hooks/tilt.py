@@ -21,9 +21,11 @@ def generate_global_tilt(args: TiltHookArgs, props: GlobalTiltProps) -> NDArray[
 
 
 def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[numpy.floating]:
-    """Load a tilt array of shape `(ny, nx, 2)` [mrad] from a `.npy` file.
+    """
+    Load tilt array from a .npy file.
 
-    A file of shape `(ny*nx, 2)` is reshaped.
+    The loaded array can have shape (ny, nx, 2) matching props.shape,
+    or shape (N, 2) where N == ny*nx, which will be reshaped accordingly.
 
     Raises:
         FileNotFoundError: If the file does not exist.

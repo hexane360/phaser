@@ -44,12 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 class GroupManager:
-    """Partition of scan positions into groups of size `grouping` (default 64).
-
-    Args:
-        compact: Form spatially compact groups instead of sparse ones.
-        seed: Seed for group formation and shuffling.
-    """
+    """Manager for creating and iterating over groups of probe positions."""
 
     def __init__(
         self,
@@ -58,6 +53,13 @@ class GroupManager:
         compact: bool = False,
         seed: t.Any = None,
     ):
+        """
+        Args:
+            scan: Probe positions `(..., 2)`.
+            grouping: Group size. Defaults to 64.
+            compact: Form spatially compact groups instead of sparse ones.
+            seed: Seed for group formation and shuffling.
+        """
         self.grouping = grouping or 64
         self.compact = compact
         self.seed = seed
@@ -360,9 +362,11 @@ def slice_forwards(
     f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT], *,
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
-    """Thread `state` through `f(i, props[i], state)` for slices `i = 0..n-2`, then `f(n-1, None, state)`.
+    """Fold `f` forwards over slices.
 
-    Uses `jax.lax.scan` for JAX arrays. `jit_unroll_slices` is its `unroll` argument.
+    `f` receives the slice index, the propagator to the next slice (`None` for the last
+    slice), and the state, and returns the updated state. `jit_unroll_slices` is passed
+    to `jax.lax.scan` as `unroll`.
     """
     if props is None:
         return f(0, None, state)
@@ -390,9 +394,11 @@ def slice_backwards(
     f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT],
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
-    """Thread `state` through `f(i, props[i-1], state)` for slices `i = n-1..1`, then `f(0, None, state)`.
+    """Fold `f` backwards over slices.
 
-    Uses `jax.lax.fori_loop` for JAX arrays. `jit_unroll_slices` is its `unroll` argument.
+    `f` receives the slice index, the propagator from the previous slice (`None` for the
+    first slice), and the state, and returns the updated state. `jit_unroll_slices` is
+    passed to `jax.lax.fori_loop` as `unroll`.
     """
     if props is None:
         return f(0, None, state)

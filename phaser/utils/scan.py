@@ -1,4 +1,4 @@
-"""Utilities for probe positions and scans."""
+"""Scan creation utilities."""
 
 import typing as t
 

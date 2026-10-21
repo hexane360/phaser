@@ -22,9 +22,9 @@ class Patterns:
     """Diffraction patterns and their mask."""
 
     patterns: NDArray[numpy.floating]
-    """Diffraction patterns, with the zero-frequency sample at the corner."""
+    """Raw diffraction patterns, with 0-frequency sample in corner"""
     pattern_mask: NDArray[numpy.floating]
-    """Mask of the pixels of `patterns` that contain data."""
+    """Mask indicating which portions of the diffraction patterns contain data."""
 
     def to_numpy(self) -> Self:
         """Return a copy with arrays converted to NumPy."""
@@ -38,16 +38,16 @@ class IterState:
     """Iteration counters."""
 
     engine_num: int
-    """Engine number, 1-indexed. `0` before any engine has started."""
+    """Engine number. 1-indexed (0 means before any reconstruction)."""
     engine_iter: int
-    """Iteration number within the engine, 1-indexed. `0` before any iterations."""
+    """Iteration number on this engine. 1-indexed (0 means before any iterations)."""
     total_iter: int
-    """Iteration number over all engines, 1-indexed. `0` before any iterations."""
+    """Total iteration number. 1-indexed (0 means before any iterations)."""
 
     n_engine_iters: int | None = None
-    """Number of iterations in this engine."""
+    """Total number of iterations in this engine."""
     n_total_iters: int | None = None
-    """Number of iterations in the reconstruction."""
+    """Total number of iterations in the reconstruction."""
 
     def to_numpy(self) -> Self:
         """Return a copy with arrays converted to NumPy."""
@@ -70,12 +70,12 @@ class IterState:
 
 @tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
 class PixelatedProbeState:
-    """Probe sampled on a real-space grid."""
+    """Probe state in a pixelated representation."""
 
     sampling: Sampling
-    """Probe coordinate system."""
+    """Probe coordinate system. See `Sampling` for more details."""
     data: NDArray[numpy.complexfloating]
-    """Real-space probe wavefunction. Shape `(modes, y, x)`."""
+    """Probe wavefunction, in realspace. Shape (modes, y, x)"""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
     ty: t.Literal['pixelated'] = 'pixelated'
@@ -123,14 +123,17 @@ ProbeState: t.TypeAlias = PixelatedProbeState
 
 @tree_dataclass(static_fields=('sampling', 'meta', 'ty'))
 class PixelatedObjectState:
-    """Multislice object sampled on a real-space grid."""
+    """Object state in a pixelated representation."""
 
     sampling: ObjectSampling
-    """Object coordinate system."""
+    """Object coordinate system. See `ObjectSampling` for more details."""
     data: NDArray[numpy.complexfloating]
-    """Object wavefunction. Shape `(z, y, x)`."""
+    """Object wavefunction. Shape (z, y, x)"""
     thicknesses: NDArray[numpy.floating]
-    """Slice thicknesses [angstrom]. Length is less than 2 for a single slice, and the number of slices otherwise."""
+    """
+    Slice thicknesses (in length units).
+    Length < 2 for single slice, equal to the number of slices otherwise.
+    """
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
     ty: t.Literal['pixelated'] = 'pixelated'
@@ -148,7 +151,7 @@ class PixelatedObjectState:
         )
 
     def zs(self) -> NDArray[numpy.floating]:
-        """Return the depth of the top of each slice [angstrom]."""
+        """Return the position of the beginning of each slice [angstrom]."""
         xp = get_array_module(self.thicknesses)
         if len(self.thicknesses) < 2:
             return xp.asarray([0.], dtype=self.thicknesses.dtype)
@@ -170,11 +173,11 @@ class ScanState:
     """Scan positions and per-position tilts."""
 
     data: NDArray[numpy.floating]
-    """Scan coordinates `(y, x)` [angstrom]. Shape `(..., 2)`."""
+    """Scan coordinates (y, x), in length units. Shape (..., 2)"""
     initial: NDArray[numpy.floating]
-    """Initial scan coordinates `(y, x)` [angstrom]. Same shape as `data`."""
+    """Initial scan coordinates (y, x), in length units."""
     tilt: NDArray[numpy.floating] | None = None
-    """Tilt angles `(y, x)` per scan position [mrad]. Shape `(..., 2)`."""
+    """Tilt angles (y, x) per scan position, in mrad. Shape (..., 2)"""
 
     meta: frozendict[str, t.Any] = field(default_factory=frozendict)
 
@@ -207,9 +210,9 @@ class ProgressState:
     """Time series of a progress measurement."""
 
     iters: list[int] = field(default_factory=list)
-    """Total iteration numbers of the measurements."""
+    """Iterations error measurements were taken at."""
     values: list[float] = field(default_factory=list)
-    """Measured values at those iterations."""
+    """Detector error measurements at those iterations"""
 
     def copy(self) -> Self:
         """Return a deep copy."""
@@ -224,7 +227,7 @@ class ReconsState:
     iter: IterState
     """Iteration counters."""
     wavelength: Float
-    """Radiation wavelength [angstrom]."""
+    """Wavelength [angstrom]."""
 
     probe: ProbeState
     object: ObjectState

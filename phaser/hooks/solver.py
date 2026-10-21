@@ -22,7 +22,7 @@ StateT = t.TypeVar('StateT')
 
 
 class HasState(t.Protocol[StateT]):  # type: ignore
-    """Protocol for objects carrying per-reconstruction state."""
+    """Protocol for reconstruction objects with mutable state."""
 
     def init_state(self, sim: 'ReconsState') -> StateT:
         """Return the initial state for the reconstruction `sim`."""
@@ -45,7 +45,8 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
         mask: NDArray[numpy.floating], 
         state: StateT,
     ) -> t.Tuple['Float', StateT]:
-        """Return the loss, summed across the detector and averaged across the scan.
+        """
+        Return the calculated loss, summed across the detector and averaged across the scan.
 
         May be called in a JAX jit context, so must have no side effects.
         """
@@ -60,7 +61,8 @@ class NoiseModel(HasState[StateT], t.Protocol[StateT]):
         state: StateT,
         mtf: t.Optional[t.Union['PreparedOTF', 'PreparedPSF']] = None,
     ) -> t.Tuple[NDArray[numpy.complexfloating], StateT]:
-        """Return the wave update `chi` in reciprocal space.
+        """
+        Return the calculated wave update `chi` in reciprocal space.
 
         If `mtf` is given, `model_intensity` has already been blurred by it; the
         intensity-domain residual must be backprojected through `mtf.adjoint()`
@@ -161,7 +163,9 @@ class ConventionalSolver(abc.ABC):
         calc_error_mask: NDArray[numpy.bool_],
         observer: 'Observer',
     ) -> t.Tuple['SimulationState', NDArray[numpy.floating], t.List[NDArray[numpy.floating]]]:
-        """Run an iteration of the reconstruction. Return a tuple `(sim, pos_update, iter_errors)`."""
+        """
+        Run an iteration of the reconstruction. Return a tuple `(sim, pos_update, iter_errors)`.
+        """
         ...
 
 

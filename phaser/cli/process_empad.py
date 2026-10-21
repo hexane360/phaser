@@ -191,7 +191,7 @@ class AduParam(Parameter[float]):
 
 @dataclass(init=False)
 class ConvAngleParam(Parameter[float]):
-    """Convergence angle [mrad]."""
+    """Convergence angle parameter [mrad]."""
 
     used: t.Dict[t.Optional[str], t.Tuple[str, float]]
     """Maps metadata `f"{conv_angle:.1f}"` (`None` if missing) to the `(str, value)` entered for it."""
@@ -216,7 +216,7 @@ class ConvAngleParam(Parameter[float]):
 
 @dataclass(init=False)
 class AuthorParam(Parameter[t.Optional[str]]):
-    """Dataset author."""
+    """Dataset author parameter."""
 
     used: t.Dict[t.Optional[str], t.Optional[str]]
     """Maps metadata author (`None` if missing) to the author entered for it."""

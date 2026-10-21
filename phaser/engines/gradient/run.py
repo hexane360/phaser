@@ -136,7 +136,7 @@ def extract_vars(state: ReconsState, vars: t.AbstractSet[ReconsVar], group: t.Op
 
 
 def extract_params(state: ReconsState, vars: t.AbstractSet[ReconsVar]) -> t.Dict[ReconsVar, t.Any]:
-    """Return the parameter arrays for `vars`, resolving synthetic variables to their source."""
+    """Parameter arrays for `vars`, resolving synthetic variables to where they're synthesized from."""
     params = extract_vars(state, frozenset[ReconsVar](map(source_var, vars)))[0]
     return {var: params[source_var(var)] for var in vars}
 
@@ -174,7 +174,7 @@ def apply_update(state: ReconsState, update: t.Dict[ReconsVar, numpy.ndarray]) -
 
 
 def center_pos_updates(update: t.Dict[ReconsVar, t.Any]) -> t.Dict[ReconsVar, t.Any]:
-    """Return `update` with the mean of each position update removed."""
+    """Updates with the mean of each position update removed."""
     def f(val: t.Any) -> t.Any:
         xp = get_array_module(val)
         return val - xp.mean(val, tuple(range(val.ndim - 1)))
@@ -195,7 +195,7 @@ def project_grads(
     state: ReconsState,
     d: t.Dict[ReconsVar, t.Any],
 ) -> t.Dict[ReconsVar, t.Any]:
-    """Return `d` with grads (or updates) of synthetic variables projected."""
+    """`d` with grads (or updates) of synthetic variables projected"""
     def f(var: ReconsVar, val: t.Any) -> t.Any:
         if (synthetic := synthetics.get(var)) is None:
             return val
@@ -209,7 +209,7 @@ def synthesize_grads(
     state: ReconsState,
     grads: t.Dict[ReconsVar, t.Any],
 ) -> t.Dict[ReconsVar, t.Any]:
-    """Return `grads` plus grads for the synthetic variables."""
+    """`grads`, plus grads for synthetic vars"""
     return project_grads(synthetics, state, {
         **grads,
         **{var: grads[source_var(var)] for var in synthetics if source_var(var) in grads},
@@ -222,7 +222,7 @@ _UPDATE_RMS_KEYS: t.Dict[ReconsVar, str] = {
 }
 
 def update_rms_key(var: ReconsVar) -> t.Optional[str]:
-    """Return the progress key holding the RMS update to `var`, or `None` if `var` is not tracked."""
+    """Progress key holding the RMS update to `var`, or `None` if `var` isn't tracked."""
     if source_var(var) not in {'positions', 'tilt'}:
         return None
     return _UPDATE_RMS_KEYS.get(var, f'{var}_update_rms')
@@ -256,7 +256,7 @@ class SolverStates:
 
 
 def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
-    """Run a gradient descent engine."""
+    """Run the gradient descent engine."""
     #jax.config.update('jax_traceback_filtering', 'off')
     xp = cast_array_module(args['xp'])
     dtype = args['dtype']

@@ -23,7 +23,7 @@ def get_config_dir() -> Path:
 
 
 def get_class_docstrings(cls: type) -> t.Dict[str, str]:
-    """Return the attribute docstrings of class `cls`, keyed by field name."""
+    """Extract attribute docstrings from class `cls`."""
     # TODO: can probably replace this with griffe or something
     import ast
     import inspect
@@ -151,7 +151,7 @@ class Config(t.Generic[PaneClassT]):
         return get_config_dir() / f'{self.config_name}.yaml'
 
     def variant(self, name: str) -> 'Config[PaneClassT]':
-        """Return the variant of this configuration stored in `{config_name}_{name}.yaml`.
+        """Named variant of this configuration, stored in `{config_name}_{name}.yaml`.
 
         Raises:
             ValueError: If `name` contains characters other than letters, digits, `-` and `_`.
@@ -161,7 +161,7 @@ class Config(t.Generic[PaneClassT]):
         return Config(f'{self.config_name}_{name}', self.ty, self.example)
 
     def variants(self) -> t.List[str]:
-        """Return the sorted names of the existing variants of this configuration."""
+        """Names of the existing variants of this configuration."""
         prefix = f'{self.config_name}_'
         names = (path.stem[len(prefix):] for path in get_config_dir().glob(f'{prefix}*.yaml'))
         return sorted(name for name in names if re.fullmatch(r'[A-Za-z0-9_-]+', name))

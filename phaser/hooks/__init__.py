@@ -35,9 +35,9 @@ class RawData(t.TypedDict):
     mask: NDArray[numpy.floating]
     """Detector mask `(ky, kx)`; nonzero where pixels are valid."""
     sampling: 'Sampling'
-    """Sampling of the detector patterns in reciprocal space."""
+    """Sampling corresponding to the diffraction patterns."""
     wavelength: NotRequired[float | None]
-    """Electron wavelength [angstrom]."""
+    """Wavelength [angstrom]."""
     scan_hook: NotRequired[dict[str, t.Any] | None]
     """Raw [`ScanHook`][phaser.hooks.ScanHook] data, used if no scan is given in the plan."""
     tilt_hook: NotRequired[dict[str, t.Any] | None]
@@ -59,9 +59,9 @@ class LoadEmpadProps(Dataclass):
     diff_step: float | None = None
     """Detector pixel size in reciprocal space [mrad]. Defaults to metadata."""
     kv: float | None = None
-    """Accelerating voltage [keV]. Defaults to metadata."""
+    """Accelerating voltage [kV]. Defaults to metadata."""
     adu: float | None = None
-    """Detector ADU (single-electron signal). Patterns are divided by it. Defaults to metadata."""
+    """Detector ADU, representing the single-particle signal. Used to scale patterns. Defaults to metadata."""
     det_flips: tuple[bool, bool, bool] | None = None
     """Detector flips `(flip_y, flip_x, transpose)`. Defaults to metadata, then the typical orientation for `empad_version`."""
 
@@ -75,7 +75,7 @@ class LoadGatanProps(Dataclass):
     diff_step: float | None = None
     """Detector pixel size in reciprocal space [mrad]. Defaults to metadata."""
     kv: float | None = None
-    """Accelerating voltage [keV]. Defaults to metadata."""
+    """Accelerating voltage [kV]. Defaults to metadata."""
     adu: float | None = None
     """Detector ADU. Unused."""
 
@@ -97,31 +97,33 @@ class LoadManualProps(Dataclass, kw_only=True):
     """Path to the file."""
 
     det_shape: tuple[int, int] | None = None
-    """Detector shape `(ny, nx)` after flips. Required for raw binary files."""
+    """Detector shape `(ny, nx)` (after flips are applied). Required when loading raw binary files, optional otherwise."""
     dtype: str | None = None
-    """Numpy dtype of the file (e.g. `'float32'`). Raw binary files only."""
+    """Numpy dtype to load (e.g. 'float32'). Applies only when loading raw binary files."""
+
     gap: int = 0
-    """Gap between patterns [bytes]. Raw binary files only."""
+    """Gap (in bytes) between patterns in the file. Applies only when loading raw binary files."""
+
     offset: int = 0
-    """Offset of the first pattern [bytes]. Raw binary files only."""
+    """Offset (in bytes) before start of patterns in the file. Applies only when loading raw binary files."""
 
     key: str | None = None
-    """Dataset key in an HDF5 or `.mat` file (e.g. `'raw.patterns.data'`)."""
+    """Key to load from HDF5 or mat file (ex. 'raw.patterns.data')"""
 
     diff_step: float
     """Detector pixel size in reciprocal space [mrad]."""
     # TODO: post-validate (one of kv or wavelength must be specified)
     kv: float | None = None
-    """Accelerating voltage [keV]. Exactly one of `kv` or `wavelength` is required."""
+    """Accelerating voltage [kV]. Exactly one of `kv` or `wavelength` is required."""
     wavelength: float | None = None
-    """Electron wavelength [angstrom]. Exactly one of `kv` or `wavelength` is required."""
+    """Wavelength [angstrom]. Exactly one of `kv` or `wavelength` is required."""
     adu: float | None = None
-    """Detector ADU (single-electron signal). Patterns are divided by it."""
+    """Detector ADU, representing the single-particle signal. Used to scale patterns."""
 
     det_flips: tuple[bool, bool, bool] | None = None
     """Detector flips `(flip_y, flip_x, transpose)`."""
     fftshifted: bool = False
-    """Whether the patterns already have the zero frequency at the array corner."""
+    """Whether patterns are fftshifted (zero-frequency in corner of array)"""
 
 class RawDataHook(Hook[None, RawData]):
     """Hook that loads [`RawData`][phaser.hooks.RawData]."""
@@ -140,13 +142,13 @@ class ProbeHookArgs(t.TypedDict):
     sampling: 'Sampling'
     """Probe sampling."""
     wavelength: float
-    """Electron wavelength [angstrom]."""
+    """Wavelength [angstrom]."""
     seed: object | None
     """Random seed."""
     dtype: DTypeLike
     """Floating-point dtype of the probe."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
 
 
 class FocusedProbeProps(Dataclass):
@@ -174,7 +176,7 @@ class ObjectHookArgs(t.TypedDict):
     sampling: 'ObjectSampling'
     """Object sampling."""
     wavelength: float
-    """Electron wavelength [angstrom]."""
+    """Wavelength [angstrom]."""
     slices: Slices | None
     """Multislice slicing, or `None` for a single-slice object."""
     seed: object | None
@@ -182,7 +184,7 @@ class ObjectHookArgs(t.TypedDict):
     dtype: DTypeLike
     """Floating-point dtype of the object."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
 
 
 class RandomObjectProps(Dataclass):
@@ -208,7 +210,7 @@ class ScanHookArgs(t.TypedDict):
     dtype: DTypeLike
     """Floating-point dtype of the scan positions."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
 
 
 class RasterScanProps(Dataclass):
@@ -238,7 +240,7 @@ class TiltHookArgs(t.TypedDict):
     dtype: DTypeLike
     """Floating-point dtype of the tilt."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
     shape: tuple[int, ...]
     """Scan shape, matching the raster scan."""
 
@@ -257,7 +259,7 @@ class CustomTiltProps(Dataclass):
     """Properties for a tilt loaded from file."""
 
     path: str
-    """Path to a `.npy` file with shape `(ny, nx, 2)` or `(ny*nx, 2)`, matching the scan."""
+    """Path to .npy file containing tilt array matching the size of the scan"""
 
 
 class TiltHook(Hook[TiltHookArgs, NDArray[numpy.floating]]):
@@ -281,7 +283,7 @@ class PostInitArgs(t.TypedDict):
     dtype: DTypeLike
     """Floating-point dtype."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
 
 
 class ScaleProps(Dataclass):
@@ -342,16 +344,16 @@ class ApplyMtfProps(Dataclass):
     mtf: FilterHook
     """Hook creating the filter to apply."""
     domain: t.Literal['real', 'recip'] = 'recip'
-    """Apply the filter by real-space convolution (`'real'`) or Fourier-space multiplication (`'recip'`)."""
+    """Whether to apply the filter by real-space convolution (`'real'`) or Fourier-space multiplication (`'recip'`)."""
 
 
 class SetDetectorMaskProps(Dataclass):
     """Properties for loading a detector mask."""
 
     path: Path
-    """Path to the mask file."""
+    """Path to detector mask"""
     invert: bool = False
-    """Whether to invert the mask."""
+    """Whether to invert detector mask"""
 
 
 class PostLoadHook(Hook[RawData, RawData]):
@@ -387,7 +389,7 @@ class EngineArgs(t.TypedDict):
     dtype: type[numpy.floating]
     """Floating-point dtype."""
     xp: t.Any
-    """Array module (`numpy`, `cupy`, or `jax.numpy`)."""
+    """Array module."""
     recons_name: str
     """Name of the reconstruction."""
     observer: 'Observer'

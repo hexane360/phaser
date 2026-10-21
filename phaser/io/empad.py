@@ -30,7 +30,7 @@ def _get_dir(f: pane.io.FileOrPath) -> t.Optional[Path]:
 
 
 class UnscannedDataset(BaseException):
-    """Raised when metadata describes a dataset that is not a 4D STEM scan."""
+    """Raised when a dataset is not a raster scan dataset."""
 
 
 class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
@@ -131,7 +131,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     """Region scan is valid within, (min_y, max_y, min_x, max_x). Python-style slicing."""
 
     def is_simulated(self) -> bool:
-        """Return whether the dataset is simulated (`file_type == 'pyMultislicer_metadata'`)."""
+        """Return whether the dataset is simulated."""
         return self.file_type == "pyMultislicer_metadata"
 
     @staticmethod
@@ -142,7 +142,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         `scan_step` is `scan_fov / max(scan_shape)`.
 
         Raises:
-            UnscannedDataset: If the file is not a 4D STEM scan.
+            UnscannedDataset: If the dataset is not a raster scan dataset.
             ValueError: If a required tag is missing.
         """
         from lxml import etree
@@ -227,7 +227,7 @@ class EmpadMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         Otherwise it is `scan_x{x}_y{y}.raw`. `scan_rotation` is read as degrees.
 
         Raises:
-            UnscannedDataset: If the file is not a 4D STEM scan (`scan_service != 'stem_raster'`).
+            UnscannedDataset: If the dataset is not a raster scan dataset.
             ValueError: If a required key is missing.
         """
         try:
@@ -314,8 +314,7 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Optional[t.Tuple[int, int]] 
         memmap: Memory-map the file instead of reading it.
         flips: Flips `(flip_y, flip_x, transpose)` applied to the diffraction patterns.
             Defaults to `(True, False, False)` for `empad_version=1` and no flips for `empad_version=2`.
-        empad_version: Raw format version, `1` or `2`. Version 1 files have 2 extra rows per
-            pattern (`128 + 2` rows), which are dropped.
+        empad_version: Raw format version, `1` or `2`.
 
     Returns:
         Array of shape `(n_y, n_x, 128, 128)`, `numpy.memmap` if `memmap` is set.
@@ -387,7 +386,7 @@ def save_4d(arr: NDArray[numpy.float32], *, path: t.Union[str, Path, None] = Non
         name: Filename format used with `folder`. Defaults to `"scan_x{x}_y{y}.raw"`.
         flips: Flips `(flip_y, flip_x, transpose)` applied to the diffraction patterns.
             Defaults as in `load_4d`.
-        empad_version: Raw format version, `1` or `2`. Version 1 pads each pattern with 2 zero rows.
+        empad_version: Raw format version, `1` or `2`.
 
     Raises:
         ValueError: If `arr` has the wrong shape, the version is unsupported,

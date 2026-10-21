@@ -13,7 +13,7 @@ from ..common.simulation import SimulationState, make_propagators, prepare_mtf, 
 
 
 def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
-    """Run a conventional (ePIE or LSQML) engine."""
+    """Run the conventional engine."""
     logger = logging.getLogger(__name__)
 
     xp = cast_array_module(args['xp'])

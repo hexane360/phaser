@@ -41,7 +41,7 @@ class CostRegularizer(HasState[StateT], t.Protocol[StateT]):
         ...
 
     def calc_loss_group(self, group: NDArray[numpy.integer], sim: 'ReconsState', state: StateT) -> t.Tuple['Float', StateT]:
-        """Return the regularization cost for the scan indices `group`."""
+        """Return the regularization cost for group `group`."""
         ...
 
 
@@ -87,7 +87,7 @@ class TiltGaussianProps(UnstructuredGaussianProps):
 
 
 class OPRGaussianProps(UnstructuredGaussianProps):
-    """Properties for Gaussian smoothing of the orthogonal probe modes."""
+    """Properties for Gaussian smoothing of probe mode intensity data."""
 
     attr_path: t.Literal['opr.data'] = 'opr.data'
 

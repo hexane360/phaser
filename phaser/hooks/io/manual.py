@@ -19,7 +19,7 @@ from .. import LoadManualProps, RawData
 def load_manual(args: None, props: LoadManualProps) -> RawData:
     """Load 4D-STEM patterns from a `.npy`/`.npz`, TIFF, HDF5, or raw binary file.
 
-    The file extension selects the format; others are read as raw binary.
+    The file extension selects the format; unrecognized extensions are read as raw binary.
     Patterns are cast to floating point and `det_flips` applied.
 
     Raises:

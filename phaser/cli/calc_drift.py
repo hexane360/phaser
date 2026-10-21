@@ -27,7 +27,7 @@ from phaser.cli.utils import natural_key
 
 
 def load_adf(path: t.Union[str, Path]) -> t.Tuple[numpy.ndarray, t.Any]:
-    """Load the image and parsed JSON metadata from a single-image HDF5 file."""
+    """Load a Velox dataset, returning the ADF image and the image metadata."""
     f = h5py.File(path)
 
     images = t.cast(h5py.Group, f['Data/Image'])

@@ -56,7 +56,7 @@ def resample_slices(
     pad_mode: t.Literal['edge', 'vacuum', 'average'] = 'vacuum',
     rescale_projected: bool = False,
 ) -> NDArray[NumT]:
-    """Resample an object along z, approximately conserving the average potential.
+    """Resample an object in Z, such that average potential is roughly conserved.
 
     Single-slice to multislice and multislice to single-slice conversions conserve the projected
     potential, assuming a uniform distribution.
@@ -252,7 +252,7 @@ class ObjectSampling:
     def crop(self, min: ArrayLike | None = None, max: ArrayLike | None = None, pad: ArrayLike = 0.) -> t.Self:
         """Return the sampling cropped to the region `min` to `max`, expanded by `pad` [length].
 
-        Unspecified bounds leave that side uncropped. The region of interest is clipped to the result.
+        Unspecified bounds leave that side uncropped. The region of interest is clamped to the result.
         """
         if min is None:
             min_i, min_j = 0, 0
@@ -356,7 +356,18 @@ class ObjectSampling:
             / xp.array(self.sampling.copy(), dtype=dtype) + shift).astype(dtype)  # type: ignore
 
     def slice_at_pos(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> t.Tuple[slice, slice]:
-        """Return slices for a cutout of shape `cutout_shape` centered on `pos` `(y, x)`, rounded to a pixel."""
+        """Return slices to cut out a region of shape `cutout_shape` around `pos`.
+
+        The region is rounded to the nearest pixel.
+
+        Args:
+            pos: Object position `(y, x)` [length] to center the cutout on.
+            cutout_shape: Shape of the cutout. Only the last two axes are used.
+
+        Returns:
+            Slices `(y, x)` indexing into the object. E.g. `obj[slice_at_pos(pos, (32, 32))]`
+            has shape `(32, 32)`.
+        """
         xp = get_array_module(pos)
 
         idxs = self._pos_to_object_idx(pos, cutout_shape)
@@ -368,7 +379,7 @@ class ObjectSampling:
         )
 
     def get_subpx_shifts(self, pos: ArrayLike, cutout_shape: t.Tuple[int, ...]) -> NDArray[numpy.float64]:
-        """Return the shift `(y, x)` [length] from the cutout position, rounded to a pixel, to `pos`."""
+        """Return the subpixel shift `(y, x)` [length] from the cutout position to `pos` (`pos` modulo a pixel)."""
         xp = get_array_module(pos)
         dtype = max_supported_float(xp)
 
@@ -454,7 +465,7 @@ class ObjectSampling:
         ...
 
     def grid(self, *, dtype: t.Any = None, xp: t.Any = None) -> t.Tuple[NDArray[numpy.number], NDArray[numpy.number]]:
-        """Return the sample positions `(yy, xx)` [length]."""
+        """Return the sampling grid `(yy, xx)` [length] for this object."""
         xp2 = get_array_module(self.sampling, self.corner) if xp is None else cast_array_module(xp)
 
         if dtype is None:
@@ -468,7 +479,8 @@ class ObjectSampling:
     def mpl_extent(self, center: bool = True) -> t.Tuple[float, float, float, float]:
         """Return the grid extent `(left, right, bottom, top)` for matplotlib `imshow`.
 
-        If `center`, sample positions are pixel centers, otherwise pixel corners.
+        If `center` is specified (the default), samples correspond to the center of pixels.
+        Otherwise, they correspond to the corners of pixels.
         """
         # shift pixel corners to centers
         shift = self.min - self.sampling/2. * int(center)
@@ -595,7 +607,7 @@ class ObjectCutout(t.Generic[DTypeT]):
     def set(self, view: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:
         """Set the cutouts to `view` and return the updated cutout.
 
-        Modifies `obj` in place, except for JAX arrays.
+        Modifies `obj` in place, except for JAX arrays. Returns the updated cutout regardless.
         """
         if is_jax(self.obj):
             from ._jax_kernels import set_cutouts
@@ -618,7 +630,7 @@ class ObjectCutout(t.Generic[DTypeT]):
     def add(self, view: NDArray[DTypeT]) -> ObjectCutout[DTypeT]:
         """Add `view` to the cutouts and return the updated cutout.
 
-        Modifies `obj` in place, except for JAX arrays.
+        Modifies `obj` in place, except for JAX arrays. Returns the updated cutout regardless.
         """
         if is_jax(self.obj):
             from ._jax_kernels import add_cutouts

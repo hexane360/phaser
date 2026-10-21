@@ -1,4 +1,4 @@
-"""Asyncio helpers."""
+"""Web helper utilities."""
 import asyncio
 import contextlib
 import sys

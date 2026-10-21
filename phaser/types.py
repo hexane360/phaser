@@ -82,7 +82,7 @@ class _ReconsVarsAnnotation(ConvertAnnotation):
 BackendName: t.TypeAlias = t.Literal['cupy', 'jax', 'torch', 'numpy']
 """Array backend names."""
 ReconsVar: t.TypeAlias = t.Literal['object', 'probe', 'positions', 'tilt', 'positions_affine', 'positions_line']
-"""Reconstruction variables."""
+"""Reconstruction variables, including synthetic variables."""
 
 ReconsVars: t.TypeAlias = t.Annotated[t.FrozenSet[ReconsVar], _ReconsVarsAnnotation()]
 """Set of `ReconsVar`. Parsed from a comma-separated string in plan files."""
@@ -120,7 +120,7 @@ class SliceStep(Dataclass):
 
     @property
     def zs(self) -> t.List[float]:
-        """Depth of the top of each slice [angstrom]."""
+        """Position of the beginning of each slice [angstrom]."""
         return [float(z) for z in numpy.arange(self.n) * self.slice_thickness]
 
     @property
@@ -137,7 +137,7 @@ class SliceTotal(Dataclass):
 
     @property
     def zs(self) -> t.List[float]:
-        """Depth of the top of each slice [angstrom]."""
+        """Position of the beginning of each slice [angstrom]."""
         return [float(z) for z in numpy.arange(self.n) * self.total_thickness / self.n]
 
     @property
@@ -178,7 +178,7 @@ class Krivanek(pane.PaneBase):
     m: int
     """Azimuthal order."""
     scale_factor: float = 1.0
-    """Factor relating a named coefficient to $C_{nm}$."""
+    """Scale factor (populated when converting from Haider notation)."""
 
     def __post_init__(self):
         if (

@@ -53,7 +53,7 @@ class Observer(contextlib.AbstractContextManager):
         """Called when an engine finishes."""
 
     def finish_recons(self, state: ReconsState):
-        """Called when the reconstruction finishes."""
+        """Called when a reconstruction finishes."""
 
     def close(self, exc: t.Optional[BaseException] = None):
         """Called to clean up, whether the reconstruction succeeded or failed."""
@@ -397,7 +397,7 @@ class ObserverSet(Observer):
 
     @_fwd_to_children
     def finish_recons(self, state: ReconsState):
-        """Called when the reconstruction finishes."""
+        """Called when a reconstruction finishes."""
 
     @_fwd_to_children
     def close(self, exc: t.Optional[BaseException] = None):

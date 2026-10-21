@@ -149,7 +149,7 @@ def get_backend_module(backend: t.Optional[BackendName] = None):
 
 
 def get_backend_scipy(backend: BackendName):
-    """Return the `scipy` module for `backend` (`jax.scipy`, `cupyx.scipy`, or `scipy`).
+    """Return the `scipy` module for array backend `backend`.
 
     Raises:
         ValueError: If `backend` is `'torch'` or not available.
@@ -556,7 +556,9 @@ def jit(
 
 
 def fuse(*args, **kwargs) -> t.Callable[[T], T]:
-    """Return `cupy.fuse(*args, **kwargs)` if cupy is available, else the identity decorator."""
+    """
+    Equivalent to `cupy.fuse`, if supported.
+    """
     if (xp := _BACKEND_LOADER.get('cupy')):
         return xp.fuse(*args, **kwargs)  # type: ignore
     return lambda x: x
@@ -703,9 +705,10 @@ def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]
     ...
 
 def ifft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
-    """Return the orthonormal inverse FFT of the last two axes of `a`.
+    """
+    Perform an inverse FFT on the last two axes of `a`.
 
-    If `shift`, the output is fftshifted so the real-space origin is centered.
+    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`).
     """
     xp = get_array_module(a)
     if not shift:
@@ -733,9 +736,10 @@ def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
     ...
 
 def fft2(a: ArrayLike, *, shift: bool = True) -> NDArray[numpy.complexfloating]:
-    """Return the orthonormal forward FFT of the last two axes of `a`.
+    """
+    Perform a forward FFT on the last two axes of `a`.
 
-    If `shift`, the input is ifftshifted first, so it is interpreted with the real-space origin centered.
+    Follows our convention of centering real space and normalizing intensities (when `shift` is `True`).
     """
     xp = get_array_module(a)
     if shift:
@@ -754,7 +758,12 @@ def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
     ...
 
 def fft2shift(a: ArrayLike) -> NDArray[t.Any]:
-    """Shift the zero-frequency component of the last two axes of `a` from the corner to the center."""
+    """
+    FFT-shift the last two axes of `a`.
+
+    Shifts the zero-frequency component to the center of the image
+    (i.e. this is needed to center realspace after an inverse transform).
+    """
     xp = get_array_module(a)
     return xp.fft.fftshift(a, axes=(-2, -1))
 
@@ -768,7 +777,12 @@ def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
     ...
 
 def ifft2shift(a: ArrayLike) -> NDArray[t.Any]:
-    """Shift the zero-frequency component of the last two axes of `a` from the center to the corner."""
+    """
+    Inverse FFT-shift the last two axes of `a`.
+
+    Shifts the zero-frequency component to the corner of the image
+    (i.e. this is needed to corner realspace before a forward transform).
+    """
     xp = get_array_module(a)
     return xp.fft.ifftshift(a, axes=(-2, -1))
 
@@ -782,7 +796,7 @@ def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
     ...
 
 def dct2(a: ArrayLike) -> NDArray[numpy.inexact]:
-    """Return the orthonormal type-II DCT of the last two axes of `a`.
+    """Perform a type-II DCT on the last two axes of `a`, orthonormalized.
 
     Complex input is transformed as real and imaginary parts separately.
     """
@@ -798,7 +812,9 @@ def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
     ...
 
 def idct2(a: ArrayLike) -> NDArray[numpy.inexact]:
-    """Return the inverse of [`dct2`][phaser.utils.num.dct2] (orthonormal type-III DCT)."""
+    """
+    Invert [`dct2`][phaser.utils.num.dct2] (i.e. a type-III DCT, orthonormalized).
+    """
     return _dct2(a, inverse=True)
 
 
@@ -824,7 +840,9 @@ def split_array(arr: NDArray[DTypeT], axis: int = 0, *, keepdims: bool = False) 
     """Split `arr` along `axis` into a tuple of subarrays.
 
     Args:
-        keepdims: If `True`, keep the split axis (with size 1) in each subarray.
+        arr: Input array to split.
+        axis: Axis to split the array on.
+        keepdims: Whether to keep the split dimension in the returned arrays.
     """
     xp = get_array_module(arr)
     arrs = xp.split(arr, arr.shape[axis], axis=axis)
@@ -852,7 +870,11 @@ def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
     ...
 
 def abs2(x: ArrayLike) -> NDArray[numpy.floating]:
-    """Return the squared amplitude of `x`, without computing a square root."""
+    """
+    Return the squared amplitude of a complex array.
+
+    This is cheaper than `abs(x)**2`.
+    """
     xp = get_array_module(x)
     x = xp.asarray(x)
 
@@ -980,7 +1002,9 @@ class Sampling:
 
     @property
     def k_max(self) -> NDArray[numpy.float64]:
-        """Maximum spatial frequency `(1/(2 s_y), 1/(2 s_x))` [1/length]."""
+        """
+        Return maximum frequency (radius) of reciprocal space (1/(2s_y), 1/(2s_x))
+        """
         return (1/(2 * self.sampling)).astype(numpy.float64)
 
     @property
@@ -1179,8 +1203,9 @@ class Sampling:
     ) -> NDArray[NumT]:
         """Resample a reciprocal-space array from this sampling onto `new_samp`.
 
-        Arguments are as in [`resample`][phaser.utils.num.Sampling.resample], but resampling
-        is done in reciprocal space, over the grids of `self` and `new_samp`.
+        Arguments are as in [`resample`][phaser.utils.num.Sampling.resample], but `arr` is
+        treated as being in reciprocal space rather than real space. For instance, if
+        `new_samp` is upsampled from `self`, `arr` is padded.
 
         Args:
             fftshift: If `True`, `arr` and the result have zero frequency at the corner,
@@ -1254,7 +1279,7 @@ def at(arr: NDArray[DTypeT], idx: IndexLike) -> _AtImpl[DTypeT]:
 
     Methods `set`, `add`, `subtract`, `multiply`, `divide`, `power`, `min`, `max` return
     the updated array. For jax, the update is out-of-place; for other backends, `arr`
-    is modified in place.
+    is modified in place (and also returned).
     """
     if is_jax(arr) and not t.TYPE_CHECKING:
         return arr.at[idx]

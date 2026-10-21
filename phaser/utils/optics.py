@@ -1,4 +1,4 @@
-"""Probe and optics utilities."""
+"""Optics utilities."""
 
 import logging
 import typing as t
@@ -55,7 +55,7 @@ def make_focused_probe(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     Args:
         ky: Reciprocal-space y coordinates [1/length].
         kx: Reciprocal-space x coordinates [1/length].
-        wavelength: Electron wavelength [length].
+        wavelength: Wavelength [length].
         aperture: Aperture semi-angle [mrad].
         defocus: Defocus [length]. Positive is overfocus.
         aberrations: Aberrations to apply.
@@ -190,6 +190,8 @@ def fourier_shift_filter(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating
 def fourier_shift_filter(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], shifts: ArrayLike) -> NDArray[numpy.complexfloating]:
     """Return the Fourier phase ramp that shifts an image by `shifts`.
 
+    A frequency-shift filter can be created using `fourier_shift_filter(yy, xx, -shifts)`.
+
     Args:
         ky: Reciprocal-space y coordinates [1/length].
         kx: Reciprocal-space x coordinates [1/length].
@@ -225,14 +227,16 @@ def fresnel_propagator(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
 
 def fresnel_propagator(ky: NDArray[numpy.floating], kx: NDArray[numpy.floating], wavelength: Float,
                        delta_z: Float, tilt: t.Tuple[float, float] = (0., 0.)) -> NDArray[numpy.complexfloating]:
-    """Return the Fresnel free-space propagation filter in reciprocal space.
+    """Return the Fresnel free-space propagation filter in reciprocal space. Roughly taken from Kirkland [1].
 
     Args:
         ky: Reciprocal-space y coordinates [1/length].
         kx: Reciprocal-space x coordinates [1/length].
-        wavelength: Electron wavelength [length].
+        wavelength: Wavelength [length].
         delta_z: Propagation distance [length].
         tilt: Mistilt `(x, y)` [mrad].
+
+    [1]. Kirkland, E. J. Advanced Computing in Electron Microscopy. (Springer US, Boston, MA, 2010). doi:10.1007/978-1-4419-6533-2.
     """
     xp = get_array_module(ky, kx)
 
@@ -248,7 +252,7 @@ def estimate_probe_radius(wavelength: Float, aperture: Float, defocus: Float, *,
     """Return the radius [length] of a probe from a circular aperture with defocus.
 
     Args:
-        wavelength: Electron wavelength [length].
+        wavelength: Wavelength [length].
         aperture: Aperture semi-angle [mrad].
         defocus: Defocus [length].
         threshold: Fraction of probe intensity enclosed by the radius. `'geom'` uses the
@@ -310,7 +314,7 @@ def calc_metrics(*,
     """Return sampling metrics for the given acquisition parameters.
 
     Args:
-        wavelength: Electron wavelength [length]. One of `wavelength` or `voltage` is required.
+        wavelength: Wavelength [length]. One of `wavelength` or `voltage` is required.
         voltage: Accelerating voltage [V].
         conv_angle: Convergence semi-angle [mrad].
         defocus: Defocus [length].

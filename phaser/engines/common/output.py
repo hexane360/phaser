@@ -1,4 +1,4 @@
-"""Writing of reconstruction images and state files."""
+"""Writing of reconstruction outputs."""
 
 from functools import partial
 import logging

@@ -1,4 +1,4 @@
-"""Analysis utilities: image splitting, Fourier correlation, and ground-truth alignment."""
+"""Reconstruction analysis utilities."""
 
 import typing as t
 
@@ -14,7 +14,7 @@ from phaser.types import cast_length
 
 
 def split_image(img: NDArray[NumT]) -> t.Tuple[NDArray[NumT], NDArray[NumT], NDArray[NumT], NDArray[NumT]]:
-    """Split an image into 4 interleaved subimages, in row-major order of the starting pixel.
+    """Split image into 4 subimages (upper left, upper right, lower left, lower right).
 
     The last two axes are cropped to even size, then sampled at every second pixel.
     """
@@ -31,7 +31,10 @@ def split_image(img: NDArray[NumT]) -> t.Tuple[NDArray[NumT], NDArray[NumT], NDA
 
 
 def fourier_correlate(img1: NDArray[NumT], img2: NDArray[NumT]) -> NDArray[numpy.complex128]:
-    """Return the Hann-windowed, normalized cross-power spectrum of `img1` and `img2`, with zero frequency at the center."""
+    """Return the Hann-windowed, normalized cross-power spectrum of `img1` and `img2`.
+
+    Zero frequency is at the center.
+    """
     assert img1.shape == img2.shape
     from skimage.filters import window
 

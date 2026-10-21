@@ -1,4 +1,4 @@
-"""Constraints and cost regularizers on the object, probe, and scan."""
+"""Regularizers for reconstructions."""
 
 from functools import partial
 import logging
@@ -21,7 +21,7 @@ from phaser.hooks.regularization import (
 
 
 class ClampObjectAmplitude:
-    """Clamp object amplitude to `[min, max]`, keeping phase.
+    """Clamp object amplitude to `[min, max]`, preserving phase.
 
     `props.amplitude` is `[min, max]`, or a single value taken as `max`.
     """
@@ -54,7 +54,7 @@ def clamp_amplitude(
     min: t.Union[float, numpy.floating, None],
     max: t.Union[float, numpy.floating, None]
 ) -> NDArray[numpy.complexfloating]:
-    """Clamp the amplitude of `obj` to `[min, max]`, keeping phase. `None` leaves that bound open."""
+    """Clamp the amplitude of `obj` to `[min, max]`, preserving phase. `None` leaves that bound open."""
     xp = get_array_module(obj)
 
     obj_amp = xp.abs(obj)
@@ -73,7 +73,7 @@ def clamp_amplitude(
     return obj * scale
 
 class LimitProbeSupport:
-    """Zero probe Fourier components beyond `max_angle` [mrad]."""
+    """Limit the reciprocal-space support of the probe to within `max_angle` [mrad] of the optic axis."""
 
     def __init__(self, args: None, props: LimitProbeSupportProps):
         self.max_angle = props.max_angle
@@ -97,7 +97,7 @@ class LimitProbeSupport:
 
 
 class RemovePhaseRamp:
-    """Remove the linear ramp from the object phase, fit within the object region."""
+    """Remove the linear ramp from the object phase, fit within the object region of interest."""
 
     def __init__(self, args: None, props: t.Any):
         ...
@@ -129,7 +129,10 @@ def non_neg_phase(obj: NDArray[numpy.complexfloating], weight: t.Union[float, nu
 
 
 class NonNegObjectPhase:
-    r"""Push object phase towards non-negative: $\phi \to w \max(\phi, 0) + (1 - w) \phi$, with weight $w$."""
+    r"""Push object phase towards non-negativity.
+
+    Sends $\phi \to w \max(\phi, 0) + (1 - w) \phi$, with weight $w$.
+    """
 
     def __init__(self, args: None, props: NonNegObjectPhaseProps):
         self.weight: float = props.weight
@@ -146,9 +149,11 @@ class NonNegObjectPhase:
 
 
 class RegularizeLayers:
-    """Blend the object with a Gaussian blur along the slice axis, of standard deviation `sigma` [angstrom].
+    """Apply a Gaussian blur to the object along the slice axis.
 
-    The blur is applied to the log of the object. No-op for fewer than two slices.
+    Uses a real-space kernel of standard deviation `sigma` [angstrom]. The blur is applied
+    to the log of the object (i.e. the object potential rather than the transmission
+    function). No-op for fewer than two slices.
     """
 
     def __init__(self, args: None, props: RegularizeLayersProps):
@@ -222,7 +227,9 @@ class ObjLowPass:
 
 
 class ObjGaussian:
-    r"""Blend the object with a Gaussian blur of standard deviation `sigma` [angstrom], by weight $w$.
+    r"""Apply a Gaussian blur in the plane of the object.
+
+    Uses a Fourier filter of standard deviation `sigma` [angstrom] with weight $w$.
 
     Fourier filter is $1 - w (1 - e^{-2 \pi^2 \sigma^2 k^2})$.
     """
@@ -357,7 +364,10 @@ class ObjRecipL1:
 
 
 class ObjTotalVariation:
-    r"""Isotropic total-variation cost on the object, $\lambda \sum \sqrt{|\partial_y O|^2 + |\partial_x O|^2 + \epsilon}$."""
+    r"""Isotropic total-variation cost on the object.
+
+    Calculated as $\lambda \sum \sqrt{|\partial_y O|^2 + |\partial_x O|^2 + \epsilon}$ using finite differences.
+    """
 
     def __init__(self, args: None, props: TVRegularizerProps):
         self.cost: float = props.cost
@@ -391,7 +401,10 @@ class ObjTotalVariation:
 
 
 class ObjTikhonov:
-    r"""Tikhonov (squared-gradient) cost on the object, $\lambda \sum (|\partial_y O|^2 + |\partial_x O|^2)$."""
+    r"""Tikhonov (squared-gradient) cost on the object.
+
+    Calculated as $\lambda \sum (|\partial_y O|^2 + |\partial_x O|^2)$ using finite differences.
+    """
 
     def __init__(self, args: None, props: CostRegularizerProps):
         self.cost: float = props.cost

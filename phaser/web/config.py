@@ -180,7 +180,7 @@ def _resolves_remotely(host: str) -> bool:
 
 
 def split_netloc(netloc: str) -> t.Tuple[str, t.Optional[int]]:
-    """Split `host`, `host:port` or `[::1]:port` into a host and optional port.
+    """Split a netloc into a host and optionally a port.
 
     Raises:
         ValueError: If the port is not a number.

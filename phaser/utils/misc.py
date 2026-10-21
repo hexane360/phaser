@@ -38,15 +38,19 @@ def _proc_seed(seed: object, entropy: object = None) -> SeedSequence:
 
 
 def create_rng(seed: object = None, entropy: object = None) -> Generator:
-    """Create a numpy `PCG64` `Generator` from `seed` and `entropy`.
+    """
+    Create a numpy `PCG64` `Generator` using the initial seed (if specified),
+    and some additional entropy.
 
-    Args:
-        seed: JSON-serializable seed, or an existing `Generator` (returned as-is) or
-            `BitGenerator`. If `None`, a random seed is used.
-        entropy: JSON-serializable value mixed into `seed`, to derive independent
-            generators from one seed.
+    If `seed` is an existing `Generator` or `BitGenerator`, it's returned.
+    Otherwise, `seed` is used along with `entropy` to construct a high-quality
+    initial seed.
 
-    The result is deterministic across platforms for a fixed `seed` and `entropy`.
+    The seed and entropy can be anything JSON-writable.
+
+    If no seed is specified, numpy's default methods are used to construct a high-quality
+    seed. With a fixed seed specified, this function is designed to provide deterministic
+    behavior across different platforms and for long periods of time.
     """
     if isinstance(seed, Generator):
         return seed
@@ -57,10 +61,19 @@ def create_rng(seed: object = None, entropy: object = None) -> Generator:
 
 
 def create_rng_group(n: int, seed: object = None, entropy: object = None) -> tuple[Generator, ...]:
-    """Create `n` independent `PCG64` `Generator`s from `seed` and `entropy`.
+    """
+    Create a group of `n` distinct `PCG64` `Generator`s using the initial seed (if specified),
+    and some additional entropy.
 
-    Arguments are as in [`create_rng`][phaser.utils.misc.create_rng]. For an existing
-    `Generator` or `BitGenerator`, its seed sequence is spawned.
+    If `seed` is an existing `Generator` or `BitGenerator`, its underlying seed
+    sequence is used to construct the group. Otherwise, `seed` is used along with
+    `entropy` to construct a high-quality initial seed.
+
+    The seed and entropy can be anything JSON-writable.
+
+    If no seed is specified, numpy's default methods are used to construct a high-quality
+    seed. With a fixed seed specified, this function is designed to provide deterministic
+    behavior across different platforms and for long periods of time.
     """
     if isinstance(seed, Generator):
         seq = seed.bit_generator.seed_seq
@@ -73,7 +86,9 @@ def create_rng_group(n: int, seed: object = None, entropy: object = None) -> tup
 
 
 def shuffled(vals: t.Sequence[T], seed: t.Any = None, i: int = 0) -> t.Iterator[T]:
-    """Yield the elements of `vals` in random order, determined by `seed` and `i`."""
+    """
+    Return an iterator which gives `vals` in a random order.
+    """
     idxs = numpy.arange(len(vals))
     rng = create_rng(seed, f"shuffle_{i}")
     rng.shuffle(idxs)
@@ -434,7 +449,7 @@ def unwrap(val: T | None) -> T:
 
 
 def freeze(obj: object) -> t.Any:
-    """Return an immutable, hashable copy of `obj`.
+    """Attempt to freeze an object, making it immutable.
 
     Mappings become `frozendict`, sets `frozenset`, other sequences `tuple`, and numpy
     arrays and scalars nested tuples and Python scalars.

@@ -42,14 +42,14 @@ Updates: t.TypeAlias = Params
 
 
 class TransformInitFn(t.Protocol):
-    """Function creating the optimizer state for `params`."""
+    """Protocol for transformation init functions."""
 
     def __call__(self, params: Params) -> OptState:
         ...
 
 
 class TransformUpdateFn(t.Protocol):
-    """Function returning transformed `updates` and the new optimizer state."""
+    """Protocol for transformation update functions."""
 
     def __call__(
       self, updates: Updates, state: OptState, params: t.Optional[Params] = None,

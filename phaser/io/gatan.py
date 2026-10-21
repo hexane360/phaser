@@ -216,7 +216,7 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     """Region scan is valid within, (min_y, max_y, min_x, max_x). Python-style slicing."""
 
     def is_simulated(self) -> bool:
-        """Return whether the dataset is simulated (`file_type == 'pyMultislicer_metadata'`)."""
+        """Return whether the dataset is simulated."""
         return self.file_type == "pyMultislicer_metadata"
 
 

@@ -1,1 +1,1 @@
-"""Components shared by the reconstruction engines."""
+"""Components shared between reconstruction engines."""

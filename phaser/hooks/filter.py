@@ -14,7 +14,7 @@ class FilterArgs(t.TypedDict):
     """Arguments passed to a [`FilterHook`][phaser.hooks.filter.FilterHook]."""
 
     wavelength: NotRequired[float | None]
-    """Electron wavelength [angstrom]."""
+    """Wavelength [angstrom]."""
 
 
 class GaussianFilterProps(Dataclass):
@@ -37,7 +37,7 @@ class EmpadFilterProps(Dataclass):
     """Properties for the EMPAD detector response."""
 
     kv: t.Optional[float] = None
-    """Accelerating voltage [keV]. Defaults to the voltage implied by the wavelength in the raw data."""
+    """Accelerating voltage [kV]. Defaults to the voltage implied by the wavelength in the raw data."""
     square: bool = True
     """Whether to include the square pixel response."""
 
@@ -56,7 +56,7 @@ def make_empad_filter(args: FilterArgs, props: EmpadFilterProps) -> Filter:
     """Return the EMPAD detector response filter.
 
     Raises:
-        ValueError: If the voltage is unknown or not one of 80, 120, 200, or 300 keV.
+        ValueError: If the voltage is unknown or not one of 80, 120, 200, or 300 kV.
     """
     if props.kv is not None:
         kv = props.kv

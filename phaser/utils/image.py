@@ -42,11 +42,16 @@ InexactT_co = t.TypeVar('InexactT_co', bound=numpy.inexact, covariant=True)
 def apply_flips(
     data: NDArray[NumT], flips: t.Optional[t.Tuple[bool, bool, bool]]
 ) -> NDArray[NumT]:
-    """Flip and transpose the last two axes of `data`.
+    """
+    Applies flips to `data` along the last two axes.
+    If specified, transpose is applied last (after X and Y flips).
 
     Args:
-        data: Input array.
-        flips: Booleans `(flip_y, flip_x, transpose)`. The transpose is applied last.
+        data: Input data array.
+        flips: Tuple of three booleans `(flip_y, flip_x, transpose)`.
+
+    Returns:
+        `data` with the specified flips applied.
     """
     if flips is None or not any(flips):
         return data
@@ -78,11 +83,8 @@ def remove_linear_ramp(
 def remove_linear_ramp(
     data: ArrayLike, mask: t.Optional[NDArray[numpy.bool_]] = None
 ) -> NDArray[numpy.number]:
-    """Remove a best-fit linear ramp from each image of the stack `data`.
-
-    Args:
-        data: Images of shape `(..., ny, nx)`.
-        mask: Boolean mask `(ny, nx)` of pixels used for the fit.
+    """
+    Removes a linear 'ramp' from an image or stack of images.
     """
     xp = get_array_module(data)
     float_dtype = max_supported_float(xp)
@@ -107,16 +109,7 @@ def remove_linear_ramp(
 
 
 def colorize_complex(vals: ArrayLike, amp: bool = False, rescale: bool = True) -> NDArray[numpy.floating]:
-    """Return complex `vals` as RGB, with hue from phase and value from intensity.
-
-    Args:
-        vals: Complex array.
-        amp: Use amplitude instead of intensity for the value.
-        rescale: Normalize the value by its maximum.
-
-    Returns:
-        Array of shape `(*vals.shape, 3)`.
-    """
+    """Colorize a ndarray of complex values as rgb."""
     from matplotlib.colors import hsv_to_rgb
     xp = get_array_module(vals)
 
@@ -324,14 +317,18 @@ def convolve1d(
     arr: NDArray[NumT], weights: ArrayLike, axis: int = -1, *,
     mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.
 ) -> NDArray[NumT]:
-    """Convolve `arr` with the 1D filter `weights` along `axis`.
+    """
+    Convolve `arr` with the 1D filter `weights` along `axis`.
 
     Args:
         arr: Array to filter.
-        weights: 1D filter. Complex only if `arr` is complex.
-        axis: Axis to filter along.
-        mode: Boundary extension mode.
-        cval: Fill value for `'constant'` and `'grid-constant'`.
+        weights: 1D filter to convolve with. May only be complex if `arr` is complex.
+        axis: Axis of `arr` to filter along.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns:
+        Array of the same shape as `arr`.
     """
     xp = get_array_module(arr, weights)
 
@@ -373,17 +370,23 @@ def convolve2d_separable(
     arr: NDArray[NumT], y_weights: ArrayLike, x_weights: t.Optional[ArrayLike] = None, *,
     mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.
 ) -> NDArray[NumT]:
-    """Convolve the last two axes of `arr` with a separable 2D filter.
+    """
+    Convolve the last two axes of `arr` with a separable 2D filter.
 
     Equivalent to [`convolve2d`][phaser.utils.image.convolve2d] with the outer
     product `y_weights[:, None] * x_weights[None, :]`.
 
     Args:
         arr: Array to filter.
-        y_weights: 1D filter along the second-to-last axis. Complex only if `arr` is complex.
-        x_weights: 1D filter along the last axis. Defaults to `y_weights`.
-        mode: Boundary extension mode.
-        cval: Fill value for `'constant'` and `'grid-constant'`.
+        y_weights: 1D filter to convolve along the second-to-last axis. May only be
+                   complex if `arr` is complex.
+        x_weights: 1D filter to convolve along the last axis. Defaults to `y_weights`.
+                   May only be complex if `arr` is complex.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns:
+        Array of the same shape as `arr`.
     """
     xp = get_array_module(arr, y_weights, x_weights)
 
@@ -426,13 +429,19 @@ def convolve2d(
     arr: ArrayLike, weights: t.Union['Filter', ArrayLike], /, *,
     mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = 0.
 ) -> numpy.ndarray:
-    """Convolve the last two axes of `arr` with a 2D filter, in real space.
+    """
+    Convolve the last two axes of `arr` with a filter or 2D filter weights,
+    performing the convolution in real space.
 
     Args:
         arr: Array to filter.
-        weights: 2D filter, or a `Filter` evaluated at unit sampling. Complex only if `arr` is complex.
-        mode: Boundary extension mode.
-        cval: Fill value for `'constant'` and `'grid-constant'`.
+        weights: 2D filter to convolve with, or a `Filter` to evaluate at unit sampling.
+                 May only be complex if `arr` is complex.
+        mode: How to extend `arr` past its boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+
+    Returns:
+        Array of the same shape as `arr`.
     """
     if isinstance(weights, Filter):
         xp = get_array_module(arr)
@@ -522,12 +531,19 @@ def _resolve_xp_dtype(
 
 
 class Filter(abc.ABC):
-    """2D image filter, defined by a point spread function or a transfer function.
+    """
+    A 2D image filter, specified in real space (a point spread function) or in
+    reciprocal space (a transfer function).
 
-    Subclasses implement [`psf`][phaser.utils.image.Filter.psf] or
-    [`transfer_function`][phaser.utils.image.Filter.transfer_function]; the other is derived.
+    Subclasses implement whichever of [`psf`][phaser.utils.image.Filter.psf] and
+    [`transfer_function`][phaser.utils.image.Filter.transfer_function] they natively
+    have; the other is derived automatically.
 
-    Filters add with `+` (pointwise sum), and compose or scale with `*`.
+    LSI filters form a commutative ring under `__add__`
+    (pointwise sum of point spread functions/transfer functions, identity
+    [`SumFilter(())`][phaser.utils.image.SumFilter]) and
+    `__mul__` (composition, identity
+    [`ProductFilter(())`][phaser.utils.image.ProductFilter]).
     """
 
     def __init_subclass__(cls, **kwargs: t.Any) -> None:
@@ -536,22 +552,36 @@ class Filter(abc.ABC):
             raise TypeError(f"{cls.__name__} must implement 'psf' or 'transfer_function'")
 
     symmetric: bool = False
-    """Whether the point spread function is real and even."""
+    """
+    Whether the point spread function of the filter is real and even.
+    """
 
     def psf(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        """Return the point spread function for data sampled on `samp`.
+        """
+        Return the point spread function of the filter, evaluated for data sampled on `samp`.
+
+        The kernel is centered at `tuple(n // 2 for n in kernel.shape)`, matching the
+        convention of [`PsfFilter`][phaser.utils.image.PsfFilter] and
+        [`convolve2d`][phaser.utils.image.convolve2d]. When the filter has a natural
+        compact representation (e.g. [`SeparableFilter`][phaser.utils.image.SeparableFilter],
+        [`PsfFilter`][phaser.utils.image.PsfFilter], and composites of these), the returned
+        kernel may be smaller than `samp.shape`; use
+        `_embed_psf` to place it on the full grid.
+        This default implementation has no such compact form to fall back on (a transfer
+        function alone carries no locality information), so it always returns an array of
+        shape `samp.shape`.
 
         Args:
             samp: Sampling of the data to filter.
-            xp: Array module.
-            dtype: Floating point precision.
+            xp: Array module to return an array of.
+            dtype: Floating point precision to work in.
 
         Returns:
-            Kernel centered at `n // 2` along each axis. Compact filters may return a kernel
-            smaller than `samp.shape`. If `dtype` is real (the default), only the real part
-            is kept.
+            Array of shape `samp.shape` (or smaller, for a filter with a compact
+            representation). If `dtype` is real (the default), the transfer function
+            is assumed to be Hermitian and only the real part is kept.
         """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         psf = fft2shift(xp.fft.ifft2(self.transfer_function(samp, xp=xp, dtype=dtype)))
@@ -561,12 +591,17 @@ class Filter(abc.ABC):
     def transfer_function(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        """Return the transfer function sampled at `samp.recip_grid()` (fft order).
+        """
+        Return the transfer function of the filter, sampled at the frequencies
+        `samp.recip_grid()` (cycles/length, in fft order).
 
         Args:
             samp: Sampling of the data to filter.
-            xp: Array module.
-            dtype: Floating point precision.
+            xp: Array module to return an array of.
+            dtype: Floating point precision to work in.
+
+        Returns:
+            Array of shape `samp.shape`.
         """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         kernel = self.psf(samp, xp=xp, dtype=dtype)
@@ -577,12 +612,15 @@ class Filter(abc.ABC):
     def transfer_function_sym(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        """Return the transfer function on the doubled grid used for `'reflect'` boundaries.
+        """
+        Return the transfer function of the filter on the doubled grid used for
+        symmetric (`'reflect'`) boundaries, i.e. the transfer function of a sampling
+        of twice the extent.
 
         Args:
-            samp: Sampling of the data to filter, not of the returned array.
-            xp: Array module.
-            dtype: Floating point precision.
+            samp: Sampling of the data to filter (*not* of the returned array).
+            xp: Array module to return an array of.
+            dtype: Floating point precision to work in.
 
         Returns:
             Array of shape `2 * samp.shape`.
@@ -594,16 +632,21 @@ class Filter(abc.ABC):
     def transfer_function_dct(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.floating]:
-        """Return the real transfer function on the type-II DCT frequencies `j / (2 n s)`, `j` in `[0, n)`.
+        """
+        Return the transfer function of the filter on the grid diagonalized by a type-II
+        DCT, i.e. the frequencies `j / (2 n s)`, `j` in `[0, n)`. This is the non-negative
+        quadrant of [`transfer_function_sym`][phaser.utils.image.Filter.transfer_function_sym].
 
-        This is the non-negative quadrant of
-        [`transfer_function_sym`][phaser.utils.image.Filter.transfer_function_sym].
-        Only meaningful for a [`symmetric`][phaser.utils.image.Filter.symmetric] filter.
+        Only meaningful for a [`symmetric`][phaser.utils.image.Filter.symmetric] filter
+        (calling it otherwise is a logic error); always returns real.
 
         Args:
             samp: Sampling of the data to filter.
-            xp: Array module.
-            dtype: Floating point precision.
+            xp: Array module to return an array of.
+            dtype: Floating point precision to work in.
+
+        Returns:
+            Array of shape `samp.shape`.
         """
         (n, m) = _sampling_shape(samp)
         xp, dtype = _resolve_xp_dtype(xp, dtype)
@@ -611,10 +654,14 @@ class Filter(abc.ABC):
         return xp.real(transfer).astype(to_real_dtype(dtype))
 
     def __mul__(self, other: 't.Union[Filter, float]') -> 'Filter':
-        """Compose with another filter, or scale by a real factor.
+        """
+        Compose with another filter, or scale by a real amplitude factor.
 
-        Composing (`filt1 * filt2`) convolves the point spread functions and multiplies the
-        transfer functions. Scaling (`filt * 2.`) multiplies both by the factor.
+        Composing two filters (`filt1 * filt2`) is the filter obtained by applying
+        `self` then `other` (or in either order, since LSI filters commute): point
+        spread functions convolve, transfer functions multiply. Scaling by a scalar
+        (`filt * 2.`) multiplies both the point spread function and transfer function
+        by that scalar.
         """
         if isinstance(other, Filter):
             return _multiply_filters(self, other)
@@ -628,7 +675,10 @@ class Filter(abc.ABC):
         return NotImplemented
 
     def __add__(self, other: 'Filter') -> 'Filter':
-        """Add another filter (`filt1 + filt2`), summing point spread functions and transfer functions."""
+        """
+        Add another filter (`filt1 + filt2`): point spread functions and transfer
+        functions add pointwise.
+        """
         if isinstance(other, Filter):
             return _add_filters(self, other)
         return NotImplemented
@@ -671,7 +721,7 @@ def _convolve_kernels_1d(
 ) -> NDArray[numpy.inexact]:
     """
     Full linear convolution of two centered 1D kernels (`numpy.convolve(a, b, 'full')`),
-    keeping the same 'centered at `n // 2`' convention as [`_embed_psf`][phaser.utils.image._embed_psf].
+    keeping the same 'centered at `n // 2`' convention as `_embed_psf`.
     """
     if a.shape[-1] == 1:
         return (b * a[..., 0]).astype(dtype)
@@ -691,7 +741,7 @@ def _convolve_kernels_2d(
 ) -> NDArray[numpy.inexact]:
     """
     Full linear convolution of two centered 2D kernels, keeping the same
-    'centered at `shape // 2`' convention as [`_embed_psf`][phaser.utils.image._embed_psf].
+    'centered at `shape // 2`' convention as `_embed_psf`.
     """
     shape = (a.shape[-2] + b.shape[-2] - 1, a.shape[-1] + b.shape[-1] - 1)
     work_dtype = to_complex_dtype(dtype)
@@ -704,9 +754,10 @@ def _convolve_kernels_2d(
 
 @dataclasses.dataclass(frozen=True)
 class PsfFilter(Filter):
-    """Filter defined by a numeric point spread function.
+    """
+    A filter specified by a numeric point spread function, centered at `kernel.shape // 2`.
 
-    A complex `kernel` can only filter a complex array.
+    `kernel` may be complex, but a complex `kernel` can only filter a complex array.
     """
 
     kernel: NDArray[numpy.inexact]
@@ -726,9 +777,10 @@ class PsfFilter(Filter):
 
 
 class SeparableFilter(Filter):
-    """Filter whose point spread function is the outer product of two 1D kernels.
-
-    See [`convolve2d_separable`][phaser.utils.image.convolve2d_separable].
+    """
+    A filter whose point spread function is the outer product of two 1D kernels,
+    and can therefore be applied one axis at a time (see
+    [`convolve2d_separable`][phaser.utils.image.convolve2d_separable]).
     """
 
     @t.overload
@@ -747,14 +799,16 @@ class SeparableFilter(Filter):
     def psf_separable(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> t.Tuple[NDArray[numpy.inexact], NDArray[numpy.inexact]]:
-        """Return the 1D kernels `(y_kernel, x_kernel)`, each centered at `n // 2`.
+        """
+        Return the 1D kernels `(y_kernel, x_kernel)` whose outer product is the
+        point spread function of the filter. Each kernel is centered at `n // 2`.
 
-        Only the sample spacing of `samp` is used.
+        The kernels are compact, so only the sample spacing of `samp` is used.
 
         Args:
             samp: Sampling of the data to filter.
-            xp: Array module.
-            dtype: Floating point precision.
+            xp: Array module to return arrays of.
+            dtype: Floating point precision to work in.
         """
         ...
 
@@ -767,15 +821,19 @@ class SeparableFilter(Filter):
 
 
 class AnalyticFilter(Filter):
-    """Filter with a closed-form transfer function."""
+    """
+    A filter with a closed-form transfer function, which can be evaluated at any frequency.
+    """
 
     @abc.abstractmethod
     def transfer_at(
         self, kyy: NDArray[numpy.floating], kxx: NDArray[numpy.floating], samp: Sampling
     ) -> NDArray[numpy.number]:
-        """Return the transfer function evaluated at frequencies `(kyy, kxx)` [1/length].
+        """
+        Return the transfer function of the filter, evaluated at the frequencies
+        `(kyy, kxx)` (units of 1/length, matching the sample spacing of `samp`).
 
-        The frequencies are not necessarily an fft grid of `samp`.
+        The grid is not necessarily an fft grid of `samp`.
         """
         ...
 
@@ -804,9 +862,10 @@ class AnalyticFilter(Filter):
 
 @dataclasses.dataclass(frozen=True)
 class SeparablePsfFilter(SeparableFilter):
-    """Filter defined by the outer product `y_kernel[:, None] * x_kernel[None, :]`.
+    """
+    A filter specified by the outer product `y_kernel[:, None] * x_kernel[None, :]`.
 
-    Complex kernels can only filter a complex array.
+    `y_kernel`/`x_kernel` may be complex, but can only filter a complex array.
     """
 
     y_kernel: NDArray[numpy.inexact]
@@ -848,7 +907,7 @@ def _upsample_axis(psf: NDArray[numpy.inexact], axis: int, xp: t.Any) -> NDArray
 
 @dataclasses.dataclass(frozen=True)
 class TransferFilter(Filter):
-    """Filter defined by a numeric transfer function."""
+    """A filter specified by a numeric transfer function, sampled on the fft grid of its own shape."""
 
     transfer: NDArray[numpy.number]
     """Transfer function on the fft grid. Must match the shape of the data."""
@@ -878,16 +937,19 @@ class TransferFilter(Filter):
 
 @dataclasses.dataclass(frozen=True)
 class GaussianFilter(SeparableFilter, AnalyticFilter):
-    """Gaussian blur.
+    """
+    A Gaussian blur of standard deviation `sigma`, in the length units of the
+    sampling it is evaluated on.
 
-    The point spread function is truncated at `psf_sigma` standard deviations and renormalized.
-    It is bandwidth limited to match the Gaussian transfer function, which rings for small `sigma`.
+    The point spread function is truncated at `psf_sigma` standard deviations
+    (and renormalized). It is also bandwidth limited to match a smooth Gaussian
+    transfer function. This leads to some ringing for small `sigma` values.
     """
 
     sigma: t.Union[Float, t.Tuple[Float, Float]]
-    """Standard deviation `(y, x)` [length]. A scalar applies to both axes."""
+    """Standard deviation in (y, x), in units of length."""
     psf_sigma: float = 3.
-    """Half-width of the point spread function [standard deviations]."""
+    """Half-width of the point spread function, in standard deviations."""
 
     symmetric = True
 
@@ -926,16 +988,21 @@ class GaussianFilter(SeparableFilter, AnalyticFilter):
 
 @dataclasses.dataclass(frozen=True)
 class SquarePixelFilter(SeparableFilter, AnalyticFilter):
-    """Transfer function of an ideal square-pixel detector (integration over one pixel).
+    """
+    The transfer function of an ideal, square-pixeled detector, i.e. integration over
+    one detector pixel. Note that this contrast transfer is not isotropic; the MTF is
+    better along the detector axes than the diagonals.
 
-    The transfer is not isotropic: the MTF is better along the detector axes than the diagonals.
-    The point spread function is truncated at `psf_radius` detector pixels and renormalized.
+    The point spread function is truncated at `psf_radius` detector pixels (and renormalized).
     """
 
     pixel_sampling: t.Optional[t.Union[Float, t.Tuple[Float, Float]]] = None
-    """Detector pixel size `(y, x)` [length]. Defaults to the sample spacing of the data."""
+    """
+    Size of one detector pixel, in (y, x), in the same units as `sampling`.
+    Defaults to that sampling's own `sampling` (i.e. one detector pixel per sample).
+    """
     psf_radius: int = 10
-    """Half-width of the point spread function [detector pixels]."""
+    """Half-width of the point spread function, in detector pixels."""
 
     symmetric = True
 
@@ -979,9 +1046,14 @@ class SquarePixelFilter(SeparableFilter, AnalyticFilter):
 
 @dataclasses.dataclass(frozen=True)
 class ProductFilter(Filter):
-    """Composition of several filters: point spread functions convolve, transfer functions multiply.
+    """
+    The composition (product) of several filters, applied in sequence (order doesn't
+    matter, since LSI filters commute): point spread functions convolve, transfer
+    functions multiply.
 
-    Normally constructed with `filt1 * filt2`. The empty product is the identity filter.
+    Construct via `Filter.__mul__` (`filt1 * filt2`)
+    rather than directly. The empty product, `ProductFilter(())`, is the multiplicative
+    identity filter.
     """
 
     filters: t.Tuple[Filter, ...] = ()
@@ -1013,7 +1085,12 @@ class ProductFilter(Filter):
     def psf(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        """Return the product point spread function, convolving the compact component kernels."""
+        """
+        The product point spread function, computed by directly convolving the
+        components' own (compact) point spread functions, rather than going through
+        [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
+        FFT over the full `samp.shape` grid regardless of how compact the components are.
+        """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         if not self.filters:
             return xp.ones((1, 1), dtype=dtype)
@@ -1025,7 +1102,12 @@ class ProductFilter(Filter):
 
 @dataclasses.dataclass(frozen=True)
 class ProductSeparableFilter(SeparableFilter, ProductFilter):
-    """[`ProductFilter`][phaser.utils.image.ProductFilter] of [`SeparableFilter`][phaser.utils.image.SeparableFilter]s."""
+    """
+    A [`ProductFilter`][phaser.utils.image.ProductFilter] all of whose components are
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s, so the product point spread
+    function can be built (and convolved) one axis at a time, rather than going through
+    [`ProductFilter`][phaser.utils.image.ProductFilter]'s 2D compact convolution.
+    """
 
     filters: t.Tuple[SeparableFilter, ...] = ()
     """Component filters."""
@@ -1069,9 +1151,13 @@ def _add_kernels_2d(
 
 @dataclasses.dataclass(frozen=True)
 class SumFilter(Filter):
-    """Sum of several filters: point spread functions and transfer functions add pointwise.
+    """
+    The sum of several filters: point spread functions and transfer functions add
+    pointwise.
 
-    Normally constructed with `filt1 + filt2`. The empty sum is the zero filter.
+    Construct via `Filter.__add__` (`filt1 + filt2`)
+    rather than directly. The empty sum, `SumFilter(())`, is the additive identity
+    (zero) filter.
     """
 
     filters: t.Tuple[Filter, ...] = ()
@@ -1103,7 +1189,12 @@ class SumFilter(Filter):
     def psf(
         self, samp: Sampling, *, xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
     ) -> NDArray[numpy.inexact]:
-        """Return the sum point spread function, adding the compact component kernels."""
+        """
+        The sum point spread function, computed by directly adding the components'
+        own (compact) point spread functions, rather than going through
+        [`Filter`][phaser.utils.image.Filter]'s default derivation, which would take an
+        FFT over the full `samp.shape` grid regardless of how compact the components are.
+        """
         xp, dtype = _resolve_xp_dtype(xp, dtype)
         if not self.filters:
             return xp.zeros((1, 1), dtype=dtype)
@@ -1115,9 +1206,17 @@ class SumFilter(Filter):
 
 @dataclasses.dataclass(frozen=True)
 class SumSeparableFilter(SumFilter):
-    """[`SumFilter`][phaser.utils.image.SumFilter] of [`SeparableFilter`][phaser.utils.image.SeparableFilter]s.
+    """
+    A [`SumFilter`][phaser.utils.image.SumFilter] all of whose components are
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]s.
 
-    The sum is not itself separable.
+    Unlike [`ProductSeparableFilter`][phaser.utils.image.ProductSeparableFilter], the
+    sum itself is *not* generally separable (a sum of outer products isn't generally
+    a single outer product), so this doesn't implement
+    [`SeparableFilter`][phaser.utils.image.SeparableFilter]. It exists so that
+    [`psf`][phaser.utils.image.SumFilter.psf] can build the result directly from the
+    components' compact `psf_separable` kernels, rather than paying for a full
+    `samp.shape` FFT per component.
     """
 
     filters: t.Tuple[SeparableFilter, ...] = ()
@@ -1152,15 +1251,18 @@ def _cast_output(
 
 
 def convolve2d_recip_wrap(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
-    """Convolve the last two axes of `arr` with `transfer`, using periodic boundaries.
+    """
+    Convolve the last two axes of `arr` with the transfer function `transfer`
+    and with periodic boundary conditions.
 
     Args:
-        arr: Floating point or complex array to filter.
-        transfer: Transfer function on the fft frequencies of the last two axes of `arr`.
+        arr: Array to filter. Must be floating point or complex.
+        transfer: Transfer function, of the same shape as the last two axes of `arr`,
+                  sampled on that grid's fft frequencies.
 
     Returns:
-        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer` is assumed
-        Hermitian and only the real part is kept.
+        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer`
+        is assumed to be Hermitian and only the real part of the result is kept.
     """
     xp = get_array_module(arr, transfer)
     arr, transfer = xp.asarray(arr), xp.asarray(transfer)
@@ -1171,16 +1273,18 @@ def convolve2d_recip_wrap(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArra
 
 
 def convolve2d_recip_reflect(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
-    """Convolve the last two axes of `arr` with `transfer`, using reflecting boundaries.
+    """
+    Convolve the last two axes of `arr` with the transfer function `transfer`
+    and with reflecting boundary conditions.
 
     Args:
-        arr: Floating point or complex array to filter.
-        transfer: Transfer function on the fft frequencies of the doubled grid, with twice
-            the shape of the last two axes of `arr`.
+        arr: Array to filter. Must be floating point or complex.
+        transfer: Transfer function, of twice the shape of the last two axes of `arr`,
+                  sampled on the doubled grid's fft frequencies.
 
     Returns:
-        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer` is assumed
-        Hermitian and only the real part is kept.
+        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer`
+        is assumed to be Hermitian and only the real part of the result is kept.
     """
     xp = get_array_module(arr, transfer)
     arr, transfer = xp.asarray(arr), xp.asarray(transfer)
@@ -1236,18 +1340,23 @@ def _fold_symmetric_axis(arr: NDArray[numpy.inexact], axis: int, n: int, xp: t.A
 
 
 def convolve2d_recip_reflect_adjoint(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
-    """Apply the adjoint of [`convolve2d_recip_reflect`][phaser.utils.image.convolve2d_recip_reflect].
+    """
+    Apply the adjoint (transpose) of
+    [`convolve2d_recip_reflect`][phaser.utils.image.convolve2d_recip_reflect] with the
+    same (already-conjugated) `transfer`.
 
-    `transfer` is the same (already conjugated) transfer function passed to the forward operation.
+    `convolve2d_recip_reflect` is `Crop . IFFT2 . diag(transfer) . FFT2 . Pad`.
+    Therefore, this computes the adjoint `Pad^T . IFFT2 . diag(transfer) . FFT2 . Crop^T`,
+    where `Crop^T` is zero-embedding and `Pad^T` is folding.
 
     Args:
-        arr: Floating point or complex array to filter.
-        transfer: Transfer function on the fft frequencies of the doubled grid, with twice
-            the shape of the last two axes of `arr`.
+        arr: Array to filter. Must be floating point or complex.
+        transfer: Transfer function, of twice the shape of the last two axes of `arr`,
+                  sampled on the doubled grid's fft frequencies.
 
     Returns:
-        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer` is assumed
-        Hermitian and only the real part is kept.
+        Array of the same shape and dtype as `arr`. If `arr` is real, `transfer`
+        is assumed to be Hermitian and only the real part of the result is kept.
     """
     xp = get_array_module(arr, transfer)
     arr, transfer = xp.asarray(arr), xp.asarray(transfer)
@@ -1263,12 +1372,18 @@ def convolve2d_recip_reflect_adjoint(arr: NDArray[InexactT], transfer: ArrayLike
 
 
 def convolve2d_recip_reflect_dct(arr: NDArray[InexactT], transfer: ArrayLike) -> NDArray[InexactT]:
-    """Convolve the last two axes of `arr` with `transfer`, using reflecting boundaries and a DCT.
+    """
+    Convolve the last two axes of `arr` with the transfer function `transfer`
+    and reflecting boundary conditions, utilizing a DCT.
 
     Args:
-        arr: Floating point or complex array to filter.
-        transfer: Real transfer function on the DCT frequencies `j / (2 n s)`, with the shape
-            of the last two axes of `arr`.
+        arr: Array to filter. Must be floating point or complex.
+        transfer: Transfer function, of the same shape as the last two axes of `arr`,
+                  sampled on the dct frequencies `j / (2 n*s)`.
+
+    Returns:
+        Array of the same shape and dtype as `arr` (a DCT-based transfer
+        function must be real).
 
     Raises:
         ValueError: If `transfer` is complex.
@@ -1293,7 +1408,10 @@ _RECIP_CONVOLVERS: t.Dict[_RecipBoundaryMode, t.Callable[[t.Any, ArrayLike], t.A
 
 @tree_dataclass(frozen=True, static_fields=('mode', 'shape', 'symmetric'))
 class PreparedOTF(t.Generic[InexactT_co]):
-    """[`Filter`][phaser.utils.image.Filter] evaluated in reciprocal space, applied by calling it."""
+    """
+    A [`Filter`][phaser.utils.image.Filter] evaluated for a given sampling and boundary
+    mode, ready to be applied by calling it.
+    """
 
     transfer: NDArray[InexactT_co]
     """Transfer function."""
@@ -1305,7 +1423,16 @@ class PreparedOTF(t.Generic[InexactT_co]):
     """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
 
     def __call__(self, arr: NDArray[InexactT]) -> NDArray[InexactT]:
-        """Convolve the last two axes of `arr` with the filter.
+        """
+        Convolve the last two axes of `arr` with this filter.
+
+        Args:
+            arr: Array to filter. Must be floating point or complex.
+
+        Returns:
+            Array of the same shape and dtype as `arr`. If `arr` is real, the
+            filter's transfer function is assumed to be Hermitian and only the
+            real part of the result is kept.
 
         Raises:
             ValueError: If `arr` does not have the prepared `shape`.
@@ -1318,9 +1445,13 @@ class PreparedOTF(t.Generic[InexactT_co]):
         return t.cast(NDArray[InexactT], _RECIP_CONVOLVERS[self.mode](arr, self.transfer))
 
     def adjoint(self) -> Self:
-        """Return the adjoint filter `g`, where `<self(x), y> == <x, g(y)>`.
+        """
+        Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
+        `<self(x), y> == <x, g(y)>` for all `x`, `y`.
 
-        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter is self-adjoint and returns `self`.
+        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter is self-adjoint
+        (the transfer function is already real-valued), so this simply returns `self`
+        in that case.
         """
         if self.symmetric:
             return self
@@ -1359,18 +1490,21 @@ def prepare_convolve2d_recip(
     mode: _FilterBoundaryMode = 'reflect', xp: t.Any = None,
     dtype: t.Optional[DTypeLike] = None
 ) -> PreparedOTF[numpy.floating] | PreparedOTF[numpy.complexfloating]:
-    """Evaluate the transfer function of `filt` for data sampled on `samp`.
+    """
+    Evaluate `filt` for data sampled on `samp`.
 
     Args:
         filt: Filter to evaluate.
-        samp: Sampling of the last two axes of the arrays to filter.
-        mode: Boundary mode. `'reflect'` is half-sample symmetric, `'grid-wrap'` is periodic.
-        xp: Array module.
-        dtype: Floating point precision.
+        samp: Sampling of the last two axes of the arrays to be filtered.
+        mode: How to extend arrays past their boundaries. `'reflect'` is half-sample
+              symmetric, `'grid-wrap'` is periodic.
+        xp: Array module to evaluate on.
+        dtype: Floating point precision to work in.
 
     Returns:
-        The prepared filter. Its transfer function is real iff `dtype` is real (or unspecified)
-        and `filt` is [`symmetric`][phaser.utils.image.Filter.symmetric].
+        A [`PreparedOTF`][phaser.utils.image.PreparedOTF], ready to be called on an array.
+        Real iff `dtype` is real (or unspecified) and `filt` is
+        [`symmetric`][phaser.utils.image.Filter.symmetric]; complex otherwise.
     """
     xp, dtype = _resolve_xp_dtype(xp, dtype)
 
@@ -1396,10 +1530,14 @@ def prepare_convolve2d_recip(
 def convolve2d_recip(
     arr: NDArray[InexactT], filt: Filter, samp: Sampling, *, mode: _FilterBoundaryMode = 'reflect',
 ) -> NDArray[InexactT]:
-    """Convolve `arr` with `filt` evaluated at `samp`, in reciprocal space.
+    """
+    Convolve `arr` with `filt`, evaluated at `samp`.
 
-    The result has the dtype of `arr`. If `arr` is real, only the real part is kept.
-    Use [`prepare_convolve2d_recip`][phaser.utils.image.prepare_convolve2d_recip] to filter multiple arrays.
+    Convenience wrapper around [`prepare_convolve2d_recip`][phaser.utils.image.prepare_convolve2d_recip];
+    prefer preparing once and reusing it to filter more than one array.
+
+    The result always has the dtype of `arr`. If `arr` is real, `filt`'s transfer
+    function is assumed to be Hermitian and only the real part of the result is kept.
     """
     xp = get_array_module(arr)
     return prepare_convolve2d_recip(filt, samp, mode=mode, xp=xp, dtype=to_real_dtype(arr.dtype))(arr)
@@ -1407,27 +1545,45 @@ def convolve2d_recip(
 
 @tree_dataclass(frozen=True, static_fields=('mode', 'symmetric'))
 class PreparedPSF(t.Generic[NumT_co]):
-    """[`Filter`][phaser.utils.image.Filter] evaluated in real space, applied by calling it."""
+    """
+    A [`Filter`][phaser.utils.image.Filter]'s point spread function, evaluated for a
+    given sampling and boundary mode, ready to be applied by calling it.
+    """
 
     psf: t.Union[NDArray[NumT_co], t.Tuple[NDArray[NumT_co], NDArray[NumT_co]]]
     """2D point spread function, or the 1D kernels `(y_kernel, x_kernel)` of a separable filter."""
     mode: _InterpBoundaryMode
     """Boundary mode."""
     cval: t.Union[NumT_co, float] = 0.
-    """Fill value for `'constant'` and `'grid-constant'`."""
+    """Fill value, for `mode='constant'` and `mode='grid-constant'`."""
     symmetric: bool = False
     """Whether the source filter was [`symmetric`][phaser.utils.image.Filter.symmetric]."""
 
     def __call__(self, arr: NDArray[NumT]) -> NDArray[NumT]:
-        """Convolve the last two axes of `arr` with the filter."""
+        """
+        Convolve the last two axes of `arr` with this filter.
+
+        Args:
+            arr: Array to filter.
+
+        Returns:
+            Array of the same shape and dtype as `arr`.
+        """
         if isinstance(self.psf, tuple):
             return convolve2d_separable(arr, *self.psf, mode=self.mode, cval=t.cast(float, self.cval))
         return convolve2d(arr, self.psf, mode=self.mode, cval=t.cast(float, self.cval))
 
     def adjoint(self) -> Self:
-        """Return the adjoint filter `g`, where `<self(x), y> == <x, g(y)>`.
+        """
+        Return the transpose (adjoint) of this filter, i.e. the filter `g` such that
+        `<self(x), y> == <x, g(y)>` for all `x`, `y`.
 
-        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter is self-adjoint and returns `self`.
+        A [`symmetric`][phaser.utils.image.Filter.symmetric] filter's PSF is already
+        even about the origin, so this simply returns `self` in that case. Otherwise,
+        for `mode='grid-wrap'` (periodic boundaries), the adjoint of correlation is
+        correlation with the kernel reversed about its center. Other boundary modes
+        pad the array before correlating, and transposing that padding exactly isn't
+        implemented.
 
         Raises:
             NotImplementedError: If the filter is asymmetric and `mode` is not `'grid-wrap'`.
@@ -1464,15 +1620,20 @@ def prepare_convolve2d(
     mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = 0.,
     xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
 ) -> PreparedPSF[numpy.number]:
-    """Evaluate the point spread function of `filt` for data sampled on `samp`.
+    """
+    Evaluate `filt`'s point spread function for data sampled on `samp`, ready for
+    direct spatial-domain convolution.
 
     Args:
         filt: Filter to evaluate.
-        samp: Sampling of the last two axes of the arrays to filter.
-        mode: Boundary mode.
-        cval: Fill value for `'constant'` and `'grid-constant'`.
-        xp: Array module.
-        dtype: Floating point precision.
+        samp: Sampling of the last two axes of the arrays to be filtered.
+        mode: How to extend arrays past their boundaries.
+        cval: Fill value, for `mode='constant'` and `mode='grid-constant'`.
+        xp: Array module to evaluate on.
+        dtype: Floating point precision to work in.
+
+    Returns:
+        A [`PreparedPSF`][phaser.utils.image.PreparedPSF], ready to be called on an array.
     """
     if isinstance(filt, SeparableFilter):
         psf = filt.psf_separable(samp, xp=xp, dtype=dtype)

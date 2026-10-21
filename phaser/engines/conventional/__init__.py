@@ -1,1 +1,1 @@
-"""Conventional ptychography engine (ePIE, LSQML)."""
+"""Conventional ptychography engine."""

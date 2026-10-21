@@ -38,7 +38,7 @@ def plot_pacbed(raw: NDArray[numpy.floating],
     *, ax: t.Optional['Axes'] = None, log: bool = True,
     diff_step: t.Union[t.Tuple[float, float], float, None] = None
 ) -> 'Axes':
-    """Plot the PACBED (the sum of `raw` over all but its last two axes).
+    """Plot a position-averaged convergent beam electron diffraction (PACBED) pattern of `raw`.
 
     Args:
         raw: Diffraction patterns `(..., ky, kx)`.
@@ -587,7 +587,7 @@ def plot_probe_overlap(
 
 
 def plot_metrics(metrics: t.Dict[str, float]) -> 'Figure':
-    """Plot experimental-parameter metrics in three panels (linear sampling, probe overlap, predicted success)."""
+    """Plot acquisition parameter metrics (linear sampling, probe overlap, predicted success)."""
     fig, (ax1, ax2, ax3) = pyplot.subplots(
         ncols=3,
         gridspec_kw={

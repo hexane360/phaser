@@ -1,4 +1,4 @@
-"""Physical constants and electron relativistic utilities."""
+"""Physical constants & utilities."""
 
 from dataclasses import dataclass
 import math
@@ -77,7 +77,7 @@ class Electron:
 
     @property
     def beta(self) -> float:
-        """Electron velocity as a fraction of $c$ [unitless]."""
+        """Electron beta factor $v/c$ [unitless]."""
         return math.sqrt(1 - self.gamma**-2)
 
     @property

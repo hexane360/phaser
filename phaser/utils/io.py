@@ -27,7 +27,7 @@ from phaser.utils.misc import freeze
 HdfLike: t.TypeAlias = h5py.File | str | Path
 """An open HDF5 file, or a path to one."""
 OpenMode: t.TypeAlias = t.Literal['r', 'r+', 'w', 'w-', 'x', 'a']
-"""`h5py` file open mode."""
+"""File open mode."""
 DTypeT = t.TypeVar('DTypeT', bound=numpy.generic)
 
 _DTYPE_CATEGORIES: dict[type[numpy.generic], type[numpy.generic]] = {

@@ -1,4 +1,4 @@
-"""Noise models: loss functions and wave updates for diffraction intensities."""
+"""Detector noise models."""
 
 import typing as t
 
