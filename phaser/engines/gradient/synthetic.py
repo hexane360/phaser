@@ -33,15 +33,14 @@ class SyntheticGrad(HasState[StateT], t.Protocol[StateT]):
 
 
 class AffineSyntheticGrad(SyntheticGrad[None]):
-    """
-    Constrains position updates to a linear transform of the current positions,
-    `u = pos @ M.T` for a 2x2 matrix `M`. `pos` is mean-centered, so `M` carries
-    no translation.
+    """Position updates constrained to a linear transform of the positions.
+
+    Updates have the form `u = pos @ M.T` for a 2x2 matrix `M`, where `pos` is mean-centered.
     """
 
     source: t.ClassVar[ReconsVar] = 'positions'
-    # regularization, in machine epsilons
     eps: t.Final[float] = 100.0
+    """Tikhonov regularization strength [machine epsilons]."""
 
     def init_state(self, sim: ReconsState) -> None:
         return None
@@ -70,9 +69,9 @@ class LineState(t.NamedTuple):
 
 
 class LineSyntheticGrad(SyntheticGrad[LineState]):
-    """
-    Constrains position updates to be constant along each fast-scan line, as
-    grouped by the `raster_rows` scan metadata. `project` is the per-line mean.
+    """Position updates constrained to be constant along each fast-scan line.
+
+    Lines are given by the `raster_rows` scan metadata; `project` returns the per-line mean.
     """
 
     source: t.ClassVar[ReconsVar] = 'positions'
