@@ -1,7 +1,10 @@
 """Simulation state, scan grouping, and multislice helpers."""
 
+import abc
 import collections
+import concurrent.futures
 import logging
+import threading
 import typing as t
 
 import numpy
@@ -30,6 +33,7 @@ from phaser.utils.num import (
     block_until_ready,
     fft2,
     get_array_module,
+    host_transfer_fn,
     ifft2,
     is_jax,
     to_complex_dtype,
@@ -92,39 +96,167 @@ class GroupManager:
         return self.n_groups
 
 
-def stream_patterns(
-    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
-    xp: t.Any, buf_n: int = 1
-) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
-    """Yield `(group, patterns)`, transferring patterns to `xp` and prefetching `buf_n` groups ahead.
+class PatternSource(abc.ABC):
+    """Iterable of `(group, group_patterns)`, which limits how far the caller runs ahead of the device.
 
-    Each yielded array is ready on the device.
+    After dispatching work on a group, call `release_after` with an output of that work. What
+    a released group allows depends on the implementation (see `PatternStream` and
+    `ResidentPatterns`). The output must stay valid until it's ready, so it must not be
+    donated to later work.
+
+    Use as a context manager (or call `close`) to stop any background work promptly when
+    iteration is abandoned.
     """
-    if buf_n == 0:
-        for group in groups:
-            group_patterns = xp.asarray(patterns[tuple(group)])
-            yield group, block_until_ready(group_patterns)
-        return
 
-    buf = collections.deque()
-    it = iter(groups)
+    def __init__(self):
+        self._release: t.Any = None
+        self._it: t.Optional[t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]] = None
 
-    for group in it:
-        buf.append((group, xp.asarray(patterns[tuple(group)])))
-        if len(buf) >= buf_n:
-            break
+    def release_after(self, arr: t.Any):
+        """Release the most recently yielded group once `arr` is ready."""
+        self._release = arr
 
-    while len(buf) > 0:
-        # attempt to feed queue
+    @abc.abstractmethod
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+        ...
+
+    def __iter__(self) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
+        self.close()
+        self._it = self._iter()
+        return self._it
+
+    def close(self):
+        """Stop iteration, and any background work."""
+        if self._it is not None:
+            self._it.close()
+            self._it = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: t.Any) -> None:
+        self.close()
+
+
+class PatternStream(PatternSource):
+    """`PatternSource` streaming patterns from the host to the device.
+
+    At most `buf_n` groups are kept on the device at once, counted from the start of their
+    transfer until they are released. Patterns are gathered and transferred in background
+    threads, so the next groups are transferred while earlier groups are processed.
+
+    A released group allows the transfer of a later group to start, once the output passed
+    to `release_after` is ready. Groups which aren't released explicitly are released once
+    their own transfer completes.
+
+    With `buf_n == 0`, each group is transferred synchronously, when it is requested.
+    """
+
+    def __init__(
+        self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+        xp: t.Any, buf_n: int = 1,
+    ):
+        super().__init__()
+        if buf_n < 0:
+            raise ValueError(f"'buf_n' must be non-negative, got {buf_n}")
+
+        self._groups = groups
+        self._patterns = patterns
+        self._transfer = host_transfer_fn(xp)
+        self._buf_n = buf_n
+
+    def _load(
+        self, group: NDArray[numpy.int64], release: t.Any, closed: t.Optional[threading.Event] = None
+    ) -> t.Optional[NDArray[numpy.floating]]:
+        # wait for a previous group to be released
+        if release is not None:
+            block_until_ready(release)
+        # don't start a transfer if iteration was abandoned while waiting
+        if closed is not None and closed.is_set():
+            return None
+        return self._transfer(self._patterns[tuple(group)])
+
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+        if self._buf_n == 0:
+            for group in self._groups:
+                yield group, block_until_ready(t.cast(NDArray[numpy.floating], self._load(group, None)))
+            return
+
+        groups = iter(self._groups)
+        # (group, future of group_patterns)
+        pending: t.Deque[t.Tuple[NDArray[numpy.int64], concurrent.futures.Future]] = collections.deque()
+
+        # numpy releases the GIL while gathering, as do the device transfers
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._buf_n, thread_name_prefix='pattern_stream')
+        closed = threading.Event()
+
+        def submit(release: t.Any):
+            if (group := next(groups, None)) is not None:
+                pending.append((group, pool.submit(self._load, group, release, closed)))
+
         try:
-            group = next(it)
-            buf.append((group, xp.asarray(patterns[tuple(group)])))
-        except StopIteration:
-            pass
+            for _ in range(self._buf_n):
+                submit(None)
 
-        # and yield from front of queue
-        (group, group_patterns) = buf.popleft()
-        yield group, block_until_ready(group_patterns)
+            while len(pending) > 0:
+                (group, fut) = pending.popleft()
+                group_patterns = t.cast(NDArray[numpy.floating], fut.result())
+                self._release = group_patterns
+                yield group, group_patterns
+                # releasing this group allows another to be loaded
+                submit(self._release)
+        finally:
+            closed.set()
+            pool.shutdown(wait=False, cancel_futures=True)
+
+
+class ResidentPatterns(PatternSource):
+    """`PatternSource` for patterns already on the device.
+
+    Before yielding a group, waits until the group `max_in_flight` groups earlier is
+    released, i.e. until the output passed to `release_after` is ready. Groups which aren't
+    released explicitly don't limit iteration.
+    """
+
+    def __init__(
+        self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+        xp: t.Any, max_in_flight: int = 1,
+    ):
+        super().__init__()
+        if max_in_flight < 1:
+            raise ValueError(f"'max_in_flight' must be positive, got {max_in_flight}")
+
+        self._groups = groups
+        self._patterns = patterns
+        self._xp = xp
+        self._max_in_flight = max_in_flight
+
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+        # outputs of groups which haven't been released yet
+        in_flight: t.Deque[t.Any] = collections.deque()
+
+        for group in self._groups:
+            while len(in_flight) >= self._max_in_flight:
+                block_until_ready(in_flight.popleft())
+
+            self._release = None
+            yield group, self._patterns[tuple(self._xp.asarray(group))]
+            if self._release is not None:
+                in_flight.append(self._release)
+
+
+def iter_patterns(
+    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+    xp: t.Any, buffer_n_groups: t.Optional[int],
+) -> PatternSource:
+    """Return a `PatternSource` of `(group, patterns)` for `groups`.
+
+    With `buffer_n_groups=None`, `patterns` must already be on the device. Otherwise, they're
+    streamed from the host, keeping at most `buffer_n_groups` groups on the device.
+    """
+    if buffer_n_groups is None:
+        return ResidentPatterns(groups, patterns, xp)
+    return PatternStream(groups, patterns, xp, buffer_n_groups)
 
 
 @tree_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))

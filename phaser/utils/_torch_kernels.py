@@ -360,7 +360,7 @@ def size(arr: torch.Tensor, axis: t.Optional[int]) -> int:
 
 def asarray(
     arr: t.Any, dtype: t.Union[str, torch.dtype, numpy.dtype, t.Type[numpy.generic], None] = None, *,
-    copy: t.Optional[bool] = None,
+    copy: t.Optional[bool] = None, device: t.Optional[torch.device] = None,
 ) -> torch.Tensor:
     dtype = to_torch_dtype(dtype) if dtype is not None else None
     requires_grad = arr.requires_grad if isinstance(arr, torch.Tensor) else False
@@ -373,7 +373,7 @@ def asarray(
     # `copy`, which only decides *how* (see below), not *whether*. Plain
     # `torch.asarray(...)` on a numpy buffer would otherwise always land on CPU,
     # since it just wraps the existing (CPU) buffer.
-    device = torch.get_default_device()
+    device = device if device is not None else torch.get_default_device()
     if device.type == 'cpu':
         return torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy)
 

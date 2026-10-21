@@ -14,7 +14,7 @@ from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
 from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    stream_patterns, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    iter_patterns, PatternSource, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
 )
 
 
@@ -45,15 +45,9 @@ class LSQMLSolver(ConventionalSolver):
 
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
-    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
-        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
-        xp = cast_array_module(xp)
-
-        if self.engine_plan.buffer_n_groups is None:
-            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
-        return stream_patterns(
-            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
-        )
+    ) -> PatternSource:
+        """Return a `PatternSource` of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
+        return iter_patterns(groups, patterns, cast_array_module(xp), self.engine_plan.buffer_n_groups)
 
     def presolve(
         self,
@@ -358,15 +352,9 @@ class EPIESolver(ConventionalSolver):
 
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
-    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
-        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
-        xp = cast_array_module(xp)
-
-        if self.engine_plan.buffer_n_groups is None:
-            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
-        return stream_patterns(
-            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
-        )
+    ) -> PatternSource:
+        """Return a `PatternSource` of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
+        return iter_patterns(groups, patterns, cast_array_module(xp), self.engine_plan.buffer_n_groups)
 
     def presolve(
         self,

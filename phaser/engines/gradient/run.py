@@ -22,7 +22,6 @@ from phaser.utils.num import (
     abs2,
     assert_dtype,
     at,
-    block_until_ready,
     cast_array_module,
     fft2,
     get_array_module,
@@ -37,10 +36,10 @@ from phaser.utils.optics import fourier_shift_filter
 
 from ..common.simulation import (
     GroupManager,
+    iter_patterns,
     make_propagators,
     prepare_mtf,
     slice_forwards,
-    stream_patterns,
     tilt_propagators,
 )
 from .synthetic import SYNTHETIC_GRADS, SYNTHETIC_VARS, SyntheticGrad, source_var
@@ -307,24 +306,18 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
         logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
         patterns = args['data'].patterns
 
-    def iter_patterns(groups: t.Iterable[NDArray[numpy.int_]]) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
-        if props.buffer_n_groups is None:
-            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
-        return stream_patterns(
-            groups, patterns, xp=xp, buf_n=props.buffer_n_groups
-        )
-
     propagators = make_propagators(state, props.bwlim_frac)
     mtf = None if props.mtf is None else prepare_mtf(props.mtf, state, dtype, xp)
 
     # runs rescaling
     rescale_factors = []
-    for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan.data))):
-        group_rescale_factors = dry_run(
-            state, group, propagators, group_patterns,
-            xp=xp, dtype=dtype,
-        )
-        rescale_factors.append(group_rescale_factors)
+    with iter_patterns(groups.iter(state.scan.data), patterns, xp, props.buffer_n_groups) as group_iter:
+        for (group, group_patterns) in group_iter:
+            group_rescale_factors = dry_run(
+                state, group, propagators, group_patterns,
+                xp=xp, dtype=dtype,
+            )
+            rescale_factors.append(group_rescale_factors)
 
     rescale_factors = xp.concatenate(rescale_factors, axis=0)
     rescale_factor = xp.mean(rescale_factors)
@@ -387,31 +380,31 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
             for (solver, solver_state) in zip(iter_solvers, iter_solver_states)
         ]
 
-        for (group_i, (group, group_patterns)) in enumerate(iter_patterns(groups.iter(state.scan.data, i, iter_shuffle_groups))):
-            # prevent the loop running ahead of the GPU stream
-            block_until_ready(losses_gpu['total_loss'])
-
-            (state, losses_gpu, iter_grads, solver_states) = run_group(
-                state, group=group, vars=iter_vars,
-                noise_model=noise_model,
-                group_solvers=group_solvers,
-                group_constraints=group_constraints,
-                regularizers=regularizers,
-                losses=losses_gpu,
-                iter_grads=iter_grads,
-                solver_states=solver_states,
-                props=propagators,
-                mtf=mtf,
-                group_patterns=group_patterns, #load_group(group),
-                pattern_mask=pattern_mask,
-                probe_int=probe_int,
-                xp=xp, dtype=dtype,
-                jit_unroll_slices=jit_unroll_slices,
-            )
-            if props.check_every_group and not numpy.isfinite(float(losses_gpu['total_loss'])):
-                raise ValueError(f"NaN or inf encountered, group {group_i}")
-            state.progress = progress
-            observer.update_group(state)
+        with iter_patterns(groups.iter(state.scan.data, i, iter_shuffle_groups), patterns, xp, props.buffer_n_groups) as group_iter:
+            for (group_i, (group, group_patterns)) in enumerate(group_iter):
+                (state, losses_gpu, iter_grads, solver_states) = run_group(
+                    state, group=group, vars=iter_vars,
+                    noise_model=noise_model,
+                    group_solvers=group_solvers,
+                    group_constraints=group_constraints,
+                    regularizers=regularizers,
+                    losses=losses_gpu,
+                    iter_grads=iter_grads,
+                    solver_states=solver_states,
+                    props=propagators,
+                    mtf=mtf,
+                    group_patterns=group_patterns, #load_group(group),
+                    pattern_mask=pattern_mask,
+                    probe_int=probe_int,
+                    xp=xp, dtype=dtype,
+                    jit_unroll_slices=jit_unroll_slices,
+                )
+                # limit how far we run ahead of the GPU stream
+                group_iter.release_after(losses_gpu['total_loss'])
+                if props.check_every_group and not numpy.isfinite(float(losses_gpu['total_loss'])):
+                    raise ValueError(f"NaN or inf encountered, group {group_i}")
+                state.progress = progress
+                observer.update_group(state)
 
         if not numpy.isfinite(float(losses_gpu['total_loss'])):
             raise ValueError(f"NaN or inf encountered, iteration {i}")

@@ -464,23 +464,52 @@ def block_until_ready(arr: NDArray[DTypeT]) -> NDArray[DTypeT]:
 def block_until_ready(arr: t.Any) -> t.Any:
     """Block until the asynchronous computation of `arr` finishes, and return `arr`.
 
-    Synchronizes the device for `torch` (CUDA) and `cupy`. No-op for `numpy`.
+    Synchronizes the array's device for `torch` (CUDA) and `cupy`. No-op for `numpy`.
+    Safe to call from any thread.
     """
     if hasattr(arr, 'block_until_ready'):  # jax
         return arr.block_until_ready()  # type: ignore
 
     if is_torch(arr):
         import torch
-        device = torch.get_default_device()
-        if device.type == 'cuda':
-            torch.cuda.synchronize(device)
+        if arr.device.type == 'cuda':
+            torch.cuda.synchronize(arr.device)
 
     if is_cupy(arr):
-        cupy = sys.modules['cupy']
-        stream = cupy.cuda.get_current_stream()
-        stream.synchronize()
+        arr.device.synchronize()
 
     return arr
+
+
+def host_transfer_fn(xp: t.Any) -> t.Callable[[numpy.ndarray], NDArray[t.Any]]:
+    """Return a function transferring host arrays to the current default device of `xp`.
+
+    The default device is captured now, so the returned function may be called from other
+    threads (the default device is thread-local for `torch` and `cupy`).
+    """
+    if xp_is_jax(xp):
+        import jax
+        # `jax.device_put` transfers directly, while `jnp.asarray` runs a (jitted) `stage`
+        # identity computation, adding a device-to-device copy on the compute stream.
+        # The jax default device is global, so it's respected from any thread.
+        return jax.device_put
+
+    if xp_is_torch(xp):
+        import torch
+        from ._torch_kernels import asarray
+        torch_device = torch.get_default_device()
+        return lambda arr: asarray(arr, device=torch_device)  # type: ignore
+
+    if xp_is_cupy(xp):
+        cupy = sys.modules['cupy']
+        cupy_device = cupy.cuda.Device()
+
+        def transfer(arr: numpy.ndarray) -> NDArray[t.Any]:
+            with cupy_device:
+                return cupy.asarray(arr)
+        return transfer
+
+    return xp.asarray
 
 
 class _JitKernel(t.Generic[P, T]):

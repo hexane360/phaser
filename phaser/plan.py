@@ -141,7 +141,8 @@ class EnginePlan(Dataclass, kw_only=True):
     """Iterations to shuffle groups at. Defaults to every iteration for sparse grouping and none for compact grouping."""
     buffer_n_groups: t.Optional[int] = 2
     """
-    How many groups of patterns to buffer onto the device simultaneously.
+    How many groups of patterns to keep on the device simultaneously, including groups
+    being processed. Later groups are transferred while earlier groups are processed.
     Set to 0 to disable buffering, or `None` (`~` in YAML) to preload the
     entire dataset to the device.
     """
