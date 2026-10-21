@@ -581,13 +581,13 @@ def run_model(
     # (group, mode, y, x)
     probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[slice_i, :, None], shift=False) * prop[:, None], shift=False)
-        return psi * group_obj[slice_i, :, None]
+            return ifft2(fft2(psi * obj[:, None], shift=False) * prop[:, None], shift=False)
+        return psi * obj[:, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilts)
-    model_wave = fft2(slice_forwards(t_props, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
+    model_wave = fft2(slice_forwards(t_props, group_obj, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
 
     model_intensity = xp.sum(abs2(model_wave), axis=1)
     if mtf is not None:
@@ -637,13 +637,13 @@ def dry_run(
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
     probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
         if prop is not None:
-            return ifft2(fft2(psi * group_obj[slice_i, :, None], shift=False) * prop[:, None], shift=False)
-        return psi * group_obj[slice_i, :, None]
+            return ifft2(fft2(psi * obj[:, None], shift=False) * prop[:, None], shift=False)
+        return psi * obj[:, None]
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilt)
-    model_wave = fft2(slice_forwards(t_props, probes, sim_slice), shift=False)
+    model_wave = fft2(slice_forwards(t_props, group_obj, probes, sim_slice), shift=False)
     model_intensity = xp.sum(abs2(model_wave), axis=(1, -2, -1))
     exp_intensity = xp.sum(group_patterns, axis=(-2, -1))
 

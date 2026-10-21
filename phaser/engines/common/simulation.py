@@ -359,34 +359,42 @@ def cutout_group(
 
 def slice_forwards(
     props: t.Optional[NDArray[numpy.complexfloating]],
+    obj: NDArray[numpy.complexfloating],
     state: StateT,
-    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT], *,
+    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], NDArray[numpy.complexfloating], StateT], StateT], *,
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
     """Fold `f` forwards over slices.
 
+    `obj` holds the per-slice object (e.g. object cutouts), with slices along the first axis.
     `f` receives the slice index, the propagator to the next slice (`None` for the last
-    slice), and the state, and returns the updated state. `jit_unroll_slices` is passed
-    to `jax.lax.scan` as `unroll`.
+    slice), that slice of `obj`, and the state, and returns the updated state.
+    `jit_unroll_slices` is passed to `jax.lax.scan` as `unroll`.
+
+    On JAX, `obj` is passed to `f` as a scan input rather than indexed with the (traced)
+    slice index, so gradients with respect to `obj` are stacked per slice rather than
+    accumulated with dynamic-update-slices.
     """
     if props is None:
-        return f(0, None, state)
+        return f(0, None, obj[0], state)
 
     n_slices = len(props) + 1  # props shape: (Nz-1, batch, Ny, Nx)
 
     if is_jax(props):
         import jax
-        def step_fn(carry, slice_i):
-            new_state = f(slice_i, props[slice_i], carry)
-            return new_state, None
+        def step_fn(carry, xs):
+            (slice_i, prop, obj_slice) = xs
+            return f(slice_i, prop, obj_slice, carry), None
 
-        state, _ = jax.lax.scan(step_fn, state, jax.numpy.arange(n_slices - 1), unroll=jit_unroll_slices)
-        return f(n_slices - 1, None, state)
+        state, _ = jax.lax.scan(
+            step_fn, state, (jax.numpy.arange(n_slices - 1), props, obj[:-1]), unroll=jit_unroll_slices
+        )
+        return f(n_slices - 1, None, obj[-1], state)
 
     # fallback numpy mode
     for slice_i in range(n_slices - 1):
-        state = f(slice_i, props[slice_i], state)
-    return f(n_slices - 1, None, state)
+        state = f(slice_i, props[slice_i], obj[slice_i], state)
+    return f(n_slices - 1, None, obj[-1], state)
 
 
 def slice_backwards(

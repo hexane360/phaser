@@ -175,20 +175,22 @@ def lsqml_dry_run(
     obj_mag += xp.sum(abs2(xp.prod(group_obj, axis=0)), axis=0)
     obj_grid = sim.state.object.sampling
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
+    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], state):
         (probe_mag, psi) = state
         probe_mag = at(probe_mag, slice_i).set(
             obj_grid.add_view_at_pos(probe_mag[slice_i], group_scan, xp.sum(abs2(psi), axis=1))
         )
 
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[slice_i, :, None]) * prop[:, None])
+            psi = ifft2(fft2(psi * obj[:, None]) * prop[:, None])
+        else:
+            psi = psi * obj[:, None]
 
         return (probe_mag, psi)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    (probe_mag, psi) = slice_forwards(props, (probe_mag, psi), run_slice)
+    (probe_mag, psi) = slice_forwards(props, group_obj, (probe_mag, psi), run_slice)
 
     # modeled and experimental intensity
     # summed over incoherent modes and over the pattern
@@ -246,7 +248,7 @@ def lsqml_run(
     #group_obj_mag = xp.sum(abs2(group_obj[0]), axis=0)
     group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=0)), axis=0)
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], state):
         (group_probe_mag, psi) = state
 
         group_probe_mag = at(group_probe_mag, slice_i).set(
@@ -255,14 +257,14 @@ def lsqml_run(
 
         if prop is not None:
             psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[slice_i, :, None]) * prop[:, None])
+                ifft2(fft2(psi[slice_i] * obj[:, None]) * prop[:, None])
             )
 
         return (group_probe_mag, psi)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    (group_probe_mag, psi) = slice_forwards(props, (group_probe_mag, psi), sim_slice, jit_unroll_slices=jit_unroll_slices)
+    (group_probe_mag, psi) = slice_forwards(props, group_obj, (group_probe_mag, psi), sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     new_obj_mag += group_obj_mag
     new_probe_mag += group_probe_mag
@@ -461,15 +463,14 @@ def epie_dry_run(
     xp = cast_array_module(sim.xp)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[slice_i, :, None]) * prop[:, None])
-
-        return psi
+            return ifft2(fft2(psi * obj[:, None]) * prop[:, None])
+        return psi * obj[:, None]
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, run_slice)
+    psi = slice_forwards(props, group_obj, psi, run_slice)
 
     # modeled and experimental intensity
     # summed over incoherent modes and over the pattern
@@ -513,17 +514,17 @@ def epie_run(
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
         if prop is not None:
             psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[slice_i, :, None]) * prop[:, None])
+                ifft2(fft2(psi[slice_i] * obj[:, None]) * prop[:, None])
             )
 
         return psi
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
+    psi = slice_forwards(props, group_obj, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
 
     model_wave = fft2(psi[-1] * group_obj[-1, :, None])
     # sum over incoherent modes
