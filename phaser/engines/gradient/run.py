@@ -42,6 +42,7 @@ from ..common.simulation import (
     prepare_mtf,
     resolve_patterns,
     slice_forwards,
+    split_slice_cutouts,
     tilt_propagators,
 )
 from .synthetic import SYNTHETIC_GRADS, SYNTHETIC_VARS, SyntheticGrad, source_var
@@ -575,7 +576,11 @@ def run_model(
 
     # preshift probe and object
     probes = ifft2shift(sim.probe.data)
-    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:]))
+    # (slice, group, y, x)
+    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(
+        sim.object.data, group_scan, probes.shape[-2:],
+        split_batch=split_slice_cutouts(jit_unroll_slices, sim.object.data.shape[0]),
+    ))
     group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
     # (group, mode, y, x)
     probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)

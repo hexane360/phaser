@@ -401,12 +401,15 @@ class ObjectSampling:
         xp = get_array_module(arr, pos)
         return ObjectCutout(self, xp.asarray(arr), xp.asarray(pos), shape)
 
-    def get_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, shape: t.Tuple[int, ...]) -> NDArray[NumT]:
+    def get_view_at_pos(
+        self, arr: NDArray[NumT], pos: ArrayLike, shape: t.Tuple[int, ...], *, split_batch: bool = False
+    ) -> NDArray[NumT]:
         """Return cutouts of `arr` of shape `shape` around positions `pos`.
 
         The result has shape `(*arr.shape[:-2], *pos.shape[:-1], *shape[-2:])`.
+        See `ObjectCutout.get` for `split_batch`.
         """
-        return self.cutout(arr, pos, shape).get()
+        return self.cutout(arr, pos, shape).get(split_batch=split_batch)
 
     def set_view_at_pos(self, arr: NDArray[NumT], pos: ArrayLike, view: numpy.ndarray) -> NDArray[NumT]:
         """Set cutouts of `arr` around positions `pos` to `view` and return the array.
@@ -582,11 +585,19 @@ class ObjectCutout(t.Generic[DTypeT]):
         """Shape of the result of `get`."""
         return (*self.obj.shape[:-2], *self.pos.shape[:-1], *self.cutout_shape[-2:])
 
-    def get(self) -> NDArray[DTypeT]:
-        """Return the cutouts, of shape `(*obj.shape[:-2], *pos.shape[:-1], *cutout_shape[-2:])`."""
+    def get(self, *, split_batch: bool = False) -> NDArray[DTypeT]:
+        """Return the cutouts, of shape `(*obj.shape[:-2], *pos.shape[:-1], *cutout_shape[-2:])`.
+
+        If `split_batch`, cutouts of each object in `obj.shape[:-2]` are gathered separately
+        (JAX only). This helps when each object's cutouts are used separately in unrolled
+        code: XLA can then fuse each gather into its own consumer, rather than fusing the
+        gather of every object into each consumer.
+        """
         if is_jax(self.obj):
             from ._jax_kernels import get_cutouts
-            return t.cast(NDArray[DTypeT], get_cutouts(self.obj, self._start_idxs, tuple(self.cutout_shape)))
+            return t.cast(NDArray[DTypeT], get_cutouts(
+                self.obj, self._start_idxs, tuple(self.cutout_shape), split_batch=split_batch
+            ))
 
         if is_torch(self.obj):
             from ._torch_kernels import get_cutouts

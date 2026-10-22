@@ -14,7 +14,8 @@ from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
 from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    iter_patterns, resolve_patterns, PatternsLike, PatternSource, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    iter_patterns, resolve_patterns, PatternsLike, PatternSource, SimulationState, cutout_group,
+    split_slice_cutouts, tilt_propagators, slice_forwards, slice_backwards,
 )
 
 
@@ -236,7 +237,10 @@ def lsqml_run(
 
     eps = 1e-16
 
-    (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
+    (probes, group_obj, group_scan, subpx_filters) = cutout_group(
+        sim.ky, sim.kx, sim.state, group, return_filters=True,
+        split_slices=split_slice_cutouts(jit_unroll_slices, n_slices),
+    )
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
 
@@ -502,7 +506,10 @@ def epie_run(
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
-    (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
+    (probes, group_obj, group_scan, subpx_filters) = cutout_group(
+        sim.ky, sim.kx, sim.state, group, return_filters=True,
+        split_slices=split_slice_cutouts(jit_unroll_slices, n_slices),
+    )
     psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
     psi = at(psi, 0).set(probes)
 

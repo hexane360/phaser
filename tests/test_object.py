@@ -280,6 +280,7 @@ def test_cutout_multidim(backend: BackendName):
     ], cutout_shape)
     cutout_arr = cutouts.get()
     assert cutout_arr.shape == (3, 2, 2, *cutout_shape)
+    assert_array_almost_equal(to_numpy(cutouts.get(split_batch=True)), to_numpy(cutout_arr))
 
     # check top left corner of each cutout
     assert_array_almost_equal(to_numpy(cutout_arr[..., 0, 0]), [
