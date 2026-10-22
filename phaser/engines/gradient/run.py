@@ -36,9 +36,11 @@ from phaser.utils.optics import fourier_shift_filter
 
 from ..common.simulation import (
     GroupManager,
+    PatternsLike,
     iter_patterns,
     make_propagators,
     prepare_mtf,
+    resolve_patterns,
     slice_forwards,
     tilt_propagators,
 )
@@ -491,7 +493,7 @@ def run_group(
     solver_states: SolverStates,
     props: t.Optional[NDArray[numpy.complexfloating]],
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
-    group_patterns: NDArray[numpy.floating],
+    group_patterns: PatternsLike,
     pattern_mask: NDArray[numpy.floating],
     probe_int: t.Union[float, numpy.floating],
     xp: t.Any,
@@ -503,6 +505,7 @@ def run_group(
     Gradients of per-iteration variables are written into `iter_grads`; losses are added to `losses`.
     """
     xp = cast_array_module(xp)
+    group_patterns = resolve_patterns(group_patterns)
 
     (grad, (solver_states, group_losses)) = tree.grad(run_model, has_aux=True, xp=xp, sign=-1)(
         *extract_vars(state, vars, group),
@@ -619,11 +622,12 @@ def dry_run(
     sim: ReconsState,
     group: NDArray[numpy.integer],
     props: t.Optional[NDArray[numpy.complexfloating]],
-    group_patterns: NDArray[numpy.floating],
+    group_patterns: PatternsLike,
     xp: t.Any,
     dtype: t.Type[numpy.floating],
 ) -> NDArray[numpy.floating]:
     """Return the per-position ratio of experimental to modeled intensity for a group."""
+    group_patterns = resolve_patterns(group_patterns)
     (ky, kx) = sim.probe.sampling.recip_grid(dtype=dtype, xp=xp)
     group_scan = sim.scan.data[tuple(group)]
     group_tilt = sim.scan.tilt[tuple(group)] if sim.scan.tilt is not None else None

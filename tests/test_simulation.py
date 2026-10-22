@@ -6,7 +6,7 @@ import numpy
 import pytest
 from numpy.testing import assert_array_equal
 
-from phaser.engines.common.simulation import PatternStream, ResidentPatterns, iter_patterns
+from phaser.engines.common.simulation import GroupPatterns, PatternStream, ResidentPatterns, iter_patterns, resolve_patterns
 from phaser.utils.num import get_array_module, get_backend_module, to_numpy
 
 from .utils import with_backends
@@ -116,13 +116,16 @@ def test_iter_patterns(backend: str, buffer_n_groups: t.Optional[int]):
     with source:
         for (expected_group, (group, group_patterns)) in zip(groups, source, strict=True):
             assert_array_equal(group, expected_group)
+            if buffer_n_groups is None:
+                assert isinstance(group_patterns, GroupPatterns)
+            group_patterns = resolve_patterns(group_patterns)
             assert_array_equal(to_numpy(group_patterns), patterns[tuple(group)])
             source.release_after(group_patterns * 2.)
 
 
 def test_resident_patterns_release():
     patterns = numpy.zeros((10, 4, 4), dtype=numpy.float32)
-    source = ResidentPatterns(_groups(4), patterns, numpy, max_in_flight=1)
+    source = ResidentPatterns(_groups(4), patterns, max_in_flight=1)
     it = iter(source)
     outputs = [_Output() for _ in range(4)]
     for output in outputs:
@@ -162,7 +165,7 @@ def test_pattern_stream_close():
 
 def test_resident_patterns_max_in_flight():
     patterns = numpy.zeros((10, 4, 4), dtype=numpy.float32)
-    source = ResidentPatterns(_groups(4), patterns, numpy, max_in_flight=2)
+    source = ResidentPatterns(_groups(4), patterns, max_in_flight=2)
     it = iter(source)
     outputs = [_Output() for _ in range(4)]
     for output in outputs:
@@ -176,3 +179,18 @@ def test_resident_patterns_max_in_flight():
     next(it)
     assert outputs[0].waited
     assert not outputs[1].waited
+
+
+@with_backends('jax')
+def test_group_patterns_jit(backend: str):
+    import jax
+    xp = get_backend_module(backend)
+    patterns = numpy.arange(3 * 4 * 2 * 2, dtype=numpy.float32).reshape(3, 4, 2, 2)
+    group = numpy.array([[0, 2, 1], [3, 0, 1]])  # 2D scan
+
+    @jax.jit
+    def f(group_patterns):
+        return resolve_patterns(group_patterns) * 2.
+
+    out = f(GroupPatterns(xp.asarray(patterns), group))
+    assert_array_equal(to_numpy(out), 2. * patterns[tuple(group)])

@@ -14,7 +14,7 @@ from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
 from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    iter_patterns, PatternSource, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    iter_patterns, resolve_patterns, PatternsLike, PatternSource, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
 )
 
 
@@ -151,7 +151,7 @@ class LSQMLSolver(ConventionalSolver):
 def lsqml_dry_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     obj_mag: NDArray[numpy.floating],
@@ -164,6 +164,7 @@ def lsqml_dry_run(
         modeled intensity for each pattern.
     """
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
     obj_mag += xp.sum(abs2(xp.prod(group_obj, axis=0)), axis=0)
@@ -203,7 +204,7 @@ def lsqml_dry_run(
 def lsqml_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
@@ -229,6 +230,7 @@ def lsqml_run(
         `calc_error`, and `pos_update` is `None` unless `update_position`.
     """
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
@@ -443,12 +445,13 @@ class EPIESolver(ConventionalSolver):
 def epie_dry_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
 ) -> NDArray[numpy.floating]:
     """Return the ratio of experimental to modeled intensity for each pattern in `group`."""
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
 
     def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
@@ -476,7 +479,7 @@ def epie_dry_run(
 def epie_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
@@ -495,6 +498,7 @@ def epie_run(
         is `None` unless `update_position`.
     """
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 

@@ -96,8 +96,41 @@ class GroupManager:
         return self.n_groups
 
 
+@tree_dataclass
+class GroupPatterns:
+    """Lazy view of the patterns of a group, within patterns already on the device.
+
+    Passed to (JIT) kernels in place of the group's patterns, so that the gather happens
+    inside the kernel: an eager gather costs several ms of host time per group on JAX.
+    Kernels call `resolve_patterns` to get the patterns.
+    """
+
+    patterns: NDArray[numpy.floating]
+    """Patterns of all positions, `(*scan_shape, Ny, Nx)`."""
+    group: NDArray[numpy.int64]
+    """Group indices into the scan dimensions, `(scan ndim, group size)`."""
+
+    def get(self) -> NDArray[numpy.floating]:
+        """Return the patterns of the group, `(group size, Ny, Nx)`."""
+        xp = get_array_module(self.patterns)
+        return self.patterns[tuple(xp.asarray(self.group))]
+
+
+PatternsLike: t.TypeAlias = t.Union[NDArray[numpy.floating], GroupPatterns]
+"""The patterns of a group, as yielded by a `PatternSource`."""
+
+
+def resolve_patterns(patterns: PatternsLike) -> NDArray[numpy.floating]:
+    """Return the patterns of a group, gathering them if `patterns` is a `GroupPatterns` view."""
+    if isinstance(patterns, GroupPatterns):
+        return patterns.get()
+    return patterns
+
+
 class PatternSource(abc.ABC):
     """Iterable of `(group, group_patterns)`, which limits how far the caller runs ahead of the device.
+
+    `group_patterns` may be a `GroupPatterns` view, so kernels must call `resolve_patterns` on it.
 
     After dispatching work on a group, call `release_after` with an output of that work. What
     a released group allows depends on the implementation (see `PatternStream` and
@@ -110,17 +143,17 @@ class PatternSource(abc.ABC):
 
     def __init__(self):
         self._release: t.Any = None
-        self._it: t.Optional[t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]] = None
+        self._it: t.Optional[t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]] = None
 
     def release_after(self, arr: t.Any):
         """Release the most recently yielded group once `arr` is ready."""
         self._release = arr
 
     @abc.abstractmethod
-    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
         ...
 
-    def __iter__(self) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
+    def __iter__(self) -> t.Iterator[t.Tuple[NDArray[numpy.int64], PatternsLike]]:
         self.close()
         self._it = self._iter()
         return self._it
@@ -176,7 +209,7 @@ class PatternStream(PatternSource):
             return None
         return self._transfer(self._patterns[tuple(group)])
 
-    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
         if self._buf_n == 0:
             for group in self._groups:
                 yield group, block_until_ready(t.cast(NDArray[numpy.floating], self._load(group, None)))
@@ -211,7 +244,7 @@ class PatternStream(PatternSource):
 
 
 class ResidentPatterns(PatternSource):
-    """`PatternSource` for patterns already on the device.
+    """`PatternSource` for patterns already on the device, yielding `GroupPatterns` views.
 
     Before yielding a group, waits until the group `max_in_flight` groups earlier is
     released, i.e. until the output passed to `release_after` is ready. Groups which aren't
@@ -223,7 +256,7 @@ class ResidentPatterns(PatternSource):
 
     def __init__(
         self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
-        xp: t.Any, max_in_flight: int = 2,
+        max_in_flight: int = 2,
     ):
         super().__init__()
         if max_in_flight < 1:
@@ -231,10 +264,9 @@ class ResidentPatterns(PatternSource):
 
         self._groups = groups
         self._patterns = patterns
-        self._xp = xp
         self._max_in_flight = max_in_flight
 
-    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]], None, None]:
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
         # outputs of groups which haven't been released yet
         in_flight: t.Deque[t.Any] = collections.deque()
 
@@ -243,7 +275,7 @@ class ResidentPatterns(PatternSource):
                 block_until_ready(in_flight.popleft())
 
             self._release = None
-            yield group, self._patterns[tuple(self._xp.asarray(group))]
+            yield group, GroupPatterns(self._patterns, group)
             if self._release is not None:
                 in_flight.append(self._release)
 
@@ -258,7 +290,7 @@ def iter_patterns(
     streamed from the host, keeping at most `buffer_n_groups` groups on the device.
     """
     if buffer_n_groups is None:
-        return ResidentPatterns(groups, patterns, xp)
+        return ResidentPatterns(groups, patterns)
     return PatternStream(groups, patterns, xp, buffer_n_groups)
 
 
