@@ -593,6 +593,24 @@ def fuse(*args, **kwargs) -> t.Callable[[T], T]:
     return lambda x: x
 
 
+def checkpoint(f: t.Callable[P, T]) -> t.Callable[P, T]:
+    """Wrap `f` to recompute its intermediates in the backward pass, rather than saving them.
+
+    Useful around cheap computations with large results (e.g. gathers), so that only their
+    inputs are saved for the backward pass. Uses `jax.checkpoint` when called with jax arrays;
+    a no-op otherwise.
+    """
+    @functools.wraps(f)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        if any(map(is_jax, args)) or any(map(is_jax, kwargs.values())):
+            import jax
+            # the default `prevent_cse=True` inserts optimization barriers, which hurt inside `scan`
+            return jax.checkpoint(f, prevent_cse=False)(*args, **kwargs)
+        return f(*args, **kwargs)
+
+    return wrapper
+
+
 def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwargs):
     """Call `callback(*args, **kwargs)`, using `jax.debug.callback` if jax is installed.
 

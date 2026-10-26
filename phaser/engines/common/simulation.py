@@ -482,39 +482,34 @@ def tilt_propagators(
 
 
 @t.overload
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: t.Literal[False] = False, *, split_slices: bool = False
-) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.complexfloating], NDArray[numpy.floating]]:
+    return_filters: t.Literal[False] = False,
+) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.floating]]:
     ...
 
 @t.overload
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: t.Literal[True], *, split_slices: bool = False
-) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.complexfloating], NDArray[numpy.floating], NDArray[numpy.complexfloating]]:
+    return_filters: t.Literal[True],
+) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.floating], NDArray[numpy.complexfloating]]:
     ...
 
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: bool = False, *, split_slices: bool = False
+    return_filters: bool = False,
 ):
-    """Return `(probes, obj, scan)`: sub-pixel shifted probes, object cutouts, and scan positions for `group`.
+    """Return `(probes, scan)`: sub-pixel shifted probes and scan positions for `group`.
 
-    Probes have shape `(len(group), modes, Ny, Nx)`, and object cutouts have shape
-    `(slices, len(group), Ny, Nx)`. If `return_filters`, the sub-pixel shift
-    filters are appended. `split_slices` gathers each slice's cutouts separately
-    (see `split_slice_cutouts`).
+    Probes have shape `(len(group), modes, Ny, Nx)`. If `return_filters`, the sub-pixel shift
+    filters are appended.
     """
     probes = state.probe.data
 
     group_scan = state.scan.data[tuple(group)]
-    group_obj = state.object.sampling.get_view_at_pos(
-        state.object.data, group_scan, probes.shape[-2:], split_batch=split_slices
-    )
     # group probes in real space
     # shape (len(group), 1, Ny, Nx)
     group_subpx_filters = fourier_shift_filter(ky, kx, state.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
@@ -522,21 +517,9 @@ def cutout_group(
     shifted_probes = ifft2(fft2(probes) * group_subpx_filters)
 
     if return_filters:
-        return (shifted_probes, group_obj, group_scan, group_subpx_filters)
+        return (shifted_probes, group_scan, group_subpx_filters)
 
-    return (shifted_probes, group_obj, group_scan)
-
-
-def split_slice_cutouts(jit_unroll_slices: t.Union[int, bool], n_slices: int) -> bool:
-    """Return whether to gather object cutouts slice by slice (`split_batch`), given the slice unrolling.
-
-    When the slices are fully unrolled, XLA fuses the gather of every slice's cutouts into each
-    slice's computation. Gathering each slice separately avoids this. Otherwise, the cutouts are
-    materialized as a scan input, and a single gather is cheaper to compile.
-    """
-    if n_slices <= 1:
-        return False
-    return jit_unroll_slices is True or int(jit_unroll_slices) >= n_slices - 1
+    return (shifted_probes, group_scan)
 
 
 def slice_forwards(
@@ -548,14 +531,14 @@ def slice_forwards(
 ) -> StateT:
     """Fold `f` forwards over slices.
 
-    `obj` holds the per-slice object (e.g. object cutouts), with slices along the first axis.
-    `f` receives the slice index, the propagator to the next slice (`None` for the last
-    slice), that slice of `obj`, and the state, and returns the updated state.
-    `jit_unroll_slices` is passed to `jax.lax.scan` as `unroll`.
+    `obj` holds the per-slice object (usually the object slices, from which `f` gathers its
+    cutouts), with slices along the first axis. `f` receives the slice index, the propagator
+    to the next slice (`None` for the last slice), that slice of `obj`, and the state, and
+    returns the updated state. `jit_unroll_slices` is passed to `jax.lax.scan` as `unroll`.
 
     On JAX, `obj` is passed to `f` as a scan input rather than indexed with the (traced)
-    slice index, so gradients with respect to `obj` are stacked per slice rather than
-    accumulated with dynamic-update-slices.
+    slice index, so gradients with respect to `obj` are formed per slice and stacked, rather
+    than accumulated with dynamic-update-slices.
     """
     if props is None:
         return f(0, None, obj[0], state)

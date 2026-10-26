@@ -23,6 +23,7 @@ from phaser.utils.num import (
     assert_dtype,
     at,
     cast_array_module,
+    checkpoint,
     fft2,
     get_array_module,
     host_transfer_fn,
@@ -43,7 +44,6 @@ from ..common.simulation import (
     prepare_mtf,
     resolve_patterns,
     slice_forwards,
-    split_slice_cutouts,
     tilt_propagators,
 )
 from .synthetic import SYNTHETIC_GRADS, SYNTHETIC_VARS, SyntheticGrad, source_var
@@ -575,24 +575,26 @@ def run_model(
     xp = get_array_module(sim.probe.data)
     dtype = to_real_dtype(sim.probe.data.dtype)
 
-    # preshift probe and object
+    # preshift probe
     probes = ifft2shift(sim.probe.data)
-    # (slice, group, y, x)
-    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(
-        sim.object.data, group_scan, probes.shape[-2:],
-        split_batch=split_slice_cutouts(jit_unroll_slices, sim.object.data.shape[0]),
-    ))
-    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
+    cutout_shape = probes.shape[-2:]
+    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, cutout_shape))
     # (group, mode, y, x)
     probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
+    # recompute cutouts in the backwards pass, decreasing memory consumption
+    @checkpoint
+    def transmit(psi: NDArray[numpy.complexfloating], obj: NDArray[numpy.complexfloating]) -> NDArray[numpy.complexfloating]:
+        return psi * ifft2shift(sim.object.sampling.get_view_at_pos(obj, group_scan, cutout_shape))[:, None]
+
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
+        psi = transmit(psi, obj)
         if prop is not None:
-            return ifft2(fft2(psi * obj[:, None], shift=False) * prop[:, None], shift=False)
-        return psi * obj[:, None]
+            return ifft2(fft2(psi, shift=False) * prop[:, None], shift=False)
+        return psi
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilts)
-    model_wave = fft2(slice_forwards(t_props, group_obj, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
+    model_wave = fft2(slice_forwards(t_props, sim.object.data, probes, sim_slice, jit_unroll_slices=jit_unroll_slices), shift=False)
 
     model_intensity = xp.sum(abs2(model_wave), axis=1)
     if mtf is not None:
@@ -608,10 +610,7 @@ def run_model(
             group, sim, solver_states.regularizer_states[reg_i]
         )
         losses[reg.name()] = reg_loss
-        # NOT `loss += reg_loss`: on torch, `+=` on a tensor is an in-place `add_`,
-        # which would also mutate `losses['detector_loss']` (line above) since it's
-        # the same tensor object, silently turning the per-term breakdown into a
-        # running total instead of the detector-only loss.
+        # deliberately not in-place
         loss = loss + reg_loss
 
     losses['total_loss'] = loss
@@ -639,17 +638,18 @@ def dry_run(
     group_tilt = sim.scan.tilt[tuple(group)] if sim.scan.tilt is not None else None
 
     probes = ifft2shift(sim.probe.data)
-    group_obj = ifft2shift(sim.object.sampling.get_view_at_pos(sim.object.data, group_scan, probes.shape[-2:]))
-    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))
+    cutout_shape = probes.shape[-2:]
+    group_subpx_filters = fourier_shift_filter(ky, kx, sim.object.sampling.get_subpx_shifts(group_scan, cutout_shape))
     probes = ifft2(fft2(probes, shift=False) * group_subpx_filters[:, None], shift=False)
 
     def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
+        psi = psi * ifft2shift(sim.object.sampling.get_view_at_pos(obj, group_scan, cutout_shape))[:, None]
         if prop is not None:
-            return ifft2(fft2(psi * obj[:, None], shift=False) * prop[:, None], shift=False)
-        return psi * obj[:, None]
+            return ifft2(fft2(psi, shift=False) * prop[:, None], shift=False)
+        return psi
 
     t_props = tilt_propagators(ky, kx, sim, props, group_tilt)
-    model_wave = fft2(slice_forwards(t_props, group_obj, probes, sim_slice), shift=False)
+    model_wave = fft2(slice_forwards(t_props, sim.object.data, probes, sim_slice), shift=False)
     model_intensity = xp.sum(abs2(model_wave), axis=(1, -2, -1))
     exp_intensity = xp.sum(group_patterns, axis=(-2, -1))
 

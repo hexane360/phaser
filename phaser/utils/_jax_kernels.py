@@ -58,20 +58,13 @@ def add_cutouts(obj: jax.Array, cutouts: jax.Array, start_idxs: jax.Array) -> ja
     )(obj_3d, cutouts).reshape(obj.shape)
 
 
-@partial(jax.jit, static_argnums=2, static_argnames='split_batch')
-def get_cutouts(
-    obj: jax.Array, start_idxs: jax.Array, cutout_shape: t.Tuple[int, int], split_batch: bool = False
-) -> jax.Array:
+@partial(jax.jit, static_argnums=2)
+def get_cutouts(obj: jax.Array, start_idxs: jax.Array, cutout_shape: t.Tuple[int, int]) -> jax.Array:
     idxs = start_idxs.reshape(-1, 2)
     ys = idxs[:, 0:1] + jax.numpy.arange(cutout_shape[0])
     xs = idxs[:, 1:2] + jax.numpy.arange(cutout_shape[1])
-    if split_batch and obj.ndim > 2:
-        # a separate gather per object, which XLA can fuse into separate consumers
-        cutouts = jnp.stack([o[ys[:, :, None], xs[:, None, :]] for o in to_3d(obj)])
-    else:
-        cutouts = obj[..., ys[:, :, None], xs[:, None, :]]
     # (*obj.shape[:-2], n_pos, *cutout_shape)
-    return cutouts.reshape((*obj.shape[:-2], *start_idxs.shape[:-1], *cutout_shape))
+    return obj[..., ys[:, :, None], xs[:, None, :]].reshape((*obj.shape[:-2], *start_idxs.shape[:-1], *cutout_shape))
 
 
 @partial(jax.jit, static_argnums=0)
