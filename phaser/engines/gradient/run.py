@@ -25,6 +25,7 @@ from phaser.utils.num import (
     cast_array_module,
     fft2,
     get_array_module,
+    host_transfer_fn,
     ifft2,
     ifft2shift,
     jit,
@@ -304,7 +305,7 @@ def run_engine(args: EngineArgs, props: GradientEnginePlan) -> ReconsState:
     # and load/stream patterns
     if props.buffer_n_groups is None:
         logging.info("Loading raw data to GPU ('buffer_n_groups' is disabled)...")
-        patterns = xp.asarray(args['data'].patterns)
+        patterns = host_transfer_fn(xp)(args['data'].patterns)
     else:
         logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
         patterns = args['data'].patterns

@@ -488,15 +488,15 @@ def host_transfer_fn(xp: t.Any) -> t.Callable[[numpy.ndarray], NDArray[t.Any]]:
     threads (the default device is thread-local for `torch` and `cupy`).
     """
     if xp_is_jax(xp):
-        import jax
+        jax = sys.modules['jax']
         # `jax.device_put` transfers directly, while `jnp.asarray` runs a (jitted) `stage`
         # identity computation, adding a device-to-device copy on the compute stream.
         # The jax default device is global, so it's respected from any thread.
         return jax.device_put
 
     if xp_is_torch(xp):
-        import torch
-        from ._torch_kernels import asarray
+        from ._torch_kernels import asarray, torch  # type: ignore
+
         torch_device = torch.get_default_device()
         return lambda arr: asarray(arr, device=torch_device)  # type: ignore
 
