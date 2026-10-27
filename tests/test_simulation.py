@@ -5,8 +5,15 @@ import typing as t
 import numpy
 import pytest
 from numpy.testing import assert_array_equal
+from typing_extensions import Self
 
-from phaser.engines.common.simulation import GroupPatterns, PatternStream, ResidentPatterns, iter_patterns, resolve_patterns
+from phaser.engines.common.simulation import (
+    GroupPatterns,
+    PatternStream,
+    ResidentPatterns,
+    iter_patterns,
+    resolve_patterns,
+)
 from phaser.utils.num import get_array_module, get_backend_module, to_numpy
 
 from .utils import with_backends
@@ -45,7 +52,7 @@ class _Output:
         self.ready = threading.Event()
         self.waited = False
 
-    def block_until_ready(self) -> t.Self:
+    def block_until_ready(self) -> Self:
         self.ready.wait()
         self.waited = True
         return self

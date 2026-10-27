@@ -249,7 +249,7 @@ class ObjectSampling:
             xp.array_equal(self.corner, other.corner)
         )
 
-    def crop(self, min: ArrayLike | None = None, max: ArrayLike | None = None, pad: ArrayLike = 0.) -> t.Self:
+    def crop(self, min: ArrayLike | None = None, max: ArrayLike | None = None, pad: ArrayLike = 0.) -> Self:
         """Return the sampling cropped to the region `min` to `max`, expanded by `pad` [length].
 
         Unspecified bounds leave that side uncropped. The region of interest is clamped to the result.
