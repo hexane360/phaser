@@ -609,6 +609,8 @@ def get_devices() -> t.Tuple[torch.device, ...]:
     if torch.backends.mps.is_available():
         devices.append('mps')
 
+    devices.append('cpu')
+
     return tuple(map(torch.device, devices))
 
 
