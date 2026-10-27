@@ -311,6 +311,8 @@ def initialize_reconstruction(
         logging.info(f"Using manually-specified backend {xp}")
         devices = get_backend_devices(xp)
         logging.info(f"Available devices: {list(devices)}")
+        if not len(devices):
+            raise RuntimeError(f"No devices available for manually-specified backend {xp}")
         manual = device is not None
         device = to_device(device, xp) if device is not None else devices[0]
         logging.info(f"Using {'manually-specified ' if manual else ''}device {device}")
@@ -319,7 +321,8 @@ def initialize_reconstruction(
         logging.info(f"Using {'plan-specified' if plan.backend is not None else 'default'} backend {xp}")
         devices = get_backend_devices(xp)
         logging.info(f"Available devices: {list(devices)}")
-
+        if not len(devices):
+            raise RuntimeError(f"No devices available for {'plan-specified' if plan.backend is not None else 'default'} backend {xp}")
         device = to_device(plan.device, xp) if plan.device is not None else devices[0]
         logging.info(f"Using {'plan-specified ' if plan.device is not None else ''}device {device}")
 

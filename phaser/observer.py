@@ -44,7 +44,12 @@ class Observer(contextlib.AbstractContextManager):
         """Called periodically by the engine."""
 
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
-        """Called when a group finishes, with the updated state. `force` is deprecated and ignored."""
+        """Called after the update of a group is dispatched, with the updated state. `force` is deprecated and ignored.
+
+        On asynchronous backends, the group may still be running: reading `state` waits for it
+        (which stalls the device until the next group is dispatched). Arrays in `state` may be
+        donated to the next group, so they must be read before returning.
+        """
 
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):
         """Called when iteration `i` of `n` finishes, with the updated state and errors by name (`'total_loss'` is the total)."""
@@ -385,7 +390,12 @@ class ObserverSet(Observer):
 
     @_fwd_to_children
     def update_group(self, state: t.Union[ReconsState, PartialReconsState], force: bool = False):
-        """Called when a group finishes, with the updated state. `force` is deprecated and ignored."""
+        """Called after the update of a group is dispatched, with the updated state. `force` is deprecated and ignored.
+
+        On asynchronous backends, the group may still be running: reading `state` waits for it
+        (which stalls the device until the next group is dispatched). Arrays in `state` may be
+        donated to the next group, so they must be read before returning.
+        """
 
     @_fwd_to_children
     def update_iteration(self, state: ReconsState, i: int, n: int, errors: t.Dict[str, float]):

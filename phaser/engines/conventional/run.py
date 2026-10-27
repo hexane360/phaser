@@ -3,7 +3,7 @@
 import logging
 
 from phaser.utils.misc import mask_fraction_of_groups
-from phaser.utils.num import assert_dtype, cast_array_module, check_finite, to_numpy, to_complex_dtype
+from phaser.utils.num import assert_dtype, cast_array_module, check_finite, host_transfer_fn, to_numpy, to_complex_dtype
 from phaser.observer import Observer
 from phaser.hooks import EngineArgs
 from phaser.plan import ConventionalEnginePlan
@@ -47,7 +47,7 @@ def run_engine(args: EngineArgs, props: ConventionalEnginePlan) -> ReconsState:
     # load/stream patterns
     if props.buffer_n_groups is None:
         logging.info("Loading raw data to GPU ('buffer_n_groups' is disabled)...")
-        patterns = xp.asarray(args['data'].patterns)
+        patterns = host_transfer_fn(xp)(args['data'].patterns)
     else:
         logging.info(f"Streaming raw data to GPU (buffering {props.buffer_n_groups} groups)")
         patterns = args['data'].patterns

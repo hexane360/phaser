@@ -14,18 +14,13 @@ from phaser.utils.num import _PadMode
 
 
 def get_cutouts(obj: torch.Tensor, start_idxs: torch.Tensor, cutout_shape: t.Tuple[int, int]) -> torch.Tensor:
-    #out_shape = (*start_idxs.shape[:-1], *obj.shape[:-2], *cutout_shape)
+    # out shape: (*obj.shape[:-2], *start_idxs.shape[:-1], *cutout_shape)
     ys, xs = torch.arange(cutout_shape[0], device=obj.device), torch.arange(cutout_shape[1], device=obj.device)
     yy, xx = torch.meshgrid(ys, xs, indexing='ij')
     yy = start_idxs[..., 0][..., None, None] + yy
     xx = start_idxs[..., 1][..., None, None] + xx
 
-    out = obj[..., yy, xx]
-    if obj.ndim > 2:
-        # oof
-        out = torch.permute(out, (*(i + obj.ndim - 2 for i in range(start_idxs.ndim - 1)), *range(obj.ndim - 2), -2, -1))
-        #assert out.shape == out_shape
-    return out
+    return obj[..., yy, xx]
 
 
 _TORCH_TO_NUMPY_DTYPE: t.Dict[torch.dtype, t.Type[numpy.generic]] = {
@@ -365,7 +360,7 @@ def size(arr: torch.Tensor, axis: t.Optional[int]) -> int:
 
 def asarray(
     arr: t.Any, dtype: t.Union[str, torch.dtype, numpy.dtype, t.Type[numpy.generic], None] = None, *,
-    copy: t.Optional[bool] = None,
+    copy: t.Optional[bool] = None, device: t.Optional[torch.device] = None,
 ) -> torch.Tensor:
     dtype = to_torch_dtype(dtype) if dtype is not None else None
     requires_grad = arr.requires_grad if isinstance(arr, torch.Tensor) else False
@@ -378,7 +373,7 @@ def asarray(
     # `copy`, which only decides *how* (see below), not *whether*. Plain
     # `torch.asarray(...)` on a numpy buffer would otherwise always land on CPU,
     # since it just wraps the existing (CPU) buffer.
-    device = torch.get_default_device()
+    device = device if device is not None else torch.get_default_device()
     if device.type == 'cpu':
         return torch.asarray(arr, dtype=dtype, requires_grad=requires_grad, copy=copy)
 
@@ -613,6 +608,8 @@ def get_devices() -> t.Tuple[torch.device, ...]:
 
     if torch.backends.mps.is_available():
         devices.append('mps')
+
+    devices.append('cpu')
 
     return tuple(map(torch.device, devices))
 

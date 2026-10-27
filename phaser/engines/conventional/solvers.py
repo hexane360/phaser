@@ -14,7 +14,8 @@ from phaser.types import process_schedule
 from phaser.plan import ConventionalEnginePlan, LSQMLSolverPlan, EPIESolverPlan
 from phaser.execute import Observer
 from phaser.engines.common.simulation import (
-    stream_patterns, SimulationState, cutout_group, tilt_propagators, slice_forwards, slice_backwards
+    iter_patterns, resolve_patterns, PatternsLike, PatternSource, SimulationState, group_probes,
+    tilt_propagators, slice_forwards, slice_backwards,
 )
 
 
@@ -45,15 +46,9 @@ class LSQMLSolver(ConventionalSolver):
 
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
-    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
-        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
-        xp = cast_array_module(xp)
-
-        if self.engine_plan.buffer_n_groups is None:
-            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
-        return stream_patterns(
-            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
-        )
+    ) -> PatternSource:
+        """Return a `PatternSource` of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
+        return iter_patterns(groups, patterns, cast_array_module(xp), self.engine_plan.buffer_n_groups)
 
     def presolve(
         self,
@@ -157,7 +152,7 @@ class LSQMLSolver(ConventionalSolver):
 def lsqml_dry_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     obj_mag: NDArray[numpy.floating],
@@ -170,25 +165,30 @@ def lsqml_dry_run(
         modeled intensity for each pattern.
     """
     xp = cast_array_module(sim.xp)
-    (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
-
-    obj_mag += xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    group_patterns = resolve_patterns(group_patterns)
+    (psi, group_scan) = group_probes(sim.ky, sim.kx, sim.state, group)
     obj_grid = sim.state.object.sampling
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
-        (probe_mag, psi) = state
+    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], state):
+        (probe_mag, obj_prod, psi) = state
         probe_mag = at(probe_mag, slice_i).set(
             obj_grid.add_view_at_pos(probe_mag[slice_i], group_scan, xp.sum(abs2(psi), axis=1))
         )
 
+        cutouts = obj_grid.get_view_at_pos(obj, group_scan, psi.shape[-2:])
+        obj_prod = obj_prod * cutouts
+        psi = psi * cutouts[:, None]
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
+            psi = ifft2(fft2(psi) * prop[:, None])
 
-        return (probe_mag, psi)
+        return (probe_mag, obj_prod, psi)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    (probe_mag, psi) = slice_forwards(props, (probe_mag, psi), run_slice)
+    # product of each position's object cutouts over slices
+    obj_prod = xp.ones((psi.shape[0], *psi.shape[-2:]), dtype=sim.state.object.data.dtype)
+    (probe_mag, obj_prod, psi) = slice_forwards(props, sim.state.object.data, (probe_mag, obj_prod, psi), run_slice)
+    obj_mag += xp.sum(abs2(obj_prod), axis=0)
 
     # modeled and experimental intensity
     # summed over incoherent modes and over the pattern
@@ -207,7 +207,7 @@ def lsqml_dry_run(
 def lsqml_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
@@ -233,47 +233,53 @@ def lsqml_run(
         `calc_error`, and `pos_update` is `None` unless `update_position`.
     """
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
     eps = 1e-16
 
-    (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
-    psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
-    psi = at(psi, 0).set(probes)
+    (probes, group_scan, subpx_filters) = group_probes(sim.ky, sim.kx, sim.state, group, return_filters=True)
 
-    group_probe_mag = xp.zeros_like(probe_mag)
-    #group_obj_mag = xp.sum(abs2(group_obj[:, 0]), axis=0)
-    group_obj_mag = xp.sum(abs2(xp.prod(group_obj, axis=1)), axis=0)
+    def get_cutouts(obj: NDArray[numpy.complexfloating]) -> NDArray[numpy.complexfloating]:
+        return obj_grid.get_view_at_pos(obj, group_scan, probes.shape[-2:])
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
-        (group_probe_mag, psi) = state
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], state):
+        (group_probe_mag, obj_prod, psi, wave) = state
+        psi = at(psi, slice_i).set(wave)
 
         group_probe_mag = at(group_probe_mag, slice_i).set(
-            obj_grid.add_view_at_pos(group_probe_mag[slice_i], group_scan, xp.sum(abs2(psi[slice_i]), axis=1))
+            obj_grid.add_view_at_pos(group_probe_mag[slice_i], group_scan, xp.sum(abs2(wave), axis=1))
         )
 
+        cutouts = get_cutouts(obj)
+        obj_prod = obj_prod * cutouts
+        wave = wave * cutouts[:, None]
         if prop is not None:
-            psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[:, slice_i, None]) * prop[:, None])
-            )
+            wave = ifft2(fft2(wave) * prop[:, None])
 
-        return (group_probe_mag, psi)
+        return (group_probe_mag, obj_prod, psi, wave)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    (group_probe_mag, psi) = slice_forwards(props, (group_probe_mag, psi), sim_slice, jit_unroll_slices=jit_unroll_slices)
+    # incident wavefield at each slice
+    psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
+    # product of each position's object cutouts over slices
+    obj_prod = xp.ones((probes.shape[0], *probes.shape[-2:]), dtype=sim.state.object.data.dtype)
+    (group_probe_mag, obj_prod, psi, exit_wave) = slice_forwards(
+        props, sim.state.object.data, (xp.zeros_like(probe_mag), obj_prod, psi, probes), sim_slice,
+        jit_unroll_slices=jit_unroll_slices
+    )
+    group_obj_mag = xp.sum(abs2(obj_prod), axis=0)
 
     new_obj_mag += group_obj_mag
     new_probe_mag += group_probe_mag
 
-    model_wave = fft2(psi[-1] * group_obj[:, -1, None])
+    model_wave = fft2(exit_wave)
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
         model_intensity = mtf(model_intensity)
-    # experimental data
-    # group_patterns = xp.array(sim.patterns[tuple(group)])[:, None]
 
     errors = xp.sqrt(xp.nansum((model_intensity - group_patterns[:, None])**2, axis=(1, -1, -2))) if calc_error else None
 
@@ -283,9 +289,10 @@ def lsqml_run(
     chi = ifft2(chi)
 
     def update_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
-        (sim, chi) = state
+        (sim, chi, pos_update) = state
+        cutouts = get_cutouts(sim.state.object.data[slice_i])
 
-        delta_P = chi * xp.conj(group_obj[:, slice_i, None])
+        delta_P = chi * xp.conj(cutouts[:, None])
 
         if update_object:
             delta_O = chi * xp.conj(psi[slice_i])
@@ -301,34 +308,34 @@ def lsqml_run(
 
         if prop is not None:
             chi = ifft2(fft2(delta_P) * prop.conj()[:, None])
-        elif update_probe:
+            return (sim, chi, pos_update)
+
+        if update_probe:
             delta_P_avg = ifft2(xp.sum(fft2(delta_P) * subpx_filters.conj(), axis=0))
             delta_P_avg /= (group_obj_mag + illum_reg_probe)
 
             # update step per probe mode
-            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * group_obj[:, slice_i, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * group_obj[:, slice_i, None])) + gamma)
+            alpha_P = xp.sum(xp.real(chi * xp.conj(delta_P * cutouts[:, None])), axis=(-1, -2), keepdims=True) / (xp.sum(abs2(delta_P * cutouts[:, None])) + gamma)
 
             probe_update = beta_probe * xp.sum(alpha_P * delta_P_avg * group_obj_mag, axis=0) / (group_obj_mag + eps)
             sim.state.probe.data += probe_update
 
-        return (sim, chi)
+        if update_position:
+            def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
+                delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
-    (sim, chi) = slice_backwards(props, (sim, chi), update_slice, jit_unroll_slices=jit_unroll_slices)
+                prod = delta_P_x * cutouts[:, None]
+                alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
+                return alpha
 
-    if update_position:
-        def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
-            delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
+            # update directions
+            probes_fft = fft2(probes)
+            probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
+            pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
 
-            prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+        return (sim, chi, pos_update)
 
-        # update directions
-        probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
-        pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
-    else:
-        pos_update = None
+    (sim, chi, pos_update) = slice_backwards(props, (sim, chi, None), update_slice, jit_unroll_slices=jit_unroll_slices)
 
     return (sim, new_obj_mag, new_probe_mag, errors, pos_update)
 
@@ -356,15 +363,9 @@ class EPIESolver(ConventionalSolver):
 
     def iter_patterns(
         self, groups: t.Iterator[NDArray[numpy.int_]], patterns: NDArray[numpy.floating], xp: t.Any
-    ) -> t.Iterable[t.Tuple[NDArray[numpy.int_], NDArray[numpy.floating]]]:
-        """Return an iterator of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
-        xp = cast_array_module(xp)
-
-        if self.engine_plan.buffer_n_groups is None:
-            return ((group, patterns[tuple(xp.asarray(group))]) for group in groups)
-        return stream_patterns(
-            groups, patterns, xp=xp, buf_n=self.engine_plan.buffer_n_groups
-        )
+    ) -> PatternSource:
+        """Return a `PatternSource` of `(group, group_patterns)`, streamed through a buffer if `buffer_n_groups` is set."""
+        return iter_patterns(groups, patterns, cast_array_module(xp), self.engine_plan.buffer_n_groups)
 
     def presolve(
         self,
@@ -453,23 +454,24 @@ class EPIESolver(ConventionalSolver):
 def epie_dry_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
 ) -> NDArray[numpy.floating]:
     """Return the ratio of experimental to modeled intensity for each pattern in `group`."""
     xp = cast_array_module(sim.xp)
-    (psi, group_obj, group_scan) = cutout_group(sim.ky, sim.kx, sim.state, group)
+    group_patterns = resolve_patterns(group_patterns)
+    (psi, group_scan) = group_probes(sim.ky, sim.kx, sim.state, group)
 
-    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def run_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], psi):
+        psi = psi * sim.state.object.sampling.get_view_at_pos(obj, group_scan, psi.shape[-2:])[:, None]
         if prop is not None:
-            psi = ifft2(fft2(psi * group_obj[:, slice_i, None]) * prop[:, None])
-
+            return ifft2(fft2(psi) * prop[:, None])
         return psi
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, run_slice)
+    psi = slice_forwards(props, sim.state.object.data, psi, run_slice)
 
     # modeled and experimental intensity
     # summed over incoherent modes and over the pattern
@@ -487,7 +489,7 @@ def epie_dry_run(
 def epie_run(
     sim: SimulationState,
     group: NDArray[numpy.integer],
-    group_patterns: NDArray[numpy.floating], *,
+    group_patterns: PatternsLike, *,
     pattern_mask: NDArray[numpy.floating],
     props: t.Optional[NDArray[numpy.complexfloating]],
     mtf: t.Optional[t.Union[PreparedOTF, PreparedPSF[numpy.floating]]],
@@ -506,26 +508,32 @@ def epie_run(
         is `None` unless `update_position`.
     """
     xp = cast_array_module(sim.xp)
+    group_patterns = resolve_patterns(group_patterns)
     obj_grid = sim.state.object.sampling
     n_slices = sim.state.object.data.shape[0]
 
-    (probes, group_obj, group_scan, subpx_filters) = cutout_group(sim.ky, sim.kx, sim.state, group, return_filters=True)
-    psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
-    psi = at(psi, 0).set(probes)
+    (probes, group_scan, subpx_filters) = group_probes(sim.ky, sim.kx, sim.state, group, return_filters=True)
 
-    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], psi):
+    def get_cutouts(obj: NDArray[numpy.complexfloating]) -> NDArray[numpy.complexfloating]:
+        return obj_grid.get_view_at_pos(obj, group_scan, probes.shape[-2:])
+
+    def sim_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], obj: NDArray[numpy.complexfloating], state):
+        (psi, wave) = state
+        psi = at(psi, slice_i).set(wave)
+
+        wave = wave * get_cutouts(obj)[:, None]
         if prop is not None:
-            psi = at(psi, slice_i + 1).set(
-                ifft2(fft2(psi[slice_i] * group_obj[:, slice_i, None]) * prop[:, None])
-            )
+            wave = ifft2(fft2(wave) * prop[:, None])
 
-        return psi
+        return (psi, wave)
 
     props = tilt_propagators(sim.ky, sim.kx, sim.state, props,
                              sim.state.scan.tilt[tuple(group)] if sim.state.scan.tilt is not None else None)
-    psi = slice_forwards(props, psi, sim_slice, jit_unroll_slices=jit_unroll_slices)
+    # incident wavefield at each slice
+    psi = xp.zeros((n_slices, *probes.shape), dtype=probes.dtype)
+    (psi, exit_wave) = slice_forwards(props, sim.state.object.data, (psi, probes), sim_slice, jit_unroll_slices=jit_unroll_slices)
 
-    model_wave = fft2(psi[-1] * group_obj[:, -1, None])
+    model_wave = fft2(exit_wave)
     # sum over incoherent modes
     model_intensity = xp.sum(abs2(model_wave), axis=1, keepdims=True)
     if mtf is not None:
@@ -538,10 +546,12 @@ def epie_run(
     chi = ifft2(chi)
 
     def update_slice(slice_i: int, prop: t.Optional[NDArray[numpy.complexfloating]], state):
-        (sim, chi) = state
+        (sim, chi, pos_update) = state
+        # (only this slice is updated in this step, so these are the cutouts before the update)
+        cutouts = get_cutouts(sim.state.object.data[slice_i])
 
-        probe_update = group_obj[:, slice_i, None].conj() * chi / xp.max(
-            abs2(group_obj[:, slice_i, None]),
+        probe_update = cutouts[:, None].conj() * chi / xp.max(
+            abs2(cutouts[:, None]),
             axis=(-1, -2), keepdims=True
         )
 
@@ -558,28 +568,28 @@ def epie_run(
 
         if prop is not None:
             chi = ifft2(fft2(probe_update) * prop.conj()[:, None])
-        elif update_probe:
+            return (sim, chi, pos_update)
+
+        if update_probe:
             # average probe updates in group
             probe_update = ifft2(xp.mean(fft2(probe_update) * subpx_filters.conj(), axis=0))
             sim.state.probe.data += beta_probe * probe_update
 
-        return (sim, chi)
+        if update_position:
+            def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
+                delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
 
-    (sim, chi) = slice_backwards(props, (sim, chi), update_slice, jit_unroll_slices=jit_unroll_slices)
+                prod = delta_P_x * cutouts[:, None]
+                alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
+                return alpha
 
-    if update_position:
-        def calc_pos_step(probes_fft: NDArray[numpy.complexfloating], kx: NDArray[numpy.floating]) -> NDArray[numpy.floating]:
-            delta_P_x = ifft2(probes_fft * -2.j*numpy.pi * kx)
+            # update directions
+            probes_fft = fft2(probes)
+            probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
+            pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
 
-            prod = delta_P_x * group_obj[:, 0, None]
-            alpha = xp.sum(xp.real(chi * xp.conj(prod)), axis=(1, -1, -2)) / xp.sum(abs2(prod))
-            return alpha
+        return (sim, chi, pos_update)
 
-        # update directions
-        probes_fft = fft2(probes)
-        probes_fft /= xp.sum(abs2(probes), axis=(1, -1, -2), keepdims=True)
-        pos_update = xp.stack(tuple(calc_pos_step(probes_fft, k) for k in (sim.ky, sim.kx)), axis=-1)
-    else:
-        pos_update = None
+    (sim, chi, pos_update) = slice_backwards(props, (sim, chi, None), update_slice, jit_unroll_slices=jit_unroll_slices)
 
     return (sim, errors, pos_update)

@@ -464,23 +464,52 @@ def block_until_ready(arr: NDArray[DTypeT]) -> NDArray[DTypeT]:
 def block_until_ready(arr: t.Any) -> t.Any:
     """Block until the asynchronous computation of `arr` finishes, and return `arr`.
 
-    Synchronizes the device for `torch` (CUDA) and `cupy`. No-op for `numpy`.
+    Synchronizes the array's device for `torch` (CUDA) and `cupy`. No-op for `numpy`.
+    Safe to call from any thread.
     """
     if hasattr(arr, 'block_until_ready'):  # jax
         return arr.block_until_ready()  # type: ignore
 
     if is_torch(arr):
         import torch
-        device = torch.get_default_device()
-        if device.type == 'cuda':
-            torch.cuda.synchronize(device)
+        if arr.device.type == 'cuda':
+            torch.cuda.synchronize(arr.device)
 
     if is_cupy(arr):
-        cupy = sys.modules['cupy']
-        stream = cupy.cuda.get_current_stream()
-        stream.synchronize()
+        arr.device.synchronize()
 
     return arr
+
+
+def host_transfer_fn(xp: t.Any) -> t.Callable[[numpy.ndarray], NDArray[t.Any]]:
+    """Return a function transferring host arrays to the current default device of `xp`.
+
+    The default device is captured now, so the returned function may be called from other
+    threads (the default device is thread-local for `torch` and `cupy`).
+    """
+    if xp_is_jax(xp):
+        jax = sys.modules['jax']
+        # `jax.device_put` transfers directly, while `jnp.asarray` runs a (jitted) `stage`
+        # identity computation, adding a device-to-device copy on the compute stream.
+        # The jax default device is global, so it's respected from any thread.
+        return jax.device_put
+
+    if xp_is_torch(xp):
+        from ._torch_kernels import asarray, torch  # type: ignore
+
+        torch_device = torch.get_default_device()
+        return lambda arr: asarray(arr, device=torch_device)  # type: ignore
+
+    if xp_is_cupy(xp):
+        cupy = sys.modules['cupy']
+        cupy_device = cupy.cuda.Device()
+
+        def transfer(arr: numpy.ndarray) -> NDArray[t.Any]:
+            with cupy_device:
+                return cupy.asarray(arr)
+        return transfer
+
+    return xp.asarray
 
 
 class _JitKernel(t.Generic[P, T]):
@@ -562,6 +591,24 @@ def fuse(*args, **kwargs) -> t.Callable[[T], T]:
     if (xp := _BACKEND_LOADER.get('cupy')):
         return xp.fuse(*args, **kwargs)  # type: ignore
     return lambda x: x
+
+
+def checkpoint(f: t.Callable[P, T]) -> t.Callable[P, T]:
+    """Wrap `f` to recompute its intermediates in the backward pass, rather than saving them.
+
+    Useful around cheap computations with large results (e.g. gathers), so that only their
+    inputs are saved for the backward pass. Uses `jax.checkpoint` when called with jax arrays;
+    a no-op otherwise.
+    """
+    @functools.wraps(f)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        if any(map(is_jax, args)) or any(map(is_jax, kwargs.values())):
+            import jax
+            # the default `prevent_cse=True` inserts optimization barriers, which hurt inside `scan`
+            return jax.checkpoint(f, prevent_cse=False)(*args, **kwargs)
+        return f(*args, **kwargs)
+
+    return wrapper
 
 
 def debug_callback(callback: t.Callable[P, None], *args: P.args, **kwargs: P.kwargs):

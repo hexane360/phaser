@@ -1,3 +1,5 @@
+import typing as t
+
 import numpy
 import pytest
 from numpy.testing import assert_array_equal
@@ -8,7 +10,7 @@ from phaser.plan import ReconsPlan
 from phaser.state import ScanState
 from phaser.utils.num import Sampling, get_backend_module
 
-from .utils import make_recons_state
+from .utils import make_recons_state, with_backends
 
 SCAN_SHAPE = (8, 8)
 DET_SHAPE = (32, 32)
@@ -162,3 +164,43 @@ def test_gradient_group_indexing():
     assert_array_equal(grouped.scan.data, flat[[1, 3, 5, 7]])
     assert_array_equal(grouped.scan.initial, flat[[1, 3, 5, 7]] + 100.)
     assert_array_equal(grouped.scan.tilt, flat[[1, 3, 5, 7]] * 0.01)
+
+
+_ENGINE_CONFIGS: t.Dict[str, t.Dict[str, t.Any]] = {
+    'lsqml': {'type': 'conventional', 'solver': {'type': 'lsqml'}},
+    'epie': {'type': 'conventional', 'solver': {'type': 'epie'}},
+    'gradient': {
+        'type': 'gradient', 'regularizers': [],
+        'solvers': {('object', 'probe'): {'type': 'sgd', 'learning_rate': 1e-2}},
+    },
+}
+
+
+@with_backends('numpy', 'jax', 'torch')
+@pytest.mark.parametrize('engine', _ENGINE_CONFIGS.keys())
+@pytest.mark.parametrize('buffer_n_groups', (None, 0, 2))
+def test_pattern_buffering(backend: str, engine: str, buffer_n_groups: t.Optional[int]):
+    # resident (`None`) and streamed patterns
+    if engine == 'gradient' and backend == 'numpy':
+        pytest.skip("gradient engine requires an autodiff backend")
+
+    plan = ReconsPlan.from_data({
+        'name': 'test',
+        'backend': backend,
+        'raw_data': 'tests.test_engines:load_random',
+        'engines': [{
+            **_ENGINE_CONFIGS[engine],
+            'probe_modes': 1,
+            'niter': 2,
+            'grouping': 16,
+            'buffer_n_groups': buffer_n_groups,
+            'noise_model': {'type': 'amplitude'},
+            'iter_constraints': [],
+            'group_constraints': [],
+        }],
+    })
+    recons = initialize_reconstruction(plan)
+    for engine_hook in plan.engines:
+        recons = execute_engine(recons, engine_hook)
+
+    assert numpy.all(numpy.isfinite(numpy.asarray(recons.state.progress['detector_loss'].values)))

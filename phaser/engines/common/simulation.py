@@ -1,7 +1,10 @@
 """Simulation state, scan grouping, and multislice helpers."""
 
+import abc
 import collections
+import concurrent.futures
 import logging
+import threading
 import typing as t
 
 import numpy
@@ -30,6 +33,7 @@ from phaser.utils.num import (
     block_until_ready,
     fft2,
     get_array_module,
+    host_transfer_fn,
     ifft2,
     is_jax,
     to_complex_dtype,
@@ -92,39 +96,202 @@ class GroupManager:
         return self.n_groups
 
 
-def stream_patterns(
-    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
-    xp: t.Any, buf_n: int = 1
-) -> t.Iterator[t.Tuple[NDArray[numpy.int64], NDArray[numpy.floating]]]:
-    """Yield `(group, patterns)`, transferring patterns to `xp` and prefetching `buf_n` groups ahead.
+@tree_dataclass
+class GroupPatterns:
+    """Lazy view of the patterns of a group, within patterns already on the device.
 
-    Each yielded array is ready on the device.
+    Passed to (JIT) kernels in place of the group's patterns, so that the gather happens
+    inside the kernel: an eager gather costs several ms of host time per group on JAX.
+    Kernels call `resolve_patterns` to get the patterns.
     """
-    if buf_n == 0:
-        for group in groups:
-            group_patterns = xp.asarray(patterns[tuple(group)])
-            yield group, block_until_ready(group_patterns)
-        return
 
-    buf = collections.deque()
-    it = iter(groups)
+    patterns: NDArray[numpy.floating]
+    """Patterns of all positions, `(*scan_shape, Ny, Nx)`."""
+    group: NDArray[numpy.int64]
+    """Group indices into the scan dimensions, `(scan ndim, group size)`."""
 
-    for group in it:
-        buf.append((group, xp.asarray(patterns[tuple(group)])))
-        if len(buf) >= buf_n:
-            break
+    def get(self) -> NDArray[numpy.floating]:
+        """Return the patterns of the group, `(group size, Ny, Nx)`."""
+        xp = get_array_module(self.patterns)
+        return self.patterns[tuple(xp.asarray(self.group))]
 
-    while len(buf) > 0:
-        # attempt to feed queue
+
+PatternsLike: t.TypeAlias = t.Union[NDArray[numpy.floating], GroupPatterns]
+"""The patterns of a group, as yielded by a `PatternSource`."""
+
+
+def resolve_patterns(patterns: PatternsLike) -> NDArray[numpy.floating]:
+    """Return the patterns of a group, gathering them if `patterns` is a `GroupPatterns` view."""
+    if isinstance(patterns, GroupPatterns):
+        return patterns.get()
+    return patterns
+
+
+class PatternSource(abc.ABC):
+    """Iterable of `(group, group_patterns)`, which limits how far the caller runs ahead of the device.
+
+    `group_patterns` may be a `GroupPatterns` view, so kernels must call `resolve_patterns` on it.
+
+    After dispatching work on a group, call `release_after` with an output of that work. What
+    a released group allows depends on the implementation (see `PatternStream` and
+    `ResidentPatterns`). The output must stay valid until it's ready, so it must not be
+    donated to later work.
+
+    Use as a context manager (or call `close`) to stop any background work promptly when
+    iteration is abandoned.
+    """
+
+    def __init__(self):
+        self._release: t.Any = None
+        self._it: t.Optional[t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]] = None
+
+    def release_after(self, arr: t.Any):
+        """Release the most recently yielded group once `arr` is ready."""
+        self._release = arr
+
+    @abc.abstractmethod
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
+        ...
+
+    def __iter__(self) -> t.Iterator[t.Tuple[NDArray[numpy.int64], PatternsLike]]:
+        self.close()
+        self._it = self._iter()
+        return self._it
+
+    def close(self):
+        """Stop iteration, and any background work."""
+        if self._it is not None:
+            self._it.close()
+            self._it = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc_info: t.Any) -> None:
+        self.close()
+
+
+class PatternStream(PatternSource):
+    """`PatternSource` streaming patterns from the host to the device.
+
+    At most `buf_n` groups are kept on the device at once, counted from the start of their
+    transfer until they are released. Patterns are gathered and transferred in background
+    threads, so the next groups are transferred while earlier groups are processed.
+
+    A released group allows the transfer of a later group to start, once the output passed
+    to `release_after` is ready. Groups which aren't released explicitly are released once
+    their own transfer completes.
+
+    With `buf_n == 0`, each group is transferred synchronously, when it is requested.
+    """
+
+    def __init__(
+        self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+        xp: t.Any, buf_n: int = 1,
+    ):
+        super().__init__()
+        if buf_n < 0:
+            raise ValueError(f"'buf_n' must be non-negative, got {buf_n}")
+
+        self._groups = groups
+        self._patterns = patterns
+        self._transfer = host_transfer_fn(xp)
+        self._buf_n = buf_n
+
+    def _load(
+        self, group: NDArray[numpy.int64], release: t.Any, closed: t.Optional[threading.Event] = None
+    ) -> t.Optional[NDArray[numpy.floating]]:
+        # wait for a previous group to be released
+        if release is not None:
+            block_until_ready(release)
+        # don't start a transfer if iteration was abandoned while waiting
+        if closed is not None and closed.is_set():
+            return None
+        return self._transfer(self._patterns[tuple(group)])
+
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
+        if self._buf_n == 0:
+            for group in self._groups:
+                yield group, block_until_ready(t.cast(NDArray[numpy.floating], self._load(group, None)))
+            return
+
+        groups = iter(self._groups)
+        # (group, future of group_patterns)
+        pending: t.Deque[t.Tuple[NDArray[numpy.int64], concurrent.futures.Future]] = collections.deque()
+
+        # numpy releases the GIL while gathering, as do the device transfers
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=self._buf_n, thread_name_prefix='pattern_stream')
+        closed = threading.Event()
+
+        def submit(release: t.Any):
+            if (group := next(groups, None)) is not None:
+                pending.append((group, pool.submit(self._load, group, release, closed)))
+
         try:
-            group = next(it)
-            buf.append((group, xp.asarray(patterns[tuple(group)])))
-        except StopIteration:
-            pass
+            for _ in range(self._buf_n):
+                submit(None)
 
-        # and yield from front of queue
-        (group, group_patterns) = buf.popleft()
-        yield group, block_until_ready(group_patterns)
+            while len(pending) > 0:
+                (group, fut) = pending.popleft()
+                group_patterns = t.cast(NDArray[numpy.floating], fut.result())
+                self._release = group_patterns
+                yield group, group_patterns
+                # releasing this group allows another to be loaded
+                submit(self._release)
+        finally:
+            closed.set()
+            pool.shutdown(wait=False, cancel_futures=True)
+
+
+class ResidentPatterns(PatternSource):
+    """`PatternSource` for patterns already on the device, yielding `GroupPatterns` views.
+
+    Before yielding a group, waits until the group `max_in_flight` groups earlier is
+    released, i.e. until the output passed to `release_after` is ready. Groups which aren't
+    released explicitly don't limit iteration.
+
+    The default `max_in_flight=2` keeps a group queued behind the one running, so the
+    device doesn't idle while the next group is dispatched.
+    """
+
+    def __init__(
+        self, groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+        max_in_flight: int = 2,
+    ):
+        super().__init__()
+        if max_in_flight < 1:
+            raise ValueError(f"'max_in_flight' must be positive, got {max_in_flight}")
+
+        self._groups = groups
+        self._patterns = patterns
+        self._max_in_flight = max_in_flight
+
+    def _iter(self) -> t.Generator[t.Tuple[NDArray[numpy.int64], PatternsLike], None, None]:
+        # outputs of groups which haven't been released yet
+        in_flight: t.Deque[t.Any] = collections.deque()
+
+        for group in self._groups:
+            while len(in_flight) >= self._max_in_flight:
+                block_until_ready(in_flight.popleft())
+
+            self._release = None
+            yield group, GroupPatterns(self._patterns, group)
+            if self._release is not None:
+                in_flight.append(self._release)
+
+
+def iter_patterns(
+    groups: t.Iterable[NDArray[numpy.int64]], patterns: NDArray[numpy.floating],
+    xp: t.Any, buffer_n_groups: t.Optional[int],
+) -> PatternSource:
+    """Return a `PatternSource` of `(group, patterns)` for `groups`.
+
+    With `buffer_n_groups=None`, `patterns` must already be on the device. Otherwise, they're
+    streamed from the host, keeping at most `buffer_n_groups` groups on the device.
+    """
+    if buffer_n_groups is None:
+        return ResidentPatterns(groups, patterns)
+    return PatternStream(groups, patterns, xp, buffer_n_groups)
 
 
 @tree_dataclass(init=False, static_fields=('xp', 'dtype', 'noise_model', 'group_constraints', 'iter_constraints'), drop_fields=('ky', 'kx'))
@@ -315,27 +482,27 @@ def tilt_propagators(
 
 
 @t.overload
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: t.Literal[False] = False
-) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.complexfloating], NDArray[numpy.floating]]:
+    return_filters: t.Literal[False] = False,
+) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.floating]]:
     ...
 
 @t.overload
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: t.Literal[True]
-) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.complexfloating], NDArray[numpy.floating], NDArray[numpy.complexfloating]]:
+    return_filters: t.Literal[True],
+) -> t.Tuple[NDArray[numpy.complexfloating], NDArray[numpy.floating], NDArray[numpy.complexfloating]]:
     ...
 
-def cutout_group(
+def group_probes(
     ky: NDArray[numpy.floating], kx: NDArray[numpy.floating],
     state: ReconsState, group: NDArray[numpy.integer],
-    return_filters: bool = False
+    return_filters: bool = False,
 ):
-    """Return `(probes, obj, scan)`: sub-pixel shifted probes, object cutouts, and scan positions for `group`.
+    """Return `(probes, scan)`: sub-pixel shifted probes and scan positions for `group`.
 
     Probes have shape `(len(group), modes, Ny, Nx)`. If `return_filters`, the sub-pixel shift
     filters are appended.
@@ -343,7 +510,6 @@ def cutout_group(
     probes = state.probe.data
 
     group_scan = state.scan.data[tuple(group)]
-    group_obj = state.object.sampling.get_view_at_pos(state.object.data, group_scan, probes.shape[-2:])
     # group probes in real space
     # shape (len(group), 1, Ny, Nx)
     group_subpx_filters = fourier_shift_filter(ky, kx, state.object.sampling.get_subpx_shifts(group_scan, probes.shape[-2:]))[:, None, ...]
@@ -351,41 +517,49 @@ def cutout_group(
     shifted_probes = ifft2(fft2(probes) * group_subpx_filters)
 
     if return_filters:
-        return (shifted_probes, group_obj, group_scan, group_subpx_filters)
+        return (shifted_probes, group_scan, group_subpx_filters)
 
-    return (shifted_probes, group_obj, group_scan)
+    return (shifted_probes, group_scan)
 
 
 def slice_forwards(
     props: t.Optional[NDArray[numpy.complexfloating]],
+    obj: NDArray[numpy.complexfloating],
     state: StateT,
-    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], StateT], StateT], *,
+    f: t.Callable[[int, t.Optional[NDArray[numpy.complexfloating]], NDArray[numpy.complexfloating], StateT], StateT], *,
     jit_unroll_slices: t.Union[int, bool] = False,
 ) -> StateT:
     """Fold `f` forwards over slices.
 
-    `f` receives the slice index, the propagator to the next slice (`None` for the last
-    slice), and the state, and returns the updated state. `jit_unroll_slices` is passed
-    to `jax.lax.scan` as `unroll`.
+    `obj` holds the per-slice object (usually the object slices, from which `f` gathers its
+    cutouts), with slices along the first axis. `f` receives the slice index, the propagator
+    to the next slice (`None` for the last slice), that slice of `obj`, and the state, and
+    returns the updated state. `jit_unroll_slices` is passed to `jax.lax.scan` as `unroll`.
+
+    On JAX, `obj` is passed to `f` as a scan input rather than indexed with the (traced)
+    slice index, so gradients with respect to `obj` are formed per slice and stacked, rather
+    than accumulated with dynamic-update-slices.
     """
     if props is None:
-        return f(0, None, state)
+        return f(0, None, obj[0], state)
 
     n_slices = len(props) + 1  # props shape: (Nz-1, batch, Ny, Nx)
 
     if is_jax(props):
         import jax
-        def step_fn(carry, slice_i):
-            new_state = f(slice_i, props[slice_i], carry)
-            return new_state, None
+        def step_fn(carry, xs):
+            (slice_i, prop, obj_slice) = xs
+            return f(slice_i, prop, obj_slice, carry), None
 
-        state, _ = jax.lax.scan(step_fn, state, jax.numpy.arange(n_slices - 1), unroll=jit_unroll_slices)
-        return f(n_slices - 1, None, state)
+        state, _ = jax.lax.scan(
+            step_fn, state, (jax.numpy.arange(n_slices - 1), props, obj[:-1]), unroll=jit_unroll_slices
+        )
+        return f(n_slices - 1, None, obj[-1], state)
 
     # fallback numpy mode
     for slice_i in range(n_slices - 1):
-        state = f(slice_i, props[slice_i], state)
-    return f(n_slices - 1, None, state)
+        state = f(slice_i, props[slice_i], obj[slice_i], state)
+    return f(n_slices - 1, None, obj[-1], state)
 
 
 def slice_backwards(
