@@ -1,36 +1,19 @@
 """Reader for Gatan DigitalMicrograph (`.dm4`) 4D STEM datasets, and their metadata."""
 
-from pathlib import Path
-import re
 import typing as t
+from pathlib import Path
 
 import numpy
+from numpy.typing import NDArray
+from rsciio import digitalmicrograph as dm
+from typing_extensions import Self
+
 import pane
 import pane.io
-from numpy.typing import NDArray
 from pane.annotations import shape
 from pane.convert import IntoConverterHandlers, from_data
-from typing_extensions import Self
-from rsciio import digitalmicrograph as dm
-
-from numpy import flip 
-import numpy as np
-
-
-from phaser.utils.physics import Electron
-
 from phaser.types import IsVersion
-
-
-def _get_dir(f: pane.io.FileOrPath) -> t.Optional[Path]:
-    if isinstance(f, (str, Path)):
-        return Path(f).parent
-
-    name = getattr(f, 'name', None)
-    if name in (None, '<stdout>', '<stderr>'):
-        return None
-    path = Path(name)
-    return path.parent if path.exists() else None
+from phaser.utils.physics import Electron
 
 
 class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
@@ -38,49 +21,48 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
     file_type: t.Literal['gatan_file'] = 'gatan_file'
 
     @classmethod
-    def from_dm4(cls, f: pane.io.FileOrPath, *,
+    def from_dm4(cls, path: t.Union[str, Path], *,
                   custom: t.Optional[IntoConverterHandlers] = None) -> Self:
         """Read metadata from the first image in the `.dm4` file `f`. Requires `rsciio`.
 
         `diff_step` [mrad] and `scan_step` [m] are derived from the image calibrations.
         Fields with no corresponding tag (`conv_angle`, `defocus`, ...) take placeholder values.
         """
-        path = _get_dir(f)
-        
-        file = dm.file_reader(f, lazy=True) 
+        path = Path(path)
+        file = dm.file_reader(path, lazy=True) 
 
-        metadata = {'file_type':'gatan_file',
-             'name':str(f.stem),
-             'gatan_filename':str(f.stem),
-             'raw':str(f.suffix.removeprefix('.')),
-             'orig_path':str(f.parent.absolute()),
-             'author': None,
-             'voltage': 0.0,
-             'conv_angle': 0.0,
-             'defocus': 1.0e-10,
-             'camera_length': 0.0,
-             'diff_step': 0.0,
-             'e_scaling': 1.0,
-             'background_offset': 0.0,
-             'scan_rotation': 0.0,
-             'detector_shape': [0, 0],
-             'scan_shape': [0, 0],
-             'scan_fov': [0, 0],
-             'scan_step': [0, 0],
-             'exposure_time': 0.0,
-             'post_exposure_time': 0.0,
-             'beam_current': 0.0,
-             'scan_correction': None,
-             'diff_transpose': [False, False, False], #diagonal, horizontal, vertical
-             'scan_transpose': [False, False, False], #diagonal, horizontal, vertical
-             'notes': None,
-             'crop': None
-             }
-        
+        metadata: dict[str, t.Any] = {
+            'file_type': 'gatan_file',
+            'name': path.stem,
+            'gatan_filename': path.stem,
+            'raw': path.suffix.removeprefix('.'),
+            'orig_path': path.parent.absolute(),
+            'author': None,
+            'voltage': 0.0,
+            'conv_angle': 0.0,
+            'defocus': 1.0e-10,
+            'camera_length': 0.0,
+            'diff_step': 0.0,
+            'e_scaling': 1.0,
+            'background_offset': 0.0,
+            'scan_rotation': 0.0,
+            'detector_shape': [0, 0],
+            'scan_shape': [0, 0],
+            'scan_fov': [0, 0],
+            'scan_step': [0, 0],
+            'exposure_time': 0.0,
+            'post_exposure_time': 0.0,
+            'beam_current': 0.0,
+            'scan_correction': None,
+            'diff_transpose': [False, False, False], #diagonal, horizontal, vertical
+            'scan_transpose': [False, False, False], #diagonal, horizontal, vertical
+            'notes': None,
+            'crop': None
+        }
+
         gatan_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageTags'] # first image metadata
         imagedata_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageData']
         digiscan_metadata = file[0]['original_metadata']['ImageList']['TagGroup0']['ImageTags']['DigiScan']
-
 
         e_calibration = imagedata_metadata['Calibrations']['Brightness']
         metadata['e_scaling'] = e_calibration['Scale']
@@ -106,22 +88,18 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         metadata['camera_length'] =  microscope['STEM Camera Length']
         metadata['voltage'] = microscope['Voltage']
 
-
         # diffraction step
-
         units = diff_calibrations[0]['Units']
-
-        diff_scale = 1
-
-        wavelength = float(Electron(metadata['voltage']).wavelength*1e-10)   
-
+        wavelength = float(Electron(metadata['voltage']).wavelength*1e-10)
 
         if units == '1/nm':
             diff_scale = 1e9
         elif units == '1/um':
             diff_scale = 1e6
         elif units == '1/pm':
-            diff_scale = 1e12      
+            diff_scale = 1e12
+        else:
+            diff_scale = 1.0
 
         metadata['diff_step'] = diff_calibrations[0]['Scale']*diff_scale*wavelength*1e3 # to mrad
        
@@ -129,17 +107,15 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
 
         # Need to implement error handling, not sure what dm might record as units
         units = real_calibrations[0]['Units']
-        scan_scale = 1
-
 
         if units == 'nm': 
-            scan_scale = float(1e-9)
+            scan_scale = 1e-9
         elif units == 'um':
             scan_scale = 1e-6
         elif units == 'pm':
-            scan_scale = float(1e-12)
-
-
+            scan_scale = 1e-12
+        else:
+            scan_scale = 1.0
 
         metadata['scan_step'] = [scan_scale*scan_step for scan_step in scan_steps]
         metadata['scan_rotation'] = digiscan_metadata['Rotation']
@@ -148,17 +124,13 @@ class GatanMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True)
         metadata['scan_shape'] = [data_dim[2], data_dim[3]]
         metadata['scan_fov'] = [metadata['scan_shape'][0]*metadata['scan_step'][0], metadata['scan_shape'][1]*metadata['scan_step'][1]]
 
-        self = from_data(metadata, cls, custom=custom) 
-
+        self = from_data(metadata, cls, custom=custom)  # type: ignore
         object.__setattr__(self, 'path', path)
-        return self
 
+        return self
 
     def __post_init__(self):
         object.__setattr__(self, 'path', None)
-
-    name: str
-    """Experiment name"""
 
     version: t.Annotated[str, IsVersion(exactly="1.0")] = "1.0"
     """Gatan Metadata version"""

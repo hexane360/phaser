@@ -138,6 +138,7 @@ exclude = [
 ]
 
 reportIncompatibleMethodOverride = "information"
+reportOverlappingOverload = "warning"
 
 [tool.ruff.lint]
 ignore = [

@@ -1606,14 +1606,14 @@ class PreparedPSF(t.Generic[NumT_co]):
 @t.overload
 def prepare_convolve2d(
     filt: Filter, samp: Sampling, *,
-    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = 0.,
-    xp: t.Any = None, dtype: type[NumT],
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[NumT, float] = ...,
+    xp: t.Any = ..., dtype: type[NumT],
 ) -> PreparedPSF[NumT]: ...
 @t.overload
 def prepare_convolve2d(
     filt: Filter, samp: Sampling, *,
-    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = 0.,
-    xp: t.Any = None, dtype: t.Optional[DTypeLike] = None
+    mode: _InterpBoundaryMode = 'reflect', cval: t.Union[numpy.number, float] = ...,
+    xp: t.Any = ..., dtype: t.Optional[DTypeLike] = None
 ) -> PreparedPSF[numpy.number]: ...
 def prepare_convolve2d(
     filt: Filter, samp: Sampling, *,

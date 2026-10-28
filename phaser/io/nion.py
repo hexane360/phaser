@@ -1,19 +1,14 @@
 """Reader for Nion Swift 4D STEM datasets (zip archive containing `data.npy`), and their metadata."""
 
-from pathlib import Path
 import typing as t
+import zipfile as zf
+from pathlib import Path
 
 import numpy
-import pane
-import pane.io
 from numpy.typing import NDArray
-from pane.convert import IntoConverterHandlers, from_data
-from typing_extensions import Self
 
+import pane
 from phaser.utils.image import apply_flips
-
-import zipfile as zf
-import io
 
 
 class SpatialCalibrations(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
@@ -24,7 +19,6 @@ class SpatialCalibrations(pane.PaneBase, frozen=False, kw_only=True, allow_extra
 
 class DetectorConfiguration(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
     """Detector configuration."""
-    pass
 
 class CameraProcessingParameters(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
     """Camera processing parameters."""
@@ -77,7 +71,7 @@ class NionMetadata(pane.PaneBase, frozen=False, kw_only=True, allow_extra=True):
 
 
 def load_4d(path: t.Union[str, Path], scan_shape: t.Tuple[int, int], *,
-            memmap: bool = False, flips: t.Optional[t.Tuple[bool, bool, bool]] = None) -> NDArray[numpy.float32]:
+            flips: t.Optional[t.Tuple[bool, bool, bool]] = None) -> NDArray[numpy.float32]:
     """Load the `data.npy` array from a Nion Swift zip file.
 
     Patterns are not fftshifted or normalized.
@@ -101,12 +95,10 @@ def load_4d(path: t.Union[str, Path], scan_shape: t.Tuple[int, int], *,
 
     n_y, n_x = scan_shape
 
-    with zf.ZipFile(path, 'r') as data_file:
+    with zf.ZipFile(path, 'r') as data_file, data_file.open('data.npy', mode='r') as f:
+        a = numpy.load(f)
+        print("Loaded 'data.npy'")
 
-        with io.BufferedReader(data_file.open('data.npy', mode='r')) as f:
-            a = numpy.load(f)
-            print(f"Loaded 'data.npy'")
-    
     if a.shape[0] !=  n_y:
         raise ValueError(f"Got {a.shape[0]} y probes, expected {n_y}.")
     

@@ -1,18 +1,16 @@
 """Load Gatan data."""
 
-
-from pathlib import Path
-import warnings
 import logging
-import typing as t
+import warnings
+from pathlib import Path
 
 import numpy
 
+from phaser.io.gatan import GatanMetadata, load_4d
+from phaser.types import cast_length
 from phaser.utils.num import Sampling
 from phaser.utils.physics import Electron
-from phaser.io.gatan import load_4d, GatanMetadata
-from phaser.types import cast_length
-from rsciio import digitalmicrograph as dm
+
 from .. import LoadGatanProps, RawData
 
 
@@ -44,7 +42,6 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
     scan_shape = metadata.scan_shape
 
     print(f"Scan shape: {scan_shape}, Step size: {metadata.scan_step}")
-    adu = 1 #props.adu or meta.adu
     needs_scale = not metadata.is_simulated()
 
     probe_hook = {
@@ -78,8 +75,9 @@ def load_gatan(args: None, props: LoadGatanProps) -> RawData:
         if metadata.e_scaling is None:
             warnings.warn("ADU not supplied for experimental dataset. This is not recommended.")
         else:
-            logger.info(f"Offsetting patterns by {metadata.background_offset:.3e} and scaling by {metadata.e_scaling:.5e}")
-            patterns -= metadata.background_offset
+            bg_offset = metadata.background_offset or 0.
+            logger.info(f"Offsetting patterns by {bg_offset:.3e} and scaling by {metadata.e_scaling:.5e}")
+            patterns -= bg_offset
             patterns *= metadata.e_scaling
 
     # patterns = numpy.transpose(patterns, (1, 0, 2, 3))

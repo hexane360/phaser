@@ -96,7 +96,7 @@ def obj_meta_view(cache: Cache, params: t.Mapping[str, t.Any]) -> t.Any:
     return {
         'sampling': _sampling(obj['sampling']),
         'n_slices': n_slices,
-        'thicknesses': [float(t) for t in thicknesses] if per_slice else None,
+        'thicknesses': [float(t) for t in t.cast(t.Iterable[t.Any], thicknesses)] if per_slice else None,
     }
 
 

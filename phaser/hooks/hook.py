@@ -6,14 +6,18 @@ import abc
 import importlib
 import typing as t
 
+from typing_extensions import Self
+
 from pane.convert import ConverterHandlers, DataType
 from pane.converters import Converter, make_converter
-from pane.errors import ErrorNode, WrongTypeError, ParseInterrupt, ProductErrorNode
+from pane.errors import ErrorNode, ParseInterrupt, ProductErrorNode, WrongTypeError
 
 T = t.TypeVar('T')
 U = t.TypeVar('U')
+HookT = t.TypeVar('HookT', bound='Hook')
 
-class Hook(t.Generic[T, U], abc.ABC):
+
+class Hook(abc.ABC, t.Generic[T, U]):
     """Reference to a user-configurable function, with optional properties.
 
     Calling the hook calls the referenced function as `f(args, props=props)`. Attribute access
@@ -97,12 +101,13 @@ class Hook(t.Generic[T, U], abc.ABC):
         return f"FuncRef({self.func_ref()!r})"
 
     @classmethod
-    def _converter(cls, *args: type, handlers: ConverterHandlers) -> HookConverter[T, U]:
+    def _converter(cls: type[Self], *args: type, handlers: ConverterHandlers) -> HookConverter[Self]:
         return HookConverter(cls, handlers)
 
 
 def _to_dict(val: t.Any) -> dict:
     import dataclasses
+
     import pane
 
     if isinstance(val, dict):
@@ -114,13 +119,13 @@ def _to_dict(val: t.Any) -> dict:
     return val.__dict__
 
 
-class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
+class HookConverter(Converter[HookT], t.Generic[HookT]):
     """`pane` converter for [`Hook`][phaser.hooks.hook.Hook] types.
 
     Accepts a known hook name, a function reference, or a mapping with a `type` key and properties.
     """
 
-    def __init__(self, cls: t.Type[Hook[T, U]], handlers: ConverterHandlers):
+    def __init__(self, cls: t.Type[HookT], handlers: ConverterHandlers):
         self.cls = cls
         self.inner: Converter[t.Union[str, t.Dict[str, t.Any]]] = make_converter(t.Union[str, t.Dict[str, t.Any]], handlers)
 
@@ -129,7 +134,7 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
             return "hooks to functions"
         return "hook to function"
 
-    def into_data(self, val: Hook[T, U]) -> DataType:
+    def into_data(self, val: HookT) -> DataType:
         if val.props is not None:
             return {
                 'type': val.func_ref(),
@@ -137,7 +142,7 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
             }
         return val.func_ref()
 
-    def try_convert(self, val: t.Any) -> Hook[T, U]:
+    def try_convert(self, val: t.Any) -> HookT:
         val = self.inner.try_convert(val)
         if isinstance(val, str):
             ref = val
@@ -175,13 +180,13 @@ class HookConverter(t.Generic[T, U], Converter[Hook[T, U]]):
             props = {}
         else:
             if 'type' not in val:
-                return ProductErrorNode(self.expected(), {}, val, set(['type']))
+                return ProductErrorNode(self.expected(), {}, val, {'type'})
             ref = str(val.pop('type'))
             props = val
 
         if ref in self.cls.known:
             ty = ref
-            (ref, props_ty, *dep) = self.cls.known[ty]
+            (ref, props_ty, *_deps) = self.cls.known[ty]
 
             converter = make_converter(props_ty)
             try:
