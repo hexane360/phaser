@@ -12,7 +12,7 @@ from phaser.state import ScanState
 from phaser.utils.num import cast_array_module
 from phaser.utils.scan import make_raster_scan
 
-from . import PositionsScanProps, RasterScanProps, ScanHookArgs
+from . import NonRasterScanProps, RasterScanProps, ScanHookArgs
 
 
 def raster_scan(args: ScanHookArgs, props: RasterScanProps) -> ScanState:
@@ -85,7 +85,7 @@ def load_scan_positions(path) -> NDArray[numpy.float64]:
     return numpy.stack([y, x], axis=-1) * scale
 
 
-def positions_scan(args: ScanHookArgs, props: PositionsScanProps) -> ScanState:
+def non_raster_scan(args: ScanHookArgs, props: NonRasterScanProps) -> ScanState:
     """Return a scan state with the `(n_frames, 2)` positions of a scan positions file, one per pattern in the raw data.
 
     Patterns with no position are NaN; `drop_nans` drops them.
@@ -105,4 +105,4 @@ def positions_scan(args: ScanHookArgs, props: PositionsScanProps) -> ScanState:
         pts = pts @ numpy.array([[numpy.cos(theta), -numpy.sin(theta)], [numpy.sin(theta), numpy.cos(theta)]]).T
 
     scan = xp.asarray(pts, dtype=args['dtype'])
-    return ScanState(scan, xp.asarray(scan, copy=True), tilt=None, meta=frozendict(type='positions'))
+    return ScanState(scan, xp.asarray(scan, copy=True), tilt=None, meta=frozendict(type='non_raster'))

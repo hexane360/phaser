@@ -226,8 +226,8 @@ class RasterScanProps(Dataclass):
     """Affine matrix applied to the positions before `rotation`."""
 
 
-class PositionsScanProps(Dataclass):
-    """Properties for a scan loaded from a scan positions file."""
+class NonRasterScanProps(Dataclass):
+    """Properties for a non-raster scan: one position per pattern, loaded from a scan positions file."""
 
     path: Path
     """
@@ -246,7 +246,7 @@ class ScanHook(Hook[ScanHookArgs, 'ScanState']):
 
     known: t.ClassVar = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
-        'positions': ('phaser.hooks.scan:positions_scan', PositionsScanProps),
+        'non_raster': ('phaser.hooks.scan:non_raster_scan', NonRasterScanProps),
     }
 
 
