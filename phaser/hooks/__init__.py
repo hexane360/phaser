@@ -226,11 +226,27 @@ class RasterScanProps(Dataclass):
     """Affine matrix applied to the positions before `rotation`."""
 
 
+class PositionsScanProps(Dataclass):
+    """Properties for a scan loaded from a scan positions file."""
+
+    path: Path
+    """
+    Scan positions file (`.npz`): 1D arrays `x` and `y`, the position of every pattern in the raw data,
+    in acquisition order, and optionally `units` (`'m'`, the default, `'nm'` or `'A'`). A pattern not
+    taken at a scan position has a NaN position; drop it with `drop_nans`.
+    """
+    rotation: float | None = None
+    """Scan rotation [degrees CCW], applied around the origin."""
+    affine: t.Annotated[NDArray[numpy.floating], annotations.shape((2, 2))] | None = None
+    """Affine matrix applied to the positions before `rotation`."""
+
+
 class ScanHook(Hook[ScanHookArgs, 'ScanState']):
     """Hook that creates the initial scan positions."""
 
     known: t.ClassVar = {
         'raster': ('phaser.hooks.scan:raster_scan', RasterScanProps),
+        'positions': ('phaser.hooks.scan:positions_scan', PositionsScanProps),
     }
 
 

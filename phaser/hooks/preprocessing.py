@@ -199,8 +199,16 @@ def drop_nan_patterns(args: PostInitArgs, props: DropNanProps) -> t.Tuple[Patter
 
     mask = fraction_nan > props.threshold
 
+    # patterns with no scan position (NaN), e.g. extra triggers in a scan positions file
+    if scan_arr.shape[0] == xp.size(mask):
+        no_position = xp.any(xp.isnan(xp.asarray(scan_arr)), axis=-1)
+        if (n_pos := int(xp.sum(no_position & ~mask))):
+            logger.info(f"Dropping {n_pos}/{patterns.shape[0]} patterns with no scan position")
+        mask = mask | no_position
+
     if (n := int(xp.sum(mask))):
-        logger.info(f"Dropping {n}/{patterns.shape[0]} patterns which are at least {props.threshold:.1%} NaN values")
+        logger.info(f"Dropping {n}/{patterns.shape[0]} patterns which are at least {props.threshold:.1%} NaN values"
+                    " or have no scan position")
         patterns = patterns[~mask]
 
         if scan_arr.shape[0] == xp.size(mask):
