@@ -9,7 +9,7 @@ from phaser.hooks.scan import load_scan_positions
 
 
 def _scan(path: Path, **props):
-    hook = pane.from_data({'type': 'non_raster', 'path': str(path), **props}, ScanHook)
+    hook = pane.from_data({'type': 'manual', 'path': str(path), **props}, ScanHook)
     return hook({'seed': None, 'dtype': numpy.float64, 'xp': numpy})
 
 
@@ -20,7 +20,7 @@ def test_positions_file(tmp_path: Path):
     numpy.savez(path, x=[nan, 1e-10, 3e-10, nan, 0.], y=[nan, 2e-10, -1e-10, nan, 0.], units='m', note='ignored')
     scan = _scan(path)
 
-    assert scan.meta['type'] == 'non_raster'
+    assert scan.meta['type'] == 'manual'
     assert scan.data.shape == (5, 2)
     # (y, x) in angstrom
     numpy.testing.assert_allclose(scan.data[[1, 2, 4]], [[2., 1.], [-1., 3.], [0., 0.]])
