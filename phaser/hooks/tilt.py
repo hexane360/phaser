@@ -9,14 +9,16 @@ from . import GlobalTiltProps, CustomTiltProps, TiltHookArgs
 
 
 def generate_global_tilt(args: TiltHookArgs, props: GlobalTiltProps) -> NDArray[numpy.floating]:
-    """Return a uniform tilt array of shape `(ny, nx, 2)` [mrad]."""
+    """Return a uniform tilt array of shape `(*scan_shape, 2)` [mrad].
+
+    The scan need not be a raster: a flat list of positions (as from the `manual` scan hook) gives `(n, 2)`.
+    """
     xp = cast_array_module(args['xp'])
 
     ty, tx = props.tilt
-    ny, nx = args['shape']
 
-    base = xp.array([ty, tx], dtype=xp.float32) 
-    tilt_array = xp.broadcast_to(base, (ny, nx, 2))
+    base = xp.array([ty, tx], dtype=xp.float32)
+    tilt_array = xp.broadcast_to(base, (*args['shape'], 2))
     return tilt_array
 
 
