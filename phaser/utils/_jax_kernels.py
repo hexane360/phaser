@@ -149,12 +149,21 @@ def convolve1d(
     )
 
     # convolve
-    arr = jax.lax.conv_general_dilated(
-        arr.reshape(-1, 1, arr.shape[-1]),
-        to_3d(jnp.flip(weights)).astype(arr.dtype),
-        window_strides=(1,), padding='VALID',
-        dimension_numbers=('NCW', 'OIW', 'NCW'),
-    )
+    def conv(a: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
+        return jax.lax.conv_general_dilated(
+            a.reshape(-1, 1, a.shape[-1]),
+            to_3d(jnp.flip(w)).astype(a.dtype),
+            window_strides=(1,), padding='VALID',
+            dimension_numbers=('NCW', 'OIW', 'NCW'),
+        )
+
+    if (jnp.iscomplexobj(arr) and not jnp.iscomplexobj(weights)
+            and jax.default_backend() in ('mps', 'METAL')):
+        # these backends have no complex convolution. With real weights,
+        # the real and imaginary parts convolve separately (same result)
+        arr = (conv(arr.real, weights) + 1.j * conv(arr.imag, weights)).astype(arr.dtype)
+    else:
+        arr = conv(arr, weights)
 
     # unflatten, untranspose
     return jnp.moveaxis(arr.reshape(out_shape_t), -1, axis)
