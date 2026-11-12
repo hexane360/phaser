@@ -26,8 +26,11 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     """
     Load tilt array from a .npy file.
 
-    The loaded array can have shape (ny, nx, 2) matching props.shape,
-    or shape (N, 2) where N == ny*nx, which will be reshaped accordingly.
+    The loaded array can have shape (ny, nx, 2) matching the scan shape,
+    or shape (N, 2) where N is the number of scan positions, which will be reshaped accordingly.
+    When the scan is a flat list of positions (as from the `manual` scan hook), a (ny, nx, 2)
+    array with ny*nx == N is also accepted and flattened. In every case the tilts must be
+    in the same order as the diffraction patterns.
 
     Raises:
         FileNotFoundError: If the file does not exist.
@@ -45,7 +48,12 @@ def load_custom_tilt(args: TiltHookArgs, props: CustomTiltProps) -> NDArray[nump
     expected_shape_3d = (*shape, 2)
     expected_shape_2d = (numpy.prod(shape), 2)
 
-    if tilt_data.ndim == 3:
+    if tilt_data.ndim == 3 and len(shape) == 1:
+        # flat scan: only the number of positions can be checked
+        if tilt_data.shape[-1] != 2 or numpy.prod(tilt_data.shape[:-1]) != shape[0]:
+            raise ValueError(f"Loaded tilt data shape {tilt_data.shape} does not match the {shape[0]} scan positions")
+        result = tilt_data.reshape(expected_shape_3d)
+    elif tilt_data.ndim == 3:
         if tilt_data.shape != expected_shape_3d:
             raise ValueError(f"Loaded tilt data shape {tilt_data.shape} does not match expected shape {expected_shape_3d}")
         result = tilt_data
