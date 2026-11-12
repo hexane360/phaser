@@ -131,6 +131,34 @@ _INTERP_TO_PAD: t.Dict[_InterpBoundaryMode, str] = {
 }
 
 
+def _on_mps(arr: jnp.ndarray) -> bool:
+    """Return whether `arr` is on the MPS (or Metal) backend."""
+    try:
+        platforms = {device.platform for device in arr.devices()}
+    except jax.errors.ConcretizationTypeError:
+        # traced arrays have no device, they run on the default backend
+        platforms = {jax.default_backend()}
+    return not platforms.isdisjoint(('mps', 'METAL'))
+
+
+def _convolve(
+    conv: t.Callable[[jnp.ndarray, jnp.ndarray], jnp.ndarray],
+    arr: jnp.ndarray, weights: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    Apply `conv(arr, weights)`. On backends without complex convolutions,
+    convolve the real and imaginary parts separately instead.
+    """
+    if not (jnp.iscomplexobj(arr) and _on_mps(arr)):
+        return conv(arr, weights)
+
+    re, im = conv(arr.real, weights.real), conv(arr.imag, weights.real)
+    if jnp.iscomplexobj(weights):
+        re = re - conv(arr.imag, weights.imag)
+        im = im + conv(arr.real, weights.imag)
+    return (re + 1.j * im).astype(arr.dtype)
+
+
 def convolve1d(
     arr: jnp.ndarray, weights: jnp.ndarray, axis: int = -1, *,
     mode: _InterpBoundaryMode, cval: t.Union[complex, numpy.number] = 0.
@@ -157,13 +185,7 @@ def convolve1d(
             dimension_numbers=('NCW', 'OIW', 'NCW'),
         )
 
-    if (jnp.iscomplexobj(arr) and not jnp.iscomplexobj(weights)
-            and jax.default_backend() in ('mps', 'METAL')):
-        # these backends have no complex convolution. With real weights,
-        # the real and imaginary parts convolve separately (same result)
-        arr = (conv(arr.real, weights) + 1.j * conv(arr.imag, weights)).astype(arr.dtype)
-    else:
-        arr = conv(arr, weights)
+    arr = _convolve(conv, arr, weights)
 
     # unflatten, untranspose
     return jnp.moveaxis(arr.reshape(out_shape_t), -1, axis)
@@ -187,15 +209,65 @@ def convolve2d(
     )
 
     # convolve
-    arr = jax.lax.conv_general_dilated(
-        arr.reshape(-1, 1, arr.shape[-2], arr.shape[-1]),
-        jnp.flip(weights)[None, None].astype(arr.dtype),
-        window_strides=(1,1), padding='VALID',
-        dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
-    )
+    def conv(a: jnp.ndarray, w: jnp.ndarray) -> jnp.ndarray:
+        return jax.lax.conv_general_dilated(
+            a.reshape(-1, 1, a.shape[-2], a.shape[-1]),
+            jnp.flip(w)[None, None].astype(a.dtype),
+            window_strides=(1,1), padding='VALID',
+            dimension_numbers=('NCHW', 'OIHW', 'NCHW'),
+        )
+
+    arr = _convolve(conv, arr, weights)
 
     # unflatten
     return arr.reshape(out_shape_t)
+
+
+def _dct_weights(arr: jnp.ndarray, axis: int, inverse: bool) -> jnp.ndarray:
+    """Twiddle factors & orthonormalization for a type-II/III DCT along `axis` of `arr`."""
+    n = arr.shape[axis]
+    sign = 1. if inverse else -1.
+    w = numpy.exp(sign * 1.j * numpy.pi * numpy.arange(n) / (2. * n))
+    w *= (2. * n) ** 0.5 if inverse else (0.5 / n) ** 0.5
+    w[0] *= 2. ** 0.5 if inverse else 0.5 ** 0.5
+
+    shape = tuple(n if i == axis % arr.ndim else 1 for i in range(arr.ndim))
+    return jnp.asarray(w.reshape(shape), dtype=jnp.result_type(arr.dtype, jnp.complex64))
+
+
+def _dct(arr: jnp.ndarray, axis: int) -> jnp.ndarray:
+    """Type-II DCT along `axis`, orthonormalized."""
+    n = arr.shape[axis]
+    # under half-sample symmetric extension the real FFT is the DCT, up to twiddle factors
+    v = jnp.fft.rfft(jnp.concatenate((arr, jnp.flip(arr, axis)), axis=axis), axis=axis)
+    return (jnp.take(v, jnp.arange(n), axis=axis) * _dct_weights(arr, axis, False)).real
+
+
+def _idct(arr: jnp.ndarray, axis: int) -> jnp.ndarray:
+    """Type-III DCT along `axis`, orthonormalized (the inverse of `_dct`)."""
+    n = arr.shape[axis]
+    v = arr * _dct_weights(arr, axis, True)
+    # the Nyquist term of the symmetric extension is always zero
+    v = jnp.concatenate((v, jnp.zeros_like(jnp.take(v, jnp.arange(1), axis=axis))), axis=axis)
+    return jnp.take(jnp.fft.irfft(v, n=2 * n, axis=axis), jnp.arange(n), axis=axis)
+
+
+def dct2(arr: jnp.ndarray) -> jnp.ndarray:
+    import jax.scipy.fft
+
+    if _on_mps(arr):
+        # jax.scipy.fft.dctn fails on these backends (complex arange)
+        return _dct(_dct(arr, -2), -1)
+    return jax.scipy.fft.dctn(arr, type=2, axes=(-2, -1), norm='ortho')
+
+
+def idct2(arr: jnp.ndarray) -> jnp.ndarray:
+    import jax.scipy.fft
+
+    if _on_mps(arr):
+        # jax.scipy.fft.idctn returns wrong values on these backends
+        return _idct(_idct(arr, -1), -2)
+    return jax.scipy.fft.idctn(arr, type=2, axes=(-2, -1), norm='ortho')
 
 
 _DEFAULT_DEVICE: t.Optional[Device] = None

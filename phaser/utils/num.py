@@ -878,6 +878,11 @@ def _dct2(a: ArrayLike, inverse: bool) -> NDArray[numpy.inexact]:
 
         return t.cast(NDArray[numpy.inexact], (idct2 if inverse else dct2)(a))  # type: ignore
 
+    if xp_is_jax(xp):
+        from ._jax_kernels import dct2, idct2
+
+        return t.cast(NDArray[numpy.inexact], (idct2 if inverse else dct2)(a))  # type: ignore
+
     scipy = get_scipy_module(a)
     f = scipy.fft.idctn if inverse else scipy.fft.dctn
     return f(a, type=2, axes=(-2, -1), norm='ortho')

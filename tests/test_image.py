@@ -130,8 +130,16 @@ def test_convolve1d(
 
     xp = get_backend_module(backend)
 
-    if numpy.issubdtype(arr.dtype, numpy.integer) and backend == 'jax' and get_backend_devices(xp)[0].platform == 'gpu':
-        pytest.xfail("Integer convolutions aren't supported on jax[cuda]")
+    platform = get_backend_devices(xp)[0].platform if backend == 'jax' else None
+
+    if numpy.issubdtype(arr.dtype, numpy.integer) and platform in ('gpu', 'mps'):
+        pytest.xfail("Integer convolutions aren't supported on jax[cuda] or jax-mps")
+
+    if platform == 'mps':
+        # no 64-bit floats on MPS, test at single precision instead
+        single = {'float64': 'float32', 'complex128': 'complex64'}
+        arr = arr.astype(single.get(arr.dtype.name, arr.dtype))
+        weights = weights.astype(single.get(weights.dtype.name, weights.dtype))
 
     expected = osp.convolve1d(
         arr, weights, axis=axis, mode=mode, cval=cval
@@ -165,8 +173,13 @@ def test_convolve2d(
 ):
     xp = get_backend_module(backend)
 
-    if numpy.issubdtype(dtype, numpy.integer) and backend == 'jax' and get_backend_devices(xp)[0].platform == 'gpu':
-        pytest.xfail("Integer convolutions aren't supported on jax[cuda]")
+    platform = get_backend_devices(xp)[0].platform if backend == 'jax' else None
+
+    if numpy.issubdtype(dtype, numpy.integer) and platform in ('gpu', 'mps'):
+        pytest.xfail("Integer convolutions aren't supported on jax[cuda] or jax-mps")
+
+    if dtype in (numpy.float64, numpy.complex128) and platform == 'mps':
+        pytest.xfail("64-bit floats aren't supported on jax-mps")
 
     arr = numpy.random.normal(size=leading_shape + (256, 256)).astype(dtype)
     weights = numpy.asarray(weights)
@@ -222,6 +235,9 @@ def test_convolve2d_separable(
             pytest.xfail("cupy doesn't support complex cval")
 
     xp = get_backend_module(backend)
+
+    if dtype in (numpy.float64, numpy.complex128) and backend == 'jax' and get_backend_devices(xp)[0].platform == 'mps':
+        pytest.xfail("64-bit floats aren't supported on jax-mps")
 
     # `y_weights` runs along the second-to-last axis, `x_weights` along the last.
     # the second pass fills against an already-filtered boundary
@@ -674,6 +690,10 @@ def test_convolve2d_recip_identity(mode: _FilterBoundaryMode, shape: t.Tuple[int
 def test_convolve2d_recip_dtypes(mode: _FilterBoundaryMode, dtype, backend: BackendName):
     """The result always has the same dtype as `arr`, even if the filter's transfer function is complex."""
     xp = get_backend_module(backend)
+
+    if dtype in (numpy.float64, numpy.complex128) and backend == 'jax' and get_backend_devices(xp)[0].platform == 'mps':
+        pytest.xfail("64-bit floats aren't supported on jax-mps")
+
     rng = numpy.random.default_rng(42)
     arr = rng.normal(size=(8, 8)).astype(dtype)
     kernel = _KERNELS[1].astype(numpy.float64)
