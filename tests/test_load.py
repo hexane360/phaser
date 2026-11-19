@@ -42,7 +42,7 @@ def assert_raw_data_matches(actual: RawData, expected: RawData, scan_shape: t.Tu
     assert actual.get('probe_hook', 'fail') is None
 
 
-def test_load_manual_empad_v1(caplog, expected_raw_data: RawData):
+def test_load_manual_empad_v1(caplog: pytest.LogCaptureFixture, expected_raw_data: RawData):
     caplog.set_level(logging.INFO)
     get_backend_module("numpy")
 
@@ -65,7 +65,7 @@ def test_load_manual_empad_v1(caplog, expected_raw_data: RawData):
         ("phaser.hooks.io.manual", logging.INFO, "Loading as raw binary..."),
         ("phaser.hooks.io.manual", logging.WARNING, "dtype not specified when loading raw file, defaulting to 'float32'..."),
         ("phaser.hooks.io.manual", logging.INFO, "Applying detector flips: [1, 0, 0] [y, x, transpose]"),
-        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for experimental dataset. This is not recommended."),
+        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for dataset. This is not recommended."),
     ]
 
     assert_raw_data_matches(raw_data, expected_raw_data, (4,))
@@ -91,7 +91,7 @@ def test_load_manual_h5py(caplog, expected_raw_data: RawData):
         ("phaser.hooks.io.manual", logging.INFO, "Loading as HDF5..."),
         ("phaser.hooks.io.manual", logging.INFO, "Found patterns at key 'dp' (inferred) in HDF5 file."),
         ("phaser.hooks.io.manual", logging.INFO, "Applying detector flips: [0, 0, 0] [y, x, transpose]"),
-        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for experimental dataset. This is not recommended."),
+        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for dataset. This is not recommended."),
     ]
 
     assert_raw_data_matches(raw_data, expected_raw_data, (2, 2))
@@ -118,7 +118,7 @@ def test_load_manual_h5py_customkey(caplog, expected_raw_data: RawData):
         ("phaser.hooks.io.manual", logging.INFO, "Loading as HDF5..."),
         ("phaser.hooks.io.manual", logging.INFO, "Loaded patterns from key 'a/b/c/d' in HDF5 file."),
         ("phaser.hooks.io.manual", logging.INFO, "Applying detector flips: [0, 0, 0] [y, x, transpose]"),
-        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for experimental dataset. This is not recommended."),
+        ("phaser.hooks.io.manual", logging.WARNING, "ADU not supplied for dataset. This is not recommended."),
     ]
 
     assert_raw_data_matches(raw_data, expected_raw_data, (2, 2))

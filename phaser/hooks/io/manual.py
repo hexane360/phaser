@@ -101,7 +101,7 @@ def load_manual(args: None, props: LoadManualProps) -> RawData:
         raise ValueError(f"Error loading raw data: Expected detector shape {props.det_shape}, got shape {patterns.shape[-2:]} instead")
 
     if props.adu is None:
-        logger.warning("ADU not supplied for experimental dataset. This is not recommended.")
+        logger.warning("ADU not supplied for dataset. This is not recommended.")
     else:
         logger.info(f"Scaling patterns by ADU ({props.adu:.1f})")
         patterns /= props.adu

@@ -1,17 +1,17 @@
 """Load EMPAD data."""
 
-
-from pathlib import Path
-import warnings
 import logging
 import typing as t
+import warnings
+from pathlib import Path
 
 import numpy
 
+from phaser.io.empad import EmpadMetadata, load_4d
+from phaser.types import cast_length
 from phaser.utils.num import Sampling
 from phaser.utils.physics import Electron
-from phaser.io.empad import load_4d, EmpadMetadata
-from phaser.types import cast_length
+
 from .. import LoadEmpadProps, RawData
 
 
@@ -63,8 +63,8 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         diff_step = props.diff_step
         scan_shape = None
         probe_hook = scan_hook = tilt_hook = None
-        adu = None
-        needs_scale = False
+        adu = props.adu
+        needs_scale = True
         det_flips = props.det_flips
         empad_version = props.empad_version
 
@@ -91,12 +91,11 @@ def load_empad(args: None, props: LoadEmpadProps) -> RawData:
         axes=(-1, -2)
     )
 
-    if needs_scale:
-        if adu is None:
-            warnings.warn("ADU not supplied for experimental dataset. This is not recommended.")
-        else:
-            logger.info(f"Scaling patterns by ADU ({adu:.1f})")
-            patterns /= adu
+    if adu is not None:
+        logger.info(f"Scaling patterns by ADU ({adu:.1f})")
+        patterns /= adu
+    elif needs_scale:
+        warnings.warn("ADU not supplied for dataset. This is not recommended.")
 
     a = wavelength / (diff_step * 1e-3)  # recip. pixel size -> 1 / real space extent
     sampling = Sampling(cast_length(patterns.shape[-2:], 2), extent=(a, a))
